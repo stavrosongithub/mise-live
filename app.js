@@ -347,7 +347,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '6c40d4e 2026-06-28';
+const APP_VERSION = '51f0cda 2026-06-28';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -8165,9 +8165,17 @@ Alpine.data('app', () => ({
       // (4) Success — adopt the merged doc as the new base + cache the sha.
       this._mealPlanSha = newSha;
       this._persistMealPlanBase(merged);
-      // Reflect the merged result into Alpine state so a remote-only change made
-      // by the other cook becomes visible without waiting for the next open.
-      this.applySharedPlanDoc(merged);
+      // Reflect the merged result into Alpine state so a remote-only change made by
+      // the other cook becomes visible without waiting for the next open — BUT only if
+      // the user hasn't edited the plan during the putFile/ghPutFile await above.
+      // `merged` was built from the PRE-await `local` snapshot; reflecting it after an
+      // interim edit would CLOBBER that edit (quick 260628-kep — reverted a leftovers
+      // toggle made mid-push). If the live projection changed, skip the reflect: the
+      // interim edit already scheduled its own push, which re-pulls (remote == merged
+      // now, incl. the other cook's change) and re-merges, so nothing is lost.
+      if (JSON.stringify(this.buildSharedPlanDoc()) === JSON.stringify(local)) {
+        this.applySharedPlanDoc(merged);
+      }
     } catch (e) {
       // Stale-sha 409 → re-pull + re-merge ONCE (idempotent against the base, D-01).
       // NO hard-stop, NO whole-doc clobber (T-17-05).
