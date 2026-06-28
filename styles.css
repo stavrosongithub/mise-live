@@ -1,0 +1,5072 @@
+/* ============================================================================
+   Mise — base styles (Phase 1 / Plan 01)
+   ----------------------------------------------------------------------------
+   - Two-pane CSS Grid workspace (REVIEW-01 layout from RESEARCH §Pattern 1d)
+   - Header bar (.topbar) with title + Settings + Connected indicator
+   - Settings modal overlay (D-16: API-key-only in Phase 1)
+   - Banner styling for the Chromium-unsupported notice (SHELL-04)
+     and the parseError region (used by Plans 02 / 03 for missing-CSV errors)
+   - x-cloak rule prevents pre-Alpine flash of bound elements
+   ============================================================================ */
+
+/* ============================================================================
+   DESIGN-TOKEN LAYER (quick 260614-rxj; RE-POINTED phase 09 / PORT-01)
+   ----------------------------------------------------------------------------
+   HISTORY: introduced by quick 260614-rxj as a CONSISTENCY REFACTOR — a single
+   source of truth that collapsed ~70 ad-hoc hexes, 13 font-sizes, 6 stray heavy
+   (600) font-weights, 3 radii, and 3 modal widths into a documented set, mapping
+   each swept value to its NEAREST token so the tool looked essentially identical.
+
+   PHASE 09 RE-POINT (PORT-01): the token VALUES below have been re-pointed to the
+   locked design-language palette/scale/weights/radii (paper+ink+petrol, the three
+   IBM Plex / Bricolage faces, the {400,500,600,700} weight contract). The token
+   NAMES are unchanged, so the re-point cascades automatically through every rule
+   that already consumes var(--…). The notes from the ORIGINAL consolidation below
+   (the absorbed-hex annotations, the 5-step font-scale jump table) are HISTORICAL
+   — they describe the prior values, not the current ones. The authority for the
+   current values is .planning/ui-reviews/DESIGN-LANGUAGE.md + mise-design-sketch.html.
+
+   This was a CONSISTENCY REFACTOR; it is now ALSO the design-language substrate.
+   Each token is commented with the ad-hoc value(s) it ORIGINALLY replaced (history).
+
+   --- COLOR ROLE NOTES ---
+   - TWO browns are KEPT DISTINCT, not merged: #713f12 (--warn-text-strong)
+     clears ~8.0:1 on both the amber caveat ground (--warn-bg) and white; the lighter
+     caveat brown #a15c00 (--warn-text) sits ~4.8–5.4:1. Merging the strong
+     brown down to the caveat brown would VISIBLY LIGHTEN the banner-warning
+     text and .delta-status.status-old. Both browns AA-verified on yellow + light.
+   - A BACKGROUND hex is NEVER merged with a TEXT hex: banner-error bg
+     (--color-danger-bg #b71c1c) stays separate from danger TEXT
+     (--color-danger #c00).
+   - TWIN deliverable panels keep their primary/secondary hierarchy:
+     shopping-list top border → --color-accent (PRIMARY); check-stock-list top
+     border → --color-panel-accent-muted (SECONDARY, value UNCHANGED).
+
+   --- FONT-SIZE SCALE (5 steps, nearest-map) ---
+   5 steps chosen to MINIMISE visible jump (a 4-step scale would force the
+   0.72/0.78/0.8/0.82 cluster up to 0.85 — a perceptible +18% on small labels).
+   63 of 81 occurrences do NOT move; only 18 shift, max abs shift 11.1% on one
+   tiny uppercase label. The four anchor clusters (0.85/0.9/1.0/1.1) don't move.
+
+     | existing    | occ | → token   | value shift    | note                          |
+     |-------------|-----|-----------|----------------|-------------------------------|
+     | 0.72rem     |  1  | --fs-sm   | 0.72→0.80 +11% | .meal-plan-cat tiny uppercase |
+     | 0.78rem     |  4  | --fs-sm   | 0.78→0.80 +2.6%| sub-threshold                 |
+     | 0.80rem     |  7  | --fs-sm   | no change      |                               |
+     | 0.82rem     |  1  | --fs-sm   | 0.82→0.80 -2.4%| sub-threshold                 |
+     | 0.85rem     | 25  | --fs-base | no change      | dense cluster — anchored      |
+     | 0.85em (×4) |  4  | --fs-base | em→rem, parents at base 14px → byte-equivalent |
+     | 0.90rem     | 17  | --fs-md   | no change      |                               |
+     | 0.95rem     |  6  | --fs-md   | 0.95→0.90 -5.3%| sub-threshold                 |
+     | 1.00rem     | 11  | --fs-lg   | no change      |                               |
+     | 1.05rem     |  3  | --fs-lg   | 1.05→1.00 -4.8%| sub-threshold                 |
+     | 1.10rem     |  3  | --fs-xl   | no change      |                               |
+     | 1.15rem     |  3  | --fs-xl   | 1.15→1.10 -4.3%| sub-threshold                 |
+
+   NOTE: the only font-size on html/body is the rem BASIS, now 17.5px (was 14px;
+   bumped +25% via quick 260628-cda — THE single global scale dial). It DEFINES
+   1rem; every layout/spacing/radius/modal value is rem-relative to it (not a scale step).
+   ============================================================================ */
+:root {
+  /* --- COLOR (re-pointed phase 09 to the design-language palette; comments note ORIGINAL absorbed hexes) --- */
+  --color-accent: #0E6E66;             /* PETROL — the one working accent: links, active tab, selected chip, primary button, focus ring (was #1565c0 blue; absorbed #2563eb) */
+  --color-accent-border: #0A554E;      /* darker petrol border paired with --color-accent (was #0d47a1) */
+  --color-accent-tint: #E1EEEB;        /* NEW — active-row / selected / section-label petrol wash */
+  --color-panel-accent-muted: #94a3b8; /* check-stock-list top border — muted SECONDARY twin of the accent shopping-list border; value unchanged */
+  --color-danger: #C0392B;             /* TOMATO — danger TEXT/border, destructive + allergen/conflict DISPLAY only (was #c00; absorbed #b3261e, #e53935/#c62828) */
+  --color-danger-bg: #FBEDEA;          /* PALE danger ground (was saturated #b71c1c — re-pointed to pale, so banner-error white text was migrated to ink/danger, see .banner-error) */
+  --color-danger-border: #E3A79F;      /* NEW (phase 09-06) — soft tomato hairline for danger-zone containers + icon-button danger borders (pairs with --color-danger-bg ground + --color-danger text) */
+  --warn-text: #9A6212;                /* AMBER caveat/estimate text on light bg (was #a15c00; absorbed #8a6d00, #92600a) */
+  --warn-text-strong: #6E3F12;         /* stronger caveat text (banner-warning, full-review-badge, delta status-old) (was #713f12) */
+  --warn-bg: #FBF3E0;                  /* NEW — caveat amber ground (phase 09-05 absorbed the old hard-coded badge/banner amber literal) */
+  --warn-border: #E0A93B;              /* AMBER warning border / left-stripe — distinct BORDER role, NOT merged into warn-text (was #eab308) */
+  --color-border: #E3E1D8;             /* house hairline border (was #ddd) */
+  --color-border-strong: #CFCDC1;      /* bolder separators (was #cfd4da; absorbed #d9dde2, #d9dee6, #d3d3d3, #b9c6d8, #9db8d8) */
+
+  /* --- COLOR (NEW design-language grounds + ink + success) --- */
+  --color-paper: #F3F2EC;              /* NEW — the page ground (paper) */
+  --color-surface: #FCFBF8;            /* NEW — hairline card surface on paper */
+  --color-surface-2: #FFFFFF;          /* NEW — raised surface (modals / dropdowns) */
+  --color-ink: #1B2A28;                /* NEW — primary body ink */
+  --color-ink-muted: #5C6A66;          /* NEW — secondary / detail ink */
+  --color-ink-faint: #8A958F;          /* NEW — faint eyebrow / placeholder ink */
+  --color-success: #2F7D4F;            /* NEW — HERB, sparing positive confirmation (✓ verified / saved / loaded) */
+  --color-success-bg: #EAF3EC;         /* NEW (quick 260627-iy8) — pale HERB ground for the positive "done" state; parallels --warn-bg (amber ground) */
+
+  /* --- WEIGHT ({400,500,600,700} contract — expanded phase 09 from the live {400,500}) --- */
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;                  /* NEW — headings / active tab */
+  --fw-bold: 700;                      /* NEW — wordmark + danger/section heads */
+
+  /* --- FONT-FAMILY (the three faces — phase 09 / PORT-02; loaded in index.html <head>) --- */
+  --font-display: "Bricolage Grotesque", "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; /* the Mise wordmark ONLY */
+  --font-body: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; /* default body / UI / prose */
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; /* quantities, dates, IDs, status tokens, eyebrow labels — tabular */
+
+  /* --- FONT-SIZE (re-pointed phase 09 to the design-language scale; ORIGINAL 5-step nearest-map jump table above is historical) --- */
+  --fs-xs: .72rem;                     /* NEW — tiniest eyebrow / micro-label */
+  --fs-sm: 0.8rem;                     /* (unchanged) */
+  --fs-base: 0.9rem;                   /* base (was 0.85rem) */
+  --fs-md: 1rem;                       /* (was 0.9rem) */
+  --fs-lg: 1.15rem;                    /* (was 1.0rem) */
+  --fs-xl: 1.4rem;                     /* (was 1.1rem) */
+
+  /* --- RADIUS (re-pointed phase 09) --- */
+  --radius-control: 0.3571rem;         /* buttons / small controls (was 3px) */
+  --radius-card: 0.5rem;               /* cards / panels / inputs (was 4px) */
+
+  /* --- MODAL WIDTH (same values — label tiers only) --- */
+  --modal-sm: min(31.4286rem, 92vw);   /* Settings / restore-prompt */
+  --modal-md: min(40rem, 92vw);        /* .modal-content-wide — unknown-ingredient / add-new / preview */
+  --modal-lg: min(64.2857rem, 95vw);   /* .recipe-edit-modal-content */
+}
+
+/* Alpine flicker guard — paired with x-cloak attribute on the modal */
+[x-cloak] {
+  display: none !important;
+}
+
+/* ----- Base reset (light-touch) ----- */
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-body);
+  font-size: 17.5px;   /* THE global scale dial — 1rem basis; was 14px, +25% → 17.5px (every layout/spacing/radius value below is rem-relative to this) */
+  color: var(--color-ink);
+  background: var(--color-paper);
+}
+
+/* ----- Banner row (errors, warnings, the Chromium-unsupported notice) ----- */
+.banner {
+  padding: 0.75rem 1rem;
+  font-size: var(--fs-md);
+  line-height: 1.4;
+}
+
+.banner.banner-error {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+  font-weight: var(--fw-semibold);
+}
+
+/* quick 260625-vsw — specimen-modal.html .banner-error parity for the in-modal
+   ingredient danger banner ONLY: add the 5px danger left-rail + a ⚠ mark glyph.
+   SCOPED to .manager-edit-panel so the SHARED .banner-error (server-import) is
+   untouched. The soft editIngredientWarning (.banner-warning) stays amber and
+   distinct. The ⚠ is a CSS ::before — no markup/binding change. */
+.manager-edit-panel .banner.banner-error {
+  border-left: 5px solid var(--color-danger);
+  display: flex;
+  gap: 0.6429rem;
+  align-items: flex-start;
+}
+.manager-edit-panel .banner.banner-error::before {
+  content: "\26A0";   /* ⚠ */
+  color: var(--color-danger);
+  font-weight: var(--fw-bold);
+  flex: none;
+}
+
+/* quick 260618-jr7 — parse error banner lays its message + "Copy error" button
+   side by side. Scoped to .parse-error-banner so the shared .banner-error rule
+   (also used by the server-import banner) is untouched. Button colors use
+   currentColor/transparent/inherit — no new bare hexes; radius + size via tokens. */
+.parse-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.parse-error-banner > span {
+  flex: 1;
+}
+.error-copy-btn {
+  flex: none;
+  background: transparent;
+  color: inherit;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-control);
+  font-size: var(--fs-sm);
+  padding: 0.15rem 0.6rem;
+  cursor: pointer;
+}
+
+/* ----- Top bar with title + Settings + Connected indicator ----- */
+/* phase 09-07 / PORT-03 — header re-skin to the specimen (.topbar L100-127):
+   warm surface (not #fff), strong bottom border, sticky chrome that pins the
+   wordmark + Loaded indicator to the top of the paper ground. */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border-strong);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.topbar h1 {
+  margin: 0;
+  /* phase 09 / PORT-02 — the Mise wordmark is the ONLY place --font-display
+     (Bricolage Grotesque) is used, nowhere else in the app. */
+  font-family: var(--font-display);
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-bold);
+  flex: 0 0 auto;
+}
+/* phase 09-07 — the wordmark period is petrol (D3 accent signature). */
+.topbar h1 .dot {
+  color: var(--color-accent);
+}
+
+.topbar .topbar-spacer {
+  flex: 1 1 auto;
+}
+
+/* phase 09-07 / PORT-03 — the store-loaded indicator restyled to the specimen
+   .loaded: mono herb micro-label with a herb status dot (::before). Wording +
+   x-show binding unchanged ("Loaded (browser-stored)"); only the face changes. */
+.topbar .connected {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-success);
+  font-weight: 500;
+}
+.topbar .connected::before {
+  content: "";
+  width: 0.5714rem;
+  height: 0.5714rem;
+  border-radius: 50%;
+  background: var(--color-success);
+  display: inline-block;
+}
+
+/* Phase 10 Plan 03 (SYNC-03) — "Last synced N min ago" indicator beside the
+   store-loaded badge. Muted, smaller than the loaded badge so it reads as a
+   secondary status line. Design tokens only. */
+.topbar .sync-status {
+  margin-left: 0.5rem;
+  font-size: var(--fs-sm);
+  color: var(--warn-text);
+  font-weight: var(--fw-regular);
+}
+
+.topbar button {
+  padding: 0.35rem 0.75rem;
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+
+/* ----- "Pick CSV folder" row ----- */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: var(--color-surface);
+  border-bottom: 1px solid #eee;
+}
+
+.toolbar button {
+  padding: 0.4rem 0.9rem;
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+
+/* fast 2026-06-08 — the manager toggle (Manage ingredients / Back to Parse)
+   is pushed to the right edge so it reads as a separate, mode-switching
+   control rather than one of the left-hand action buttons. margin-left:auto
+   on the last flex child eats all the free space before it. */
+.toolbar .manager-btn {
+  margin-left: auto;
+}
+
+/* fast 2026-06-08 — with two mode toggles (Manage ingredients + Manage recipes)
+   both carrying .manager-btn, two margin-left:auto rules would split the free
+   space and strand a gap between them. Only the FIRST absorbs the space; any
+   following .manager-btn resets to 0 so the flex gap clusters them tightly on
+   the right. */
+.toolbar .manager-btn ~ .manager-btn {
+  margin-left: 0;
+}
+
+.toolbar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* quick 260615-nx6 — left navigation drawer + hamburger + Parse Back control.
+   The old .toolbar rules above are now dead (the .toolbar element was removed)
+   but left in place; harmless, flagged for a later cleanup. All rules below use
+   the :root var(--…) tokens; #fff matches the existing .topbar/.modal-content
+   surface convention. */
+.hamburger-btn {
+  flex: 0 0 auto;
+  padding: 0.2rem 0.55rem;
+  font-size: var(--fs-xl);
+  line-height: 1;
+  /* phase 09-07 — specimen .hamburger is transparent on the warm chrome bar. */
+  background: transparent;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+.hamburger-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Backdrop — same rgba + z-index family as .modal. */
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  /* quick 260625-vsw — petrol-ink ground, matching the re-pointed .modal backdrop
+     so the nav drawer dims to the same warm ink ground as the modals. */
+  background: rgba(27, 42, 40, 0.42);
+  z-index: 1000;
+}
+
+/* Panel — small-modal width tier; sits above the backdrop. The slide is a
+   nice-to-have; x-show owns mount/unmount and .open drives the transform. */
+.drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: var(--modal-sm);
+  background: var(--color-surface-2);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  z-index: 1001;
+  padding: 1.25rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  transform: translateX(-100%);
+  transition: transform 0.2s ease;
+}
+.drawer.open {
+  transform: translateX(0);
+}
+
+.drawer-close {
+  align-self: flex-end;
+  font-size: var(--fs-xl);
+  line-height: 1;
+  padding: 0.1rem 0.5rem;
+  margin-bottom: 0.5rem;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+.drawer-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  font-size: var(--fs-md);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+.drawer-item:hover {
+  border-color: var(--color-accent);
+}
+.drawer-item.active {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  border-left: 3px solid var(--color-accent);
+  font-weight: var(--fw-medium);
+}
+
+/* Parse Back control — thin header row spanning the 2-col workspace grid so it
+   does not become a single grid cell and split the panes. */
+.parse-back-row {
+  grid-column: 1 / -1;
+}
+.parse-back-btn {
+  padding: 0.3rem 0.7rem;
+  font-size: var(--fs-md);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-ink-muted);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+.parse-back-btn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+/* quick 260612-abt — first-run import surface + durability note. Reuses the
+   neutral panel look; no heavy new CSS. */
+.import-surface {
+  padding: 1rem 1.25rem;
+  margin: 0.75rem 1rem;
+  background: #f7f9fb;
+  border: 1px solid #d9e2ea;
+  border-radius: var(--radius-card);
+}
+.import-surface .import-prompt {
+  margin: 0 0 0.6rem;
+  font-weight: 500;
+}
+.import-surface .import-label {
+  display: block;
+  margin-bottom: 0.5rem;
+}
+.import-surface .import-label span {
+  display: block;
+  margin-bottom: 0.3rem;
+  font-size: var(--fs-md);
+  color: #444;
+}
+.import-surface .import-note {
+  margin: 0.3rem 0 0;
+  font-size: var(--fs-base);
+  color: #a14;
+}
+.durability-note {
+  margin: 0.5rem 0 0;
+  font-size: var(--fs-base);
+  color: #555;
+}
+.durability-note--inline {
+  margin: 0;
+  margin-right: auto;   /* keep it left of the right-clustered manager toggles */
+}
+
+/* ----- Two-pane workspace (RESEARCH §Pattern 1d) ----- */
+.workspace {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  /* quick 260620-sqw — the workspace is a fixed-height grid; without an explicit
+     row template, align-content stretched the two auto rows and ballooned the
+     thin .parse-back-row to ~half the viewport, shoving the panes down the page.
+     auto 1fr keeps the back-row at content height and lets the panes fill the
+     rest. */
+  grid-template-rows: auto 1fr;
+  gap: 1rem;
+  height: calc(100vh - 6rem);
+  padding: 1rem;
+  box-sizing: border-box;
+}
+
+/* phase 09-05 / PORT-07 — two hairline surface panes on the paper ground
+   (DESIGN-LANGUAGE §6 two-pane; matches specimen-parse.html .pane). No shadow
+   — separation is the hairline border + paper ground. */
+.workspace .pane {
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 1rem;
+  background: var(--color-surface);
+}
+
+/* quick 260626-9zr / PORT-07 — net-new pane-head eyebrow strip (port of
+   specimen-parse.html .pane-head). Scoped under .workspace .pane so no manager /
+   meal-list reuse site can pick it up. Values copied verbatim from the specimen.
+   The .lbl is the mono-uppercase ink-faint eyebrow titling each pane. */
+.workspace .pane .pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6429rem 1rem;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.workspace .pane .pane-head .lbl {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+  font-weight: 600;
+}
+/* quick 260626-9zr — the RIGHT-pane "✓ schema-valid" badge is a .lbl tinted herb
+   (--color-success). Static chrome; no validation getter behind it. */
+.workspace .pane .pane-head .schema-valid-badge {
+  color: var(--color-success);
+}
+
+/* quick 260626-9zr / PORT-07 — INGREDIENT ROWS count eyebrow that REPLACES the
+   sans <h3>Ingredients</h3> heading. Mono-uppercase ink-faint per the sans/mono
+   split; values copied verbatim from specimen-parse.html .rows-lbl. Scoped under
+   .rows-section so no reuse site is affected. */
+.rows-section .rows-lbl {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+  font-weight: 600;
+  margin: 0 0 0.4286rem;
+  padding-top: 0.2857rem;
+  border-top: 1px solid var(--color-border);
+}
+
+/* quick 260626-9zr / PORT-07 — petrol primary face for the Parse button
+   (the LEFT-pane footer .raw-actions button carried no face class). Mirrors
+   the established .primary-cta-btn / .approve-btn white-on-accent idiom; the
+   #fff text literal is the one permitted bare hex (petrol-button TEXT only).
+   Scoped under .workspace .pane so the bare .btn-primary cannot bleed. */
+.workspace .pane .btn-primary {
+  background: var(--color-accent);
+  color: #fff;
+  border: 1px solid var(--color-accent-border);
+  border-radius: var(--radius-control);
+  padding: 0.4rem 0.9rem;
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+.workspace .pane .btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Quick 260607-9zz — raw-pane sideways collapse. When the left raw-pane carries
+   .collapsed, :has() narrows the grid's first column to a thin strip and the
+   form pane reflows to fill the freed width. :has() is supported in the
+   Chrome/Edge target this tool ships to. */
+.workspace:has(.raw-pane.collapsed) {
+  grid-template-columns: 2.5rem 1fr;
+}
+.raw-pane.collapsed {
+  padding: 0.5rem 0.25rem;
+  overflow: hidden;
+}
+.raw-collapse-toggle {
+  display: block;
+  width: 100%;
+  margin: 0 0 0.5rem 0;
+  padding: 0.25rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+  cursor: pointer;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+}
+.raw-pane.collapsed .raw-collapse-toggle {
+  margin: 0;
+}
+/* quick 260626-9zr — collapse-state integrity: the new .pane-head wrapper now
+   holds the toggle, so in the collapsed thin strip (2.5rem column) drop its
+   eyebrow padding + bottom border so the toggle sits flush as before. The
+   eyebrow <span> is already x-show-hidden when collapsed; this keeps the strip
+   a clean thin column with just the (always-visible) restore toggle. */
+.raw-pane.collapsed .pane-head {
+  padding: 0;
+  border-bottom: none;
+}
+
+/* ----- Form bindings (basic stack used by Plan 03 form) ----- */
+label {
+  display: block;
+  margin: 0.5rem 0;
+}
+
+label input[type="text"],
+label input[type="password"],
+label input[type="url"],
+label input[type="number"],
+label input[type="date"],
+label textarea,
+label select {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 0.25rem;
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+}
+
+/* ----- Settings modal (D-16 — API key only in Phase 1) ----- */
+.modal {
+  position: fixed;
+  inset: 0;
+  /* quick 260625-vsw — dim to the specimen petrol-ink ground (was rgba(0,0,0,.45))
+     so every modal sits over the warm ink ground, matching specimen-modal.html +
+     DESIGN-LANGUAGE. Shared across all .modal backdrops — only the dim hue changes. */
+  background: rgba(27, 42, 40, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+/* phase 09-04 / D37 — modal shell: a raised surface-2 card on the dimmed paper
+   ground (the .modal backdrop). Hairline border + radius-card; NO drop shadow
+   (separation is border + ground per DESIGN-LANGUAGE §4.3 "hairline card on
+   paper, no shadows"). These are genuine CENTRED modals, not inline expansions. */
+.modal-content {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-card);
+  padding: 1.5rem;
+  width: var(--modal-sm);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-content h2 {
+  margin-top: 0;
+  font-size: var(--fs-xl);
+  font-weight: 500;
+}
+
+.modal-content .modal-buttons {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  justify-content: flex-end;
+}
+
+.modal-content button {
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+}
+
+.modal-content button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.modal-content .help {
+  margin-top: 0.75rem;
+  font-size: var(--fs-base);
+  color: #666;
+  line-height: 1.4;
+}
+
+/* ============================================================================
+   Side-by-side review form (Plan 03 / REVIEW-01 + REVIEW-02 + REVIEW-03)
+   ----------------------------------------------------------------------------
+   The .form-pane is its own scroll container (.workspace .pane has
+   overflow-y:auto). The sticky header pins to the top of THAT container,
+   not the viewport, so the recipe name + Approve button remain visible
+   while the user scrolls through ingredient rows. (Q-4 resolution.)
+   ============================================================================ */
+
+/* The .form-pane needs to be a flex column so the sticky-header inside it
+   pins reliably; .pane already has overflow-y:auto from the base layer. */
+.workspace .pane.form-pane {
+  display: flex;
+  flex-direction: column;
+}
+
+.review-form {
+  /* Allow inner content to scroll; sticky-header sticks within this scroller. */
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* ----- Sticky header bar (recipe name + row count + Approve + Start fresh) ----- */
+.sticky-header {
+  position: sticky;
+  top: 0;
+  background: var(--color-surface);
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--color-border);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sticky-header .recipe-name {
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-lg);
+}
+
+/* phase 09-05 — the ingredient-row tally is a measured count → mono (sans/mono
+   split, DESIGN-LANGUAGE §2). */
+.sticky-header .row-count {
+  font-family: var(--font-mono);
+  color: var(--color-ink-faint);
+  font-size: var(--fs-sm);
+}
+
+.sticky-header .sticky-spacer {
+  flex: 1 1 auto;
+}
+
+.sticky-header .approve-btn,
+.sticky-header .start-fresh-btn {
+  padding: 0.4rem 0.9rem;
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+
+.sticky-header .approve-btn:disabled,
+.sticky-header .start-fresh-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.sticky-header .approve-btn {
+  background: var(--color-accent);
+  color: #fff;
+  border: 1px solid var(--color-accent-border);
+  border-radius: var(--radius-control);
+}
+
+/* quick 260626-9zr / PORT-07 — Start-fresh (post-Approve only, x-show=approved)
+   gets the petrol-OUTLINE secondary face so the parse footer reads as the same
+   primary(petrol)/secondary(outline) hierarchy as the rest of the app. Mirrors
+   the reusable .btn-secondary tokens (surface-2 bg + accent text + accent
+   border). The .recipe-edit-modal .sticky-header .start-fresh-btn scope (~L2344)
+   is more specific and deliberately separate — it is NOT affected. */
+.sticky-header .start-fresh-btn {
+  background: var(--color-surface-2);
+  color: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-control);
+}
+
+/* ----- Header form (14 v2 recipe-header fields) ----- */
+/* quick 260610-9yz — .header-form is now a plain stacking column container.
+   Its direct children (the recompute banner, the .header-form-short grids,
+   the long textarea labels, the derived-allergens fieldset) each span full
+   width and stack. The SHORT fields are packed by the .header-form-short
+   grid below; long fields stay outside it so they span without per-child
+   grid-column annotations. */
+.header-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+/* quick 260610-9yz — SHORT-field grid: auto-packs 2-3 short fields per row at
+   the form-pane width and reflows responsively (Chrome/Edge only — auto-fit
+   fully supported, no fallback). align-items:end keeps single-line labels
+   bottom-aligned with ones whose text wraps. The generic
+   `label { margin: 0.5rem 0 }` rule would fight the grid gap, so reset it. */
+.header-form .header-form-short {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.5rem 0.75rem;
+  align-items: end;
+}
+
+.header-form .header-form-short label {
+  margin: 0;
+}
+
+/* quick 260627-q7x — compact 12-column header grid (specimen-recipe-editor.html
+   .field-grid). Replaces the shared template's auto-fit .header-form-short with an
+   explicit 12-col layout so load-bearing fields can be sized deliberately
+   (Name c8 / Type c4 / Source c6 / Max-servings, Popularity, Difficulty c2). Lives
+   inside .header-form (flex column) in BOTH editors. The label margin reset keeps
+   the grid gap clean (the generic `label { margin: .5rem 0 }` would fight it). */
+.header-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 0.65rem 0.85rem;
+  align-items: end;
+}
+.header-grid > label {
+  margin: 0;
+}
+.header-grid .c12 { grid-column: span 12; }
+.header-grid .c8  { grid-column: span 8; }
+.header-grid .c6  { grid-column: span 6; }
+.header-grid .c4  { grid-column: span 4; }
+.header-grid .c3  { grid-column: span 3; }
+.header-grid .c2  { grid-column: span 2; }
+/* Narrow viewports (the modal can drop to 95vw): collapse to a single column so
+   the c2 number fields don't crush. */
+@media (max-width: 640px) {
+  .header-grid { grid-template-columns: 1fr; }
+  .header-grid > label { grid-column: 1 / -1 !important; }
+}
+
+/* quick 260627-q7x — white hairline inputs (specimen .field input): the schema
+   value controls render on surface-2 with a 1px strong-border + control radius
+   (was browser-default flat). Scoped to the shared editor templates' .schema-label
+   so the eyebrow-label reset above (mono/uppercase on the LABEL) is untouched —
+   this only skins the value control. Applies in BOTH editors (parse + manager). */
+.schema-label > input,
+.schema-label > select,
+.schema-label > textarea {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  padding: 0.5rem 0.7143rem;
+}
+.schema-label > input:focus,
+.schema-label > select:focus,
+.schema-label > textarea:focus {
+  border-color: var(--color-accent);
+  outline: none;
+}
+
+/* quick 260627-q7x — header "More fields" disclosure (specimen .more-toggle /
+   .more-fields): a petrol toggle, then a dashed-top-rule disclosed grid. Distinct
+   class from the per-ROW .more-fields-toggle (which is the ingredient-line
+   disclosure) to avoid bleed. */
+.header-form .more-toggle {
+  display: block;
+  font-family: var(--font-body);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-sm);
+  color: var(--color-accent);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 0.2857rem 0;
+  margin: 0.65rem 0 0;
+}
+.header-form .more-toggle:hover {
+  text-decoration: underline;
+}
+.header-form .header-more {
+  border-top: 1px dashed var(--color-border-strong);
+  padding-top: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+/* phase 09-04 / DESIGN-LANGUAGE §6 — "mono field labels where they name schema
+   fields". The label TEXT in the editors (shared editor-header-fields template,
+   .schema-label) and in the edit-ingredient modal (.add-new-label — every label
+   in that modal names an ingredients.csv column) renders in the mono face so it
+   reads as a schema field; prose/sentence labels (Instructions, Popularity
+   notes, Difficulty notes — left UNclassed in the template) stay sans.
+   The label is a block whose child <input>/<select>/<textarea> uses `font:
+   inherit` (L443-455), so mono on the label would leak into the VALUE; the
+   reset below pins the controls back to the body face (mono labels, sans
+   values — exactly the specimen split). Help/validation spans stay sans too. */
+/* quick 260625-vsw — bring the mono field labels to the specimen-modal.html
+   `.field label` UPPERCASE eyebrow (LOCKED decision 1, app-wide): mono +
+   uppercase + letter-spaced + ink-faint + semibold. Affects BOTH the
+   edit-ingredient modal (.add-new-label) AND the shared editor-header-fields
+   template (.schema-label) used by the edit-RECIPE modal + the parse editor —
+   that consistency is INTENTIONAL (LOCKED decision 1 is app-wide). The
+   recipe textarea field labels (Instructions / Ingredients / Popularity notes /
+   Difficulty notes) name recipes.csv columns just like SERVE WITH / SOURCE URL,
+   so the vsw forensic follow-up gave them .schema-label too — every schema-field
+   label in both editors now reads as the eyebrow (the only sans labels left are
+   the checkbox-toggle prose excluded just below + the help/validation spans).
+   The value-reset below keeps controls on the body face (mono labels, sans
+   values). */
+.schema-label,
+.add-new-label {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: var(--fw-semibold);
+  color: var(--color-ink-faint);
+}
+/* quick 260625-vsw — the checkbox-toggle labels (Pantry staple / Regular buy)
+   are `.add-new-label`s whose descriptive prose sits INLINE beside a direct
+   checkbox child (no wrapped value control to reset). Those read as sentence
+   prose (specimen `.check` labels), NOT schema-field eyebrows — so exclude them
+   from the uppercase eyebrow and keep them body-sans sentence case. */
+.add-new-label:has(> input[type="checkbox"]) {
+  font-family: var(--font-body);
+  font-size: var(--fs-base);
+  letter-spacing: normal;
+  text-transform: none;
+  font-weight: 400;
+  color: var(--color-ink);
+}
+/* quick 260625-vsw forensic follow-up — the allergen field-GROUP labels are
+   <legend>s, not .schema-label, so the eyebrow rule above never reached them.
+   Bring every .allergens-fieldset legend to the same uppercase-mono eyebrow
+   (LOCKED decision 1, app-wide) so "Allergens (FSA-14)" / "Allergens (derived)…"
+   read as field labels. Scoped to .allergens-fieldset ONLY — the meal-plan
+   picker's "Avoid allergens" is .manager-filter-group (NOT .allergens-fieldset),
+   so the already-ported meal-plan view is untouched. */
+.allergens-fieldset > legend {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: var(--fw-semibold);
+  color: var(--color-ink-faint);
+}
+.schema-label > input,
+.schema-label > select,
+.schema-label > textarea,
+.add-new-label > input,
+.add-new-label > select,
+.add-new-label > textarea {
+  font-family: var(--font-body);
+  color: var(--color-ink);
+  /* quick 260625-vsw — the eyebrow's uppercase/letter-spacing/fs-xs is for the
+     LABEL only; reset the VALUE controls back to the body face so user-entered
+     text stays sentence-case sans at the normal size. */
+  font-size: var(--fs-base);
+  letter-spacing: normal;
+  text-transform: none;
+}
+.schema-label > .help,
+.schema-label > .validation-warning,
+.schema-label > .validation-error,
+.add-new-label > .help {
+  font-family: var(--font-body);
+  /* quick 260625-vsw forensic follow-up — text-transform/letter-spacing/font-weight
+     are INHERITED, so the eyebrow's uppercase + letter-spacing + semibold leaked from
+     the label into these prose/validation spans (help + Valibot error messages would
+     render SHOUTY uppercase). Reset them back to readable sentence prose. */
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: var(--fw-regular);
+}
+
+.header-form .allergens-fieldset {
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+}
+
+.header-form .allergens-fieldset legend {
+  font-size: var(--fs-md);
+  font-weight: 500;
+  padding: 0 0.25rem;
+}
+
+.header-form .allergens-fieldset label.inline {
+  margin-right: 0.75rem;
+}
+
+/* quick 260620-sqw — baseline horizontal spacing for allergen checkbox labels.
+   The edit-ingredient modal's fieldset is plain .allergens-fieldset inside a
+   .modal-content (not .header-form, not .modal-content-wide), so neither of the
+   scoped margin rules reached it and the FSA-14 checkboxes ran together
+   ("Gluten☐Crustaceans"). The more-specific .header-form (0.75rem) and
+   .modal-content-wide .add-new-allergens (0.5rem) rules still win where they
+   apply. Chips (.derived-allergens .allergen-chip) are unaffected — not
+   label.inline. */
+.allergens-fieldset label.inline {
+  margin-right: 0.5rem;
+}
+
+/* phase 09-03 — D35 allergen split (the PICK side): a SELECTED allergen reads as
+   a petrol-tint CHIP, NOT danger red. Red is reserved for the contains/conflict
+   DISPLAY (.manager-allergens). Same allergen: petrol when picking here, red
+   when warning there. CSS-only via :has(:checked) — no markup/binding change.
+   The native checkbox stays for the x-model binding; the label wrapper carries
+   the chip face.
+   quick 260625-vsw — CONVERGED onto ONE reusable allergen-chip rule keyed on
+   the editable allergen fieldsets, decoupled from the `.manager` ancestor so it
+   reaches ALL editable allergen controls consistently (specimen-modal.html
+   .chip/.chip.on): the edit-INGREDIENT modal (.allergen-chip-control marker),
+   the manager add-new form (.add-new-allergens, was previously `.manager`-scoped
+   here), AND the unknown-ingredient / parse add-new form (also .add-new-allergens
+   — now converged, no longer fenced). The READ-ONLY derived chips
+   (.derived-allergens) use .allergen-chip <span>s (NOT label.inline) and are
+   deliberately untouched. Off-state = specimen .chip (surface-2 bg, ink-muted,
+   border-strong, radius-control, fs-sm, 3px/10px pad); on-state = .chip.on
+   (accent-tint bg, accent border + text, semibold). The raw checkbox box is
+   hidden (the chip itself communicates state) but stays in the DOM for x-model. */
+.allergen-chip-control label.inline,
+.add-new-allergens label.inline {
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  padding: 0.2143rem 0.7143rem;
+  font-size: var(--fs-sm);
+  color: var(--color-ink-muted);
+  background: var(--color-surface-2);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.allergen-chip-control label.inline:has(input:checked),
+.add-new-allergens label.inline:has(input:checked) {
+  background: var(--color-accent-tint);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  font-weight: var(--fw-semibold);
+}
+/* hide the raw checkbox box — the chip face IS the state; the input stays in the
+   DOM (display:none keeps it in the form, x-model binding intact). */
+.allergen-chip-control label.inline input[type="checkbox"],
+.add-new-allergens label.inline input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 0.0714rem;
+  height: 0.0714rem;
+  margin: 0;
+  pointer-events: none;
+}
+
+/* ----- Generic inline label (used by allergen checkboxes + flag_fix_me) ----- */
+label.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.25rem 0;
+}
+
+label.inline input[type="checkbox"] {
+  display: inline-block;
+  width: auto;
+  margin: 0;
+}
+
+/* ----- Per-row editor (REVIEW-03) ----- */
+.rows-section h3 {
+  font-size: var(--fs-lg);
+  margin: 1rem 0 0.5rem;
+}
+
+/* quick 260610-9yz — ingredient quantity/unit 2x2 grid. The four contiguous
+   qty/unit labels (metric qty, metric unit, volumetric qty, volumetric unit)
+   land as 2 cols × 2 rows: metric pair on row one, volumetric pair on row two.
+   Inputs/selects already get width:100% from the shared label rule, so they
+   fill each grid cell. Reset the generic label margin inside the grid. */
+.rows-section .row .qty-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.25rem 0.75rem;
+}
+
+.rows-section .row .qty-grid label {
+  margin: 0;
+}
+
+/* quick 260613-9n4 — recipe-manager editor: .qty-zone stacks the .ingredient-line
+   (which holds the name + both qty grids — quick 260618-cxn). Additive, scoped,
+   no !important. */
+.qty-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* quick 260618-biu — recipe-manager editor: lay the ingredient NAME combobox +
+   the qty/unit grid on ONE visual row. .ingredient-line is the first (only) child
+   of .qty-zone.
+   quick 260618-cxn — BOTH qty grids (metric + volumetric) now live INSIDE
+   .ingredient-line as siblings after the combobox. Layout: 2 columns
+   [name | qty-grid]. Collapsed rows show EXACTLY ONE grid (x-show=display:none on
+   the other → it occupies no grid cell), so the single visible grid auto-places
+   into column 2 next to the NAME → name LEADS on one row for both the metric-lead
+   and the volumetric-lead case. Each grid keeps its own internal 1fr 1fr
+   (.rows-section .row .qty-grid) so qty + unit sit side-by-side inside col2.
+   gap matches the sibling .qty-grid's column gap (0.75rem). align-items:end aligns
+   the combobox + inputs along the bottom. */
+.ingredient-line {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 0.75rem;
+  align-items: end;
+}
+.ingredient-line .combobox-label {
+  margin: 0;
+}
+/* quick 260618-cxn — force BOTH qty grids into COLUMN 2 so the name (col1) always
+   leads; when expanded ("More fields") the two grids stack in col2 (lead row1,
+   secondary wraps to row2), never landing in col1 under the name. */
+.ingredient-line .qty-grid {
+  grid-column: 2;
+}
+/* quick 260618-cxn — vol-lead ordering retargeted to the two grids WITHIN
+   .ingredient-line (replaces the obsolete .qty-zone-level swap): for a
+   volumetric-lead row the volumetric grid leads (order 1, col2 row1) and the
+   metric grid follows (order 2, col2 row2). The combobox-label keeps default
+   order 0 → leads in col1. */
+.qty-zone.vol-lead .ingredient-line .volumetric-qty-grid {
+  order: 1;
+}
+.qty-zone.vol-lead .ingredient-line .metric-qty-grid {
+  order: 2;
+}
+/* quick 260618-biu fix — bottom-align the qty/unit cells in the manager qty
+   grids so the inputs line up even when a longer label (e.g. "Quantity
+   (metric)") wraps to two lines at narrow widths while "Unit (metric)" stays
+   on one. .qty-zone is recipe-manager-only (quick 260613-9n4), so the parse
+   row is untouched. Covers both qty grids (both nested in .ingredient-line as of
+   quick 260618-cxn). No-op at widths where labels don't wrap. */
+.qty-zone .qty-grid {
+  align-items: end;
+}
+
+/* quick 260610 — Shopping unit / Pack size / Pack unit packed onto one row in
+   all three add/edit ingredient forms (manager add, manager inline edit, and
+   the parse-view add-new modal). minmax(0,1fr) lets the three equal columns
+   shrink without the select/number content forcing horizontal overflow in the
+   narrower modal/edit-cell contexts. align-items:end keeps the inputs aligned
+   along their bottom edge. Inputs/selects already get width:100% from the
+   shared label rule. The margin reset keeps the row tight. */
+.pack-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0 0.75rem;
+  align-items: end;
+}
+.pack-grid > .add-new-label {
+  margin: 0.5rem 0 0;
+}
+/* quick 260610 — 2-column variant for a single pair (e.g. the 2nd pack
+   size/unit row in the ingredient edit More-fields block). Reuses .pack-grid's
+   display:grid + gap + label-margin reset; only the column template changes. */
+.pack-grid--pair {
+  grid-template-columns: 1fr 1fr;
+}
+
+.rows-section .row {
+  margin-bottom: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--color-border-strong);   /* 2026-06-08 — bolder row separator (was #ddd) */
+  border-radius: var(--radius-card);
+  background: #fcfcfc;
+}
+
+/* 2026-06-13 (260613-aj3) — manager-editor row flag: real ingredient line
+   missing BOTH quantities. Light amber tint + var(--warn-text) inset left accent
+   (box-shadow, same no-shift pattern as the focus-within blue accent).
+   Scoped to the manager editor so the parse-review row is unaffected. */
+.recipe-manager-editor .row.row-missing-qty {
+  background: #fdf4e8;
+  box-shadow: inset 3px 0 0 var(--warn-text);
+}
+
+/* 2026-06-08 — active-row highlight: the parse row currently being edited
+   (any field focused) gets the shared blue treatment — light tint + a 3px
+   inset left accent (box-shadow, so no layout shift and no fight with the
+   1px border). Suppressed on .locked (post-Approve, non-editable). The
+   .confirmed collapsed summary keeps its green tint and is unaffected. */
+.rows-section .row:focus-within:not(.locked) {
+  background: #e8f1fb;
+  border-color: var(--color-accent);
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
+/* Visible lock state for the post-Approve form (D-17). pointer-events:none
+   prevents click-driven edits even if some bind happened to allow it. */
+.rows-section .row.locked {
+  background: #f5f5f5;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+/* quick 260607-bru — collapsed one-line summary for a confirmed row. Shown in
+   place of the full .row-body when row._confirmed. Reuses the existing palette
+   (no new color tokens); the ✓ marker uses the success green from the
+   .banner-success treatment (#1a5c1a). */
+.rows-section .row-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.75rem;
+  font-size: var(--fs-md);
+  color: #555;
+  cursor: pointer;
+  background: #f3f8f3;          /* subtle confirmed tint (kin to banner-success #e7f5e7) */
+  border-radius: var(--radius-control);
+}
+.rows-section .row-summary:hover {
+  background: #eef4ee;
+}
+.rows-section .row-summary-name {
+  font-weight: 500;             /* allowed weight token (2-weight system) */
+}
+.rows-section .row-summary-qty {
+  color: #777;
+}
+.rows-section .row-summary-confirmed {
+  margin-left: auto;
+  color: #1a5c1a;               /* reuse banner-success green; do not invent a token */
+  white-space: nowrap;
+}
+
+.rows-section .row-actions {
+  margin-top: 0.5rem;
+  /* quick 260607-bru — lay Remove + Confirm side by side. */
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.rows-section .row-actions button {
+  padding: 0.3rem 0.7rem;
+  font-size: var(--fs-base);
+  cursor: pointer;
+}
+
+/* quick 260607-bru — Confirm button: a quiet success-tinted action that parks
+   a reviewed row. Reuses the banner-success green palette; no new token. */
+.rows-section .confirm-btn {
+  margin-left: auto;
+  border: 1px solid #b3dab3;
+  background: #e7f5e7;
+  color: #1a5c1a;
+  border-radius: var(--radius-control);
+}
+.rows-section .confirm-btn:hover:not(:disabled) {
+  background: #d8eed8;
+}
+
+.rows-section .add-row-btn {
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.9rem;
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+
+.rows-section .add-row-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* ============================================================================
+   quick 260627-q7x — INGREDIENT LEDGER (MANAGER editor rows ONLY)
+   ----------------------------------------------------------------------------
+   Converts the manager editor's boxed per-row .row cards into a dense ledger
+   (specimen-recipe-editor.html .ledger, Variant A "quiet"): a mono eyebrow, ONE
+   .lhead column header, .lrow grid lines with flush-right mono qty/unit, quiet
+   hover-revealed ⋯/✕ controls, amber missing-qty rail, and a full-width add-row
+   footer. EVERY rule is scoped under .recipe-manager-editor so the PARSE-editor
+   rows (which share .row / .qty-zone / .ingredient-line / .qty-grid / .more-fields
+   class names) are untouched. Bindings are unchanged — this is layout/skin only.
+   ============================================================================ */
+.recipe-manager-editor .ledger-section {
+  margin-top: 1.25rem;
+}
+.recipe-manager-editor .ledger-eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+  font-weight: var(--fw-semibold);
+  margin: 0 0 0.6rem;
+}
+.recipe-manager-editor .ledger-eyebrow .count {
+  color: var(--color-ink-muted);
+}
+.recipe-manager-editor .ledger {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  /* visible (was hidden): lets a bottom-row .combobox-list dropdown escape the
+     ledger box instead of being clipped at its bottom edge. Accepted minor
+     cosmetic cost: the rounded corners no longer clip the first/last row
+     backgrounds — beta-fixable for a personal tool (quick 260628-bdx). */
+  overflow: visible;
+}
+
+/* ONE header row — geometry mirrors the data .lrow .row-body outer grid:
+   [ name+qty/unit band | more | remove ]. */
+.recipe-manager-editor .lhead {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.7143rem;
+  padding: 0.5rem 0.8571rem;
+  background: var(--color-accent-tint);
+  border-bottom: 1px solid var(--color-border);
+}
+.recipe-manager-editor .lhead-line {
+  display: grid;
+  grid-template-columns: 2fr 1fr;   /* matches .ingredient-line (name | qty-grid) */
+  gap: 0.75rem;
+}
+.recipe-manager-editor .lhead-qty {
+  display: grid;
+  grid-template-columns: 1fr 1fr;   /* matches the inner .qty-grid (qty | unit) */
+  gap: 0.25rem 0.75rem;
+}
+.recipe-manager-editor .lhead span {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+  font-weight: var(--fw-semibold);
+}
+.recipe-manager-editor .lhead .h-qty,
+.recipe-manager-editor .lhead .h-unit {
+  text-align: right;
+}
+/* reserve the control gutter (⋯ + ✕) so the header band aligns with the rows */
+.recipe-manager-editor .lhead-spacer {
+  width: 3.4rem;
+}
+
+/* data row: strip the boxed-card chrome; lay the inner .row-body as the line grid. */
+.recipe-manager-editor .lrow.row {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0;
+  background: var(--color-surface-2);
+  /* zero the <fieldset> UA intrinsic sizing so the row hugs its controls (the
+     ~6px top/bottom comes from .row-body padding, nothing else) — quick 260627-q7x T5. */
+  min-inline-size: 0;
+  min-block-size: 0;
+}
+.recipe-manager-editor .lrow.row:last-of-type {
+  border-bottom: 0;
+}
+.recipe-manager-editor .lrow .row-body {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 0.7143rem;
+  padding: 0.4286rem 0.8571rem;
+}
+/* explicit placement (independent of DOM order): qty-zone | more | remove on
+   row 1; the expanded more-fields panel spans the full width on row 2. */
+.recipe-manager-editor .lrow .qty-zone {
+  grid-column: 1;
+  grid-row: 1;
+}
+.recipe-manager-editor .lrow .imore {
+  grid-column: 2;
+  grid-row: 1;
+}
+.recipe-manager-editor .lrow .irm {
+  grid-column: 3;
+  grid-row: 1;
+}
+.recipe-manager-editor .lrow .lrow-more {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+/* the combobox NAME input: borderless until hover/focus (specimen .iname input). */
+.recipe-manager-editor .lrow .combobox-input {
+  font-size: var(--fs-sm);
+  padding: 0.3571rem 0.5714rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+}
+.recipe-manager-editor .lrow .combobox-input:hover {
+  border-color: var(--color-border);
+}
+.recipe-manager-editor .lrow .combobox-input:focus {
+  border-color: var(--color-accent);
+  background: var(--color-surface-2);
+  outline: none;
+}
+/* the combobox-label "Ingredient" eyebrow + the per-control qty/unit eyebrows are
+   suppressed on the dense ledger line (the .lhead already labels the columns). The
+   caption TEXT NODE is collapsed out of LAYOUT — not just painted off — so the cell
+   height equals the control height (~26px), not control + a ~21px caption line-box
+   (quick 260627-q7x T5 ledger-density fix). The caption text stays in the DOM for
+   screen readers.
+
+   The combobox-label and the qty-grid label are collapsed by DIFFERENT means
+   (quick 260628-bdx): the combobox-label hosts the absolutely-positioned
+   .combobox-list dropdown (position:absolute; top:100%), which an overflow:hidden /
+   text-indent:-9999px clip would slice off — so its caption is collapsed with
+   font-size:0 instead (no overflow clip, no negative indent), letting the dropdown
+   escape the label box. The control's font-size is then RESTORED to var(--fs-sm) in
+   the restore rule below (font-size:0 would otherwise cascade onto the input). This
+   reverses q7x T5's deliberate avoidance of font-size:0 for THIS path only. The
+   qty-grid > label has NO dropdown inside it, so it keeps the original
+   line-height:0 / text-indent:-9999px / overflow:hidden clip unchanged. */
+.recipe-manager-editor .lrow .ingredient-line > .combobox-label {
+  font-size: 0;
+  margin: 0;
+  padding: 0;
+}
+.recipe-manager-editor .lrow .qty-grid > label {
+  line-height: 0;
+  text-indent: -9999px;
+  white-space: nowrap;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+}
+.recipe-manager-editor .lrow .ingredient-line > .combobox-label .combobox {
+  font-size: var(--fs-sm);
+}
+.recipe-manager-editor .lrow .qty-grid > label > input,
+.recipe-manager-editor .lrow .qty-grid > label > select {
+  line-height: normal;
+  text-indent: 0;
+}
+/* keep Valibot validation messages visible+readable on the line (block, indent
+   reset) — the clip above is only for the leading eyebrow text node. */
+.recipe-manager-editor .lrow .qty-grid > label > .validation-warning,
+.recipe-manager-editor .lrow .qty-grid > label > .validation-error {
+  display: block;
+  line-height: 1.45;
+  text-indent: 0;
+  white-space: normal;
+  margin-left: 0;
+}
+
+/* flush-right mono qty/unit controls (specimen .iqty / .iunit). The qty-grid keeps
+   its internal 1fr 1fr. */
+.recipe-manager-editor .lrow .qty-grid > label > input,
+.recipe-manager-editor .lrow .qty-grid > label > select {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  text-align: right;
+  padding: 0.3571rem 0.5714rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-2);
+}
+
+/* quiet ledger controls (Variant A — hidden at rest, revealed on row hover/focus). */
+.recipe-manager-editor .lrow .imore,
+.recipe-manager-editor .lrow .irm {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0.1429rem;
+}
+.recipe-manager-editor .lrow .imore {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-ink-faint);
+}
+.recipe-manager-editor .lrow .imore:hover {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+.recipe-manager-editor .lrow .irm {
+  font-size: var(--fs-sm);
+  color: var(--color-ink-faint);
+  justify-self: center;
+}
+.recipe-manager-editor .lrow .irm:hover:not(:disabled) {
+  color: var(--color-danger);
+}
+.recipe-manager-editor .lrow .imore,
+.recipe-manager-editor .lrow .irm {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.recipe-manager-editor .lrow:hover .imore,
+.recipe-manager-editor .lrow:hover .irm,
+.recipe-manager-editor .lrow:focus-within .imore,
+.recipe-manager-editor .lrow:focus-within .irm {
+  opacity: 1;
+}
+
+/* expanded per-row fields (line_order/role/section/prep_note/raw_text): an indented
+   panel spanning the row (specimen .lrow-more). Restyle the shared .more-fields here
+   only — the scoped selector keeps the parse-row .more-fields untouched. */
+.recipe-manager-editor .lrow .lrow-more {
+  margin: 0;
+  padding: 0.7857rem 0.8571rem 0.9286rem;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+  border-left: 0;   /* drop the petrol left-rule the shared .more-fields adds */
+}
+.recipe-manager-editor .lrow .lrow-more > label {
+  font-size: var(--fs-xs);   /* keep the schema eyebrows in the expanded panel */
+}
+
+/* missing-qty (staple-aware amber inset rail; restyle the kept row-missing-qty class). */
+.recipe-manager-editor .lrow.row-missing-qty {
+  background: var(--warn-bg);
+  box-shadow: inset 3px 0 0 var(--warn-border);
+}
+.recipe-manager-editor .lrow.row-missing-qty .qty-grid > label > input {
+  color: var(--warn-text);
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+}
+
+/* focus-within row tint on the dense line (replaces the boxed .row focus rule). */
+.recipe-manager-editor .lrow.row:focus-within:not(.locked) {
+  background: var(--color-accent-tint);
+  border-color: var(--color-border);
+  box-shadow: none;
+}
+
+/* full-width ledger footer add button (specimen .add-row). */
+.recipe-manager-editor .ledger .add-row {
+  display: block;
+  width: 100%;
+  margin: 0;
+  text-align: left;
+  font-family: var(--font-body);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-sm);
+  color: var(--color-accent);
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--color-border);
+  border-radius: 0;
+  padding: 0.6429rem 0.8571rem;
+  cursor: pointer;
+}
+.recipe-manager-editor .ledger .add-row:hover:not(:disabled) {
+  background: var(--color-accent-tint);
+}
+.recipe-manager-editor .ledger .add-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* ----- Inputs / textareas / selects shared sizing ----- */
+select,
+input[type="text"],
+input[type="number"],
+input[type="url"],
+input[type="date"],
+input[type="password"],
+textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+textarea {
+  font-family: inherit;
+  resize: vertical;
+}
+
+/* ----- Success banner shown after a successful Approve (D-17) ----- */
+.banner.banner-success {
+  background: #e7f5e7;
+  color: #1a5c1a;
+  padding: 0.75rem 1rem;
+  margin: 0 1rem 1rem;
+  border: 1px solid #b3dab3;
+  border-radius: var(--radius-card);
+  font-weight: 500;
+}
+/* Phase 5 / Plan 05-01 / WRITE-08 / D-75 — post-Approve success block layout.
+   Additive, scoped under the existing .banner.banner-success palette (no new
+   banner palette declared). */
+.banner.banner-success p {
+  margin: 0.25rem 0;
+}
+.banner.banner-success .success-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+/* ============================================================================
+   Settings modal — advanced editor buttons (Plan 02-02 / SHELL-03 / D-21)
+   ----------------------------------------------------------------------------
+   The .advanced-section scroll-wall wrapper was removed in phase 09-06 (the
+   Advanced editors now live in the .settings-panel Advanced section; their
+   mono-textarea + label styling is .settings-adv-editor in the Settings
+   sectioned-modal block). Only the Save/Reset button row class survives. */
+
+.advanced-buttons {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+/* --- PARSE-03 / D-20 — inline validation notes -------------------------- */
+/* Rendered next to the eight Valibot-touched form fields (header:
+ * popularity, difficulty, source; rows[i]: quantity, quantity_min,
+ * quantity_max, raw_text). Gray = auto-corrected (clamp / range swap);
+ * red = hard-reject the user must edit before approving. Approve stays
+ * enabled in both cases (D-20). Tone mirrors .help (subtle muted grey)
+ * for the warning class. */
+.validation-warning {
+  color: #888;
+  font-size: var(--fs-base);
+  margin-left: 0.5em;
+}
+
+.validation-error {
+  color: var(--color-danger);
+  font-size: var(--fs-base);
+  margin-left: 0.5em;
+  font-weight: 500;
+}
+
+/* ============================================================================
+   Token-coverage warning banner (Plan 02-04 / PARSE-04 / D-23)
+   ----------------------------------------------------------------------------
+   Yellow, non-blocking banner that lights up when the LLM-emitted raw_text
+   drops content words or numbers from the source recipe. Distinct palette
+   from .banner-error (red) and .banner-success (green) so the user
+   instinctively reads it as "warning, not error, not success". Padding,
+   margin, and border-radius mirror .banner-success for visual parity;
+   only the colors + left-border accent differ. The dismiss button gets a
+   small left margin so it sits clear of the wrapping text.
+   ============================================================================ */
+.banner.banner-warning {
+  background: var(--warn-bg);
+  color: var(--warn-text-strong);
+  padding: 0.75rem 1rem;
+  margin: 0 1rem 1rem;
+  border: 1px solid var(--warn-border);
+  border-left: 4px solid var(--warn-border);
+  border-radius: var(--radius-card);
+  font-weight: 500;
+}
+
+.banner.banner-warning p {
+  margin: 0 0 0.5rem;
+}
+
+/* Phase 10 Plan 03 (SYNC-04/05) — read-only / offline banner. Reuses the
+   .banner-warning warn palette (no new hex); a slightly stronger left stripe
+   marks it as a persistent mode banner rather than a transient warning. Design
+   tokens only. */
+.banner.banner-warning.read-only-banner {
+  border-left-width: 6px;
+  font-weight: var(--fw-medium);
+}
+
+.banner.banner-warning button {
+  margin-left: 0.5rem;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+}
+
+/* phase 09-03 — the manager validation surface (`managerError` /
+   `recipeManagerError`) is a LOUD FAILURE, not a caveat: re-skin it as inline
+   DANGER text (DESIGN-LANGUAGE §6 "inline validation in danger text", §4.7 loud
+   failure). Scoped to the two manager-error banners only — the shared
+   .banner-warning palette (used by the parse coverage/merge surfaces) is
+   untouched here (that's Unit 6's sweep). */
+.banner.banner-warning.manager-error,
+.banner.banner-warning.recipe-manager-error {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+  /* quick 260625-vsw — 5px rail (was 4px) + ⚠ mark to match the edit-ingredient
+     in-modal danger banner, so both modals' error banners read as ONE face
+     (specimen-modal.html .banner-error). */
+  border-left: 5px solid var(--color-danger);
+  font-weight: var(--fw-semibold);
+  display: flex;
+  gap: 0.6429rem;
+  align-items: flex-start;
+}
+.banner.banner-warning.manager-error::before,
+.banner.banner-warning.recipe-manager-error::before {
+  content: "\26A0";   /* ⚠ */
+  color: var(--color-danger);
+  font-weight: var(--fw-bold);
+  flex: none;
+}
+
+/* INTEG-03 (T-15-08) — the stale-409 / partial-save / lock-takeover push-failure
+   banner. A REJECTED write (nothing saved) is a HARD STOP, so it carries the SAME
+   danger idiom as the in-modal/manager error banners: the 5px --color-danger
+   left rail + a ⚠ mark on the shared .banner-error palette (--color-danger-bg
+   ground + --color-danger text, set by the base .banner-error rule). This keeps
+   it visually DISTINCT from the amber inform-only rate-limit / advisory-lock
+   banners. The ⚠ is a CSS ::before — no markup/binding change. Tokens only. The
+   .merge-summary reason line + the Refresh/Dismiss .modal-buttons sit below the
+   headline; restore the inner <p> margin + button padding that the (now removed)
+   .banner-warning p / .banner-warning button rules previously supplied. */
+.banner.banner-error.push-conflict-offer {
+  border-left: 5px solid var(--color-danger);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6429rem;
+  align-items: flex-start;
+}
+.banner.banner-error.push-conflict-offer::before {
+  content: "\26A0";   /* ⚠ */
+  color: var(--color-danger);
+  font-weight: var(--fw-bold);
+  flex: 0 0 auto;
+}
+/* the headline + reason + buttons stack to the right of the ⚠ rail */
+.banner.banner-error.push-conflict-offer > * {
+  flex: 1 1 100%;
+}
+.banner.banner-error.push-conflict-offer p {
+  margin: 0 0 0.5rem;
+}
+.banner.banner-error.push-conflict-offer button {
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+}
+.banner.banner-error.push-conflict-offer .modal-buttons {
+  margin-top: 0.5rem;
+}
+
+/* --- Pre-Parse cost estimate (API-07 / Plan 02-04) ------------------------ */
+/* Small grey text adjacent to the Parse button. Tone mirrors .help (L171–L176)
+ * for visual parity with other "secondary informational" surfaces. Hides
+ * gracefully via x-show when tokenEstimate is null (preconditions missing
+ * OR count_tokens failed silently per Pitfall L). */
+/* quick 260626-9zr — brought to the specimen .cost eyebrow (mono / xs /
+   ink-faint). The formatCost(...) x-text binding is untouched. */
+.token-estimate {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-ink-faint);
+  margin-left: 0.5em;
+}
+
+/* ============================================================================
+   Phase 3 / REVIEW-04 + REVIEW-05 — confidence-marker surfaces
+   ----------------------------------------------------------------------------
+   Two persistent low-confidence CAVEAT surfaces, both on the
+   `.banner.banner-warning` amber palette tokens (bg var(--warn-bg), border
+   var(--warn-border), text var(--warn-text-strong)) at different visual
+   strengths so they compose without collision per UI-SPEC Visual Hierarchy
+   (the THIRD surface — the transient .raw-line-highlighted — moved OFF amber
+   to the petrol selection family in phase 09-05, see its rule below):
+     - per-field marker — BORDER ONLY (medium contrast, sparse)
+     - "Needs full review" pill — full pill (loudest, whole-row signal)
+     - tooltip caption — muted gray (lowest contrast, ephemeral)
+   The cap-3 rule (D-35) means a row carries at most ONE of pill OR border.
+   ============================================================================ */
+
+/* REVIEW-05 — per-field yellow border marker. Border-only (NO background)
+   per UI-SPEC: differentiates from the pill (full bg) and the (future Plan
+   03 Phase 3) highlight ribbon (bg only, no border). */
+.field-flag {
+  border: 1px solid var(--warn-border);
+}
+
+/* REVIEW-05 / D-35 — "Needs full review" pill. Full warning palette + pill
+   geometry (border-radius 999px) per UI-SPEC Component Inventory. */
+.full-review-badge {
+  background: var(--warn-bg);
+  color: var(--warn-text-strong);
+  border: 1px solid var(--warn-border);
+  border-radius: 71.3571rem;
+  padding: 0.25rem 0.5rem;
+  font-size: var(--fs-md);
+  font-weight: 500;
+  display: inline-block;
+  margin-left: 0.5rem;
+}
+
+/* REVIEW-05 / D-34 — reason-code tooltip caption. Muted gray sits visually
+   alongside .validation-warning (the gray inline auto-corrected note) per
+   UI-SPEC Color section: "unit_guessed / quantity_guessed reason-code
+   tooltips use this same muted gray to signal 'guidance, not blocker'".
+   max-width keeps the tooltip readable without spanning the full pane. */
+.field-tooltip {
+  display: block;
+  color: #666;
+  font-size: var(--fs-base);
+  max-width: 20rem;
+  margin-top: 0.25rem;
+}
+
+/* D-58 / UAT-04-G05 — always-visible flag-source line under the flag_fix_me
+   checkbox. Replaces the de-scoped hover tooltip. Low-emphasis muted text,
+   matching the .field-tooltip idiom (guidance, not a blocker). */
+.flag-source-note {
+  display: block;
+  color: #666;
+  font-size: var(--fs-base);
+  max-width: 25.7143rem;
+  margin-top: 0.25rem;
+}
+
+/* Quick 260607-9zz — lean-core rows. The More-fields toggle is a small,
+   muted, link-like control; the .more-fields block holds the 7 secondary
+   fields and gets a faint left rule to read as a nested group. */
+.more-fields-toggle {
+  /* fast 2026-06-07 — block so the More-fields expand drops to its own line
+     below the flag row (was inline-block, sat on the same line). */
+  display: block;
+  margin: 0.25rem 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-accent);
+  font-size: var(--fs-base);
+  cursor: pointer;
+}
+.more-fields-toggle:hover {
+  text-decoration: underline;
+}
+.more-fields-toggle .more-fields-flagged {
+  color: var(--warn-text);
+  text-decoration: none;
+}
+/* phase 09-03 — the More-fields block reads as a nested group behind the petrol
+   "＋ More fields" toggle (progressive disclosure, DESIGN-LANGUAGE §6). Petrol
+   left-rule to tie it to its accent toggle; keeps the ~17-column form un-flattened. */
+.more-fields {
+  margin-top: 0.25rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--color-accent-tint);
+}
+
+/* Quick 260607-9zz — ingredient combobox. The wrapper is position:relative so
+   the absolute dropdown anchors to the input; the clear "×" sits inside the
+   input's right edge; the list floats above the row at a high z-index. */
+.combobox {
+  position: relative;
+}
+.combobox-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding-right: 1.5rem;
+}
+/* quick 260607-qic — × clear button discoverability (QIC-03). Was a faint
+   #666 glyph with no resting affordance (looked decorative, not clickable).
+   Now an always-visible, higher-contrast circular hit target with a clear
+   hover/focus state so the user can tell a matched row IS clearable. */
+.combobox-clear {
+  position: absolute;
+  top: 50%;
+  right: 0.25rem;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.25rem;
+  width: 1.25rem;
+  padding: 0;
+  border: 1px solid #c8c8c8;
+  border-radius: 50%;
+  background: #f0f0f0;
+  color: #444;
+  font-size: var(--fs-md);
+  line-height: 1;
+  cursor: pointer;
+}
+.combobox-clear:hover,
+.combobox-clear:focus-visible {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: #fff;
+  outline: none;
+}
+.combobox-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 14rem;
+  overflow-y: auto;
+  background: var(--color-surface-2);
+  border: 1px solid #ccc;
+  border-radius: var(--radius-card);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  z-index: 50;
+}
+.combobox-option {
+  padding: 0.3rem 0.5rem;
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+.combobox-option.active {
+  background: #eef3ff;
+}
+.combobox-option.combobox-empty {
+  color: #999;
+  cursor: default;
+}
+/* quick 260607-qic — persistent "+ Add new ingredient" dropdown row (QIC-01).
+   Visually separated from match rows (top border) and styled as an ACTION
+   (accent text reusing the .primary-cta-btn blue var(--color-accent)), so it reads as
+   "create" rather than "select". Padding matches .combobox-option. */
+.combobox-option.combobox-add-new {
+  border-top: 1px solid #e0e0e0;
+  color: var(--color-accent);
+  font-weight: 500;
+  cursor: pointer;
+}
+.combobox-option.combobox-add-new:hover {
+  background: #eef3ff;
+}
+
+/* REVIEW-04 / D-47 — session-header flagged-row counter. Same visual
+   treatment as .sticky-header .row-count above (gray, 0.9rem) per
+   UI-SPEC Typography. Hidden at N=0 via x-show in the template. */
+.sticky-header .flagged-row-counter {
+  font-family: var(--font-mono);
+  color: var(--color-ink-faint);
+  font-size: var(--fs-sm);
+}
+
+/* ============================================================================
+   REVIEW-06 / D-37..D-40 — derived-allergens chip section
+   ----------------------------------------------------------------------------
+   Read-only pill list rendered inside the existing `.allergens-fieldset`
+   chrome (1px solid #ddd, 3px radius). Each chip is a pill (bg #f5f5f5,
+   border #ddd, color #222, 0.85rem, padding 0.25rem 0.5rem, radius 999px)
+   per UI-SPEC Component Inventory — visually distinct from the
+   `.full-review-badge` (warning palette pill) so the two pill shapes don't
+   collide. The empty-state placeholder ("Allergens (derived): None") is
+   plain muted-gray text inside the same fieldset; the section stays visible
+   (D-40, no collapse) to avoid layout shift on the first allergen.
+   ============================================================================ */
+.allergen-chip {
+  display: inline-block;
+  background: #f5f5f5;
+  border: 1px solid var(--color-border);
+  color: #222;
+  font-size: var(--fs-base);
+  padding: 0.25rem 0.5rem;
+  border-radius: 71.3571rem;
+  margin-right: 0.25rem;
+}
+
+.allergens-fieldset.derived-allergens .allergens-empty {
+  color: #666;
+  font-size: var(--fs-md);
+}
+
+/* quick 260627-q7x — derived-allergens as a hairline CARD (specimen-recipe-editor.html
+   .allergens): surface ground, hairline border, radius-card, the legend reads as a mono
+   eyebrow (from .allergens-fieldset > legend), the chips sit in a wrapped row beneath.
+   Scoped to .derived-allergens so the edit-ingredient FSA-14 fieldset + Approve-preview
+   chip list are untouched. The .header-form .allergens-fieldset margin/padding/radius
+   rule (~L856) still applies generally; this is more-specific and wins for the card. */
+.allergens-fieldset.derived-allergens {
+  margin: 0.75rem 0 0;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+}
+.allergens-fieldset.derived-allergens > legend {
+  /* re-assert the mono eyebrow (the more-specific .header-form .allergens-fieldset
+     legend rule, ~L936, would otherwise force fs-md/500 sans here). */
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: var(--fw-semibold);
+  color: var(--color-ink-faint);
+  margin-bottom: 0.5rem;
+  padding: 0;
+}
+.derived-allergens .derived-allergens-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4286rem;
+}
+/* the read-only chips wear the petrol on-state (specimen .chip.on): accent-tint
+   bg, accent border + text, radius-control. Scoped to .derived-allergens so the
+   Approve-preview .allergen-chip (.modal-content-wide) keeps its own pill look. */
+.derived-allergens .allergen-chip {
+  display: inline-block;
+  margin: 0;
+  background: var(--color-accent-tint);
+  border: 1px solid var(--color-accent);
+  color: var(--color-accent);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-sm);
+  padding: 0.2143rem 0.7143rem;
+  border-radius: var(--radius-control);
+}
+
+/* ============================================================================
+   REVIEW-07 / D-28..D-31 (Plan 03-03) — click-to-source row ribbon
+   ----------------------------------------------------------------------------
+   UI-SPEC Option C: after parse, the left pane visually swaps from <textarea>
+   (paste mode) to <pre class="raw raw-review"> (review mode). The <pre>
+   renders each line of the raw paste as its own <span class="raw-line"> so
+   a single .raw-line-highlighted class toggle paints the matched line yellow.
+
+   phase 09-05 / PORT-07 — the AMBER COLLISION is resolved. The persistent
+   low-confidence flag and the transient matched-line highlight used to share
+   the amber hue and read as the same signal. They now carry DIFFERENT visual
+   identities:
+     - .field-flag         (amber border, sparse)              — REVIEW-05   — CAVEAT
+     - .full-review-badge  (full amber pill, loudest)          — REVIEW-05/D-35 — CAVEAT
+     - .raw-line-highlighted (PETROL selection wash + rail)    — REVIEW-07 (this rule) — SELECTION
+   "matched line" is a SELECTION signal (which source line a field came from),
+   NOT a caveat — so it moves OFF amber into the petrol/selection family
+   (`--color-accent-tint` ground + a `--color-accent` left rail), matching the
+   chip/active-row selection idiom established in 09-02. The amber caveat hue is
+   now reserved exclusively for low-confidence flags, so the two no longer
+   collide even though the flag (RIGHT pane) and the highlight (LEFT pane) can
+   both be on screen at once.
+
+   `font: inherit` is LOAD-BEARING — the <pre> must visually match the
+   <textarea> it replaces (matched line is differentiated by ground colour, not
+   font/size). `background: var(--color-surface-2)` overrides any browser-default
+   <pre> grey. No animation/transition rules — D-30 is "persistent background",
+   not flash-and-fade.
+   ============================================================================ */
+.raw.raw-review {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  font: inherit;
+  cursor: default;
+  background: var(--color-surface-2);
+}
+
+.raw .raw-line {
+  display: block;
+}
+
+.raw .raw-line-highlighted {
+  background: var(--color-accent-tint);
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
+/* ============================================================================
+   REVIEW-09 / D-42 (Plan 03-04) — restore-prompt modal recipe-name preview
+   ----------------------------------------------------------------------------
+   Additive ONLY — the restore-prompt modal REUSES the shipped .modal +
+   .modal-content scaffold (no new modal CSS). This single rule styles the
+   recipe-name span inside the modal body per UI-SPEC Typography: weight 500
+   (Medium — the 2-weight contract), size 1.05rem (Heading role). The span
+   sits inline within the surrounding body text; no display:block — the
+   sentence flows naturally and the heightened weight + size draws the eye
+   to the recipe identity the user is being asked to resume.
+   ============================================================================ */
+.modal.restore-prompt .modal-content p .restore-recipe-name {
+  font-weight: 500;
+  font-size: var(--fs-lg);
+}
+
+/* ============================================================================
+   Phase 4 / Plan 04-02 — Unknown-ingredient queue panel + modal
+   ----------------------------------------------------------------------------
+   Additive ONLY — reuses the shipped .modal overlay scaffold and the
+   primary-CTA blue accent already locked for Approve / Resume editing.
+   ONE new geometry token (560px modal width). No new hues — all spacing /
+   color tokens inherit from Phase 1/2/3 UI-SPEC. See 04-UI-SPEC.md §Spacing
+   Scale, §Color, §Typography, and §Component Inventory for provenance.
+   ============================================================================ */
+
+/* ----- Wide-modal modifier (UI-SPEC §Component Inventory) -----
+   Only the width differs from .modal-content at L131-L177; everything else
+   (padding, border-radius, shadow, background) inherits. Settings + restore-
+   prompt modals continue using the original 440px width — this modifier is
+   purely additive. */
+.modal-content.modal-content-wide {
+  width: var(--modal-md);
+}
+
+/* quick 260614-od7 — the recipe editor (relocated into a top-level modal) is a
+   large form: sticky header + shared header-field grid + N ingredient rows
+   (combobox + metric/volumetric qty grids + more-fields) + delete zone. The
+   560px .modal-content-wide width is too narrow for it, so widen ONLY this
+   modal. max-height (90vh) + overflow-y:auto are inherited from .modal-content,
+   so vertical scroll is already handled — width is the only addition. Additive
+   + scoped to the new class: no other modal is affected. */
+.modal-content.recipe-edit-modal-content {
+  width: var(--modal-lg);
+}
+
+/* ----- Queue panel (D-50) -----
+   Lives inside .form-pane (right pane). The pane already supplies its own
+   interior padding via .workspace .pane; the panel just lays out heading,
+   intro, and cards. */
+.queue-panel {
+  display: block;
+}
+.queue-panel-title {
+  font-size: var(--fs-xl);
+  font-weight: 500;
+  margin: 0 0 0.5rem;
+}
+.queue-panel-intro {
+  font-size: var(--fs-lg);
+  margin: 0 0 1rem;
+  color: #222;
+}
+
+/* ----- Queue card (UI-SPEC §Component Inventory) -----
+   Mirrors the .rows-section .row geometry but without the .locked
+   pointer-events block (queue cards are interactive — that is their entire
+   purpose during RESOLVING). flex-wrap: wrap per UI-SPEC §Open Implementation
+   Note 9 so the button drops below the raw_text at narrow widths. */
+.queue-card {
+  margin-bottom: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: #fcfcfc;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.queue-card-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.queue-card-text {
+  word-wrap: break-word;
+}
+.queue-card-hint {
+  font-size: var(--fs-base);
+  color: #666;
+  margin-top: 0.25rem;
+}
+
+/* ----- Shared primary-CTA blue accent (UI-SPEC §Color reserved-for list) -----
+   Generalizes the .approve-btn accent (L242-L247) for Phase 4's three new
+   primary-CTA uses: queue card "Resolve ingredient", modal "Use this match",
+   and Plan 04-04's "Add ingredient" submit. Same exact tokens as the Phase 1
+   Approve button — no new hues. Grouped selector keeps the rule DRY without
+   refactoring .approve-btn (which has the .sticky-header scope prefix). */
+.primary-cta-btn,
+.queue-card .resolve-btn,
+.modal-content-wide .use-match-btn {
+  background: var(--color-accent);
+  color: #fff;
+  border: 1px solid var(--color-accent-border);
+  border-radius: var(--radius-control);
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+  font-size: var(--fs-lg);
+  font-weight: 400;
+}
+.primary-cta-btn:disabled,
+.queue-card .resolve-btn:disabled,
+.modal-content-wide .use-match-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* quick 260625-vhp — secondary/outline button face: petrol OUTLINE (not fill).
+   Surface-2 background + accent text + accent border, per the specimen
+   .btn-secondary (.planning/ui-reviews/specimen-manager.html ~L60). Padding /
+   radius track .primary-cta-btn so the two read as one hierarchy. Used by the
+   Ingredient-Manager "Add ingredient" button. */
+.btn-secondary {
+  background: var(--color-surface-2);
+  color: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-control);
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+  font-size: var(--fs-lg);
+  font-weight: 400;
+}
+.btn-secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ----- Modal raw_text echo block (UI-SPEC §Component Inventory) -----
+   Subtle gray border-left signals "quoted from input" without monospacing
+   (continuity with the rest of the form-pane prose). */
+.modal-content-wide .raw-text-echo {
+  margin-bottom: 0.75rem;
+}
+.modal-content-wide .raw-text-body {
+  padding: 0.5rem 0.75rem;
+  background: #fafafa;
+  border-left: 3px solid var(--color-border);
+  border-radius: 0 var(--radius-control) var(--radius-control) 0;
+  margin-top: 0.25rem;
+}
+.modal-content-wide .raw-text-section {
+  margin-top: 0.25rem;
+}
+
+/* ----- Modal default-state subhead + match cards (UI-SPEC §Component Inventory) ----- */
+.modal-content-wide h3 {
+  font-size: var(--fs-md);
+  font-weight: 500;
+  color: #222;
+  margin: 1rem 0 0.5rem;
+}
+.modal-content-wide .empty-state {
+  padding: 0.5rem 0;
+  color: #666;
+}
+.modal-content-wide .match-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
+  background: var(--color-surface);
+}
+.modal-content-wide .match-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.modal-content-wide .match-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-wrap: break-word;
+}
+.modal-content-wide .match-allergens {
+  margin-top: 0.25rem;
+  font-size: var(--fs-base);
+  color: #666;
+}
+
+/* ----- Modal secondary buttons (UI-SPEC §Color: NOT blue — default-style) -----
+   "Add as new ingredient" + "Skip as freeform" — full-width default-style so
+   the path is obvious when the user has no master matches to choose from.
+   Distinct from the primary-CTA blue used by "Use this match" in the same
+   modal — the visual hierarchy answers "what should I click next?". */
+.modal-content-wide .add-new-btn,
+.modal-content-wide .skip-btn {
+  display: block;
+  width: 100%;
+  padding: 0.4rem 0.9rem;
+  margin-top: 0.5rem;
+  background: var(--color-surface-2);
+  color: #222;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  font-size: var(--fs-lg);
+}
+.modal-content-wide .skip-helper {
+  font-size: var(--fs-base);
+  color: #666;
+  margin: 0.25rem 0 0;
+}
+
+/* ============================================================================
+   Phase 4 / Plan 04-04 — Add-new sub-form (inline modal expansion).
+   ----------------------------------------------------------------------------
+   UI-SPEC §Component Inventory locks the layout: name input full-width,
+   FSA-14 checkbox group flowing (no grid), pack size/unit stacked labels,
+   soft-block warning above the action row, Back-to-matches (default) and
+   Submit (blue primary OR red-toned override) side-by-side at the bottom.
+   ========================================================================== */
+
+/* Soft-block warning interior margin — REUSES the shared .banner.banner-warning
+   palette (yellow bg + left-stripe + 500 weight). The modal container already
+   provides breathing room; the standard `.banner.banner-warning` margin
+   (`0 1rem 1rem`) reads too generously at the modal's 560px width. Tighten
+   to a single bottom-only margin so it sits cleanly above the action row. */
+.modal-content-wide .banner.banner-warning {
+  margin: 0 0 0.75rem;
+}
+
+/* "Submit anyway" red-toned button state (UI-SPEC §Color destructive
+   rationale). Triggered by :class="{ 'submit-anyway': softBlockWarning.length > 0 }"
+   on the same button slot that otherwise carries .primary-cta-btn (blue).
+   Red text + red border + white fill — the lightest "destructive-coded"
+   visual (the user is overriding a safety heuristic, not deleting data).
+   Loaded AFTER the .primary-cta-btn rule so this class wins when both
+   resolve on the same element (which never happens — the :class binding is
+   exclusive). Specificity-anchored via .modal-content-wide to keep the
+   override scoped to this modal. */
+.modal-content-wide .submit-add-new-btn.submit-anyway {
+  background: var(--color-surface-2);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+}
+
+/* Add-new sub-form layout. Block-display labels with consistent top-margin
+   give the form a clean stacked rhythm. The name input is full-width.
+   The pack inputs reuse the same `.add-new-label` block-label class. */
+.modal-content-wide .add-new-label {
+  display: block;
+  margin-top: 0.5rem;
+}
+.modal-content-wide .add-new-name-input {
+  display: block;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  box-sizing: border-box;
+  margin-top: 0.25rem;
+  font-size: var(--fs-lg);
+}
+
+/* FSA-14 checkbox group — flowing layout (no grid). The labels wrap
+   naturally at the 560px modal width; gap controls inter-label spacing.
+   Reuses the existing `.allergens-fieldset` chrome and `label.inline`
+   class declared in Phase 1. */
+.modal-content-wide .add-new-allergens {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.modal-content-wide .add-new-allergens > legend {
+  font-weight: 500;
+}
+.modal-content-wide .add-new-allergens > p.help {
+  margin: 0 0 0.25rem;
+}
+.modal-content-wide .add-new-allergens label.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-right: 0.5rem;
+}
+
+/* Action row at the bottom of the sub-form. Back-to-matches on the left
+   (default-style), Submit on the right (blue primary OR red-toned override
+   via :class). space-between keeps them anchored to opposite edges. */
+.modal-content-wide .add-new-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.modal-content-wide .back-to-matches-btn {
+  padding: 0.4rem 0.9rem;
+  background: var(--color-surface-2);
+  color: #222;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  font-size: var(--fs-lg);
+}
+.modal-content-wide .submit-add-new-btn {
+  padding: 0.4rem 0.9rem;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  font-size: var(--fs-lg);
+  font-weight: 500;
+}
+
+/* Inline validation surface for the Add-new name input (UI-SPEC §Error
+   state copy). REUSES the existing `.validation-warning` gray style from
+   Phase 2 D-20. Scoped here so the modal-local note sits flush under the
+   name input rather than picking up form-pane margins. */
+.modal-content-wide .validation-warning {
+  display: block;
+  margin: 0.25rem 0 0;
+}
+
+/* ============================================================================
+   Phase 5 / Plan 05-01 / WRITE-01 / D-65 — Approve preview modal.
+   Additive only; scoped under .modal-content-wide per the house convention
+   (L694+). Reuses .allergen-chip (L545) for chips and the success/warning
+   palette colors (#1a5c1a green, var(--warn-text) warning) WITHOUT declaring a new
+   .modal or .banner rule.
+   ============================================================================ */
+.modal-content-wide .preview-headline {
+  margin: 0 0 0.75rem;
+}
+.modal-content-wide .preview-headline strong {
+  margin-right: 0.5rem;
+}
+.modal-content-wide .preview-summary {
+  margin: 0 0 1rem;
+}
+.modal-content-wide .preview-summary p {
+  margin: 0.25rem 0;
+}
+.modal-content-wide .preview-allergens {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.5rem 0;
+}
+/* Pass/fail indicator — reuse the success-green and warning palettes. */
+.modal-content-wide .assertion-pass {
+  color: #1a5c1a;
+  font-weight: 500;
+}
+.modal-content-wide .assertion-fail {
+  color: var(--warn-text);
+  font-weight: 500;
+}
+.modal-content-wide .preview-flagged {
+  color: var(--warn-text);
+}
+.modal-content-wide .show-rows-toggle {
+  background: none;
+  border: none;
+  color: var(--color-accent);
+  cursor: pointer;
+  padding: 0;
+  font-size: var(--fs-lg);
+  text-decoration: underline;
+}
+.modal-content-wide .preview-rows {
+  margin: 0.75rem 0 0;
+}
+.modal-content-wide .preview-rows h3 {
+  font-size: var(--fs-md);
+  font-weight: 500;
+  margin: 0.75rem 0 0.25rem;
+}
+.modal-content-wide .preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.modal-content-wide .preview-table th,
+.modal-content-wide .preview-table td {
+  border: 1px solid var(--color-border);
+  padding: 0.2rem 0.4rem;
+  text-align: left;
+}
+.modal-content-wide .preview-table th {
+  background: #f5f5f5;
+  font-weight: 500;
+}
+
+/* ============================================================================
+   Phase 5 / Plan 05-02 — Merge UI (WRITE-03/05/06/08)
+   ----------------------------------------------------------------------------
+   Additive ONLY. The Merge button reuses .toolbar button + .primary-cta-btn
+   (blue accent); the confirm reuses .modal + .modal-content; the post-Merge
+   success block reuses .banner.banner-success; the verify-failure/restore +
+   collision prompts reuse .banner.banner-warning (+ its inline button rule).
+   No new top-level .modal or .banner palette is declared here — every rule
+   below is scoped under an existing parent class.
+   ============================================================================ */
+
+/* Verify ✓ tick inside the post-Merge success summary (green palette parent). */
+.banner.banner-success .merge-verify-tick {
+  font-weight: var(--fw-medium);
+}
+.banner.banner-success .merge-backup-paths {
+  font-size: var(--fs-base);
+  word-break: break-all;
+}
+
+/* Collision-clash list inside the warning-palette collision prompt. */
+.banner.banner-warning .merge-collision-list {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+  font-size: var(--fs-md);
+}
+.banner.banner-warning .merge-summary {
+  font-size: var(--fs-base);
+}
+
+/* D-67 confirm modal — counts list inside the existing .modal-content scaffold. */
+.modal-content .merge-confirm-counts {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+}
+.modal-content .merge-confirm-folders {
+  font-size: var(--fs-base);
+  color: #555;
+  word-break: break-all;
+}
+
+/* quick 260613-c20 — Import-from-server confirm modal file list. Scoped under
+   .modal-content; reuses the existing modal scaffold, only tidies the list
+   indent/spacing (mirrors .merge-confirm-counts). */
+.modal-content .server-import-list {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+}
+
+/* INTEG-03 — the recent-changes (audit) modal. A NEUTRAL modal: it reuses the
+   shared .modal (petrol-ink backdrop) + .modal-content (surface-2 card,
+   --modal-sm width tier) scaffold unchanged, and only types the who/what/when
+   list rows so they read in the design palette. who = primary ink <strong>,
+   what = --color-ink-muted, timestamp = mono ink-faint (the .sync-status span,
+   which is only mono in the .topbar otherwise — re-establish mono here). Tokens
+   only; no bare hex; the loading/error/empty .help lines keep the shared prose
+   styling (no eyebrow leak — there is no eyebrow on this modal). */
+.recent-changes-modal .server-import-list {
+  list-style: none;
+  padding-left: 0;
+}
+.recent-changes-modal .server-import-list li {
+  padding: 0.3rem 0;
+  font-size: var(--fs-base);
+  line-height: 1.4;
+}
+.recent-changes-modal .server-import-list strong {
+  color: var(--color-ink);
+  font-weight: var(--fw-semibold);
+}
+.recent-changes-modal .server-import-list li > span {
+  color: var(--color-ink-muted);
+}
+.recent-changes-modal .server-import-list .sync-status {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-ink-faint);
+  font-weight: var(--fw-regular);
+}
+
+/* ============================================================================
+   quick 260607-qbj — Ingredient Master Manager view.
+   ----------------------------------------------------------------------------
+   Reuses the existing palette (#ddd borders, #f5f5f5/#fafafa fills, #fff panels,
+   4px radius, #666 help text) — no new hues. The table sits in its own scroll
+   container so a long master scrolls inside the view rather than the page. The
+   Add/Save buttons inherit .primary-cta-btn; .start-fresh-btn handles Cancel.
+   ============================================================================ */
+.manager {
+  padding: 1rem;
+  box-sizing: border-box;
+  /* phase 09 / D18 + DESIGN-LANGUAGE §3: tabular manager screens (ingredients /
+     recipes / residents) keep the wider ~760px centred column; the meal-plan
+     reading column narrows to 560px below. Deadspace lives in the margins. */
+  max-width: 54.2857rem;
+  margin: 0 auto;
+}
+/* phase 09 / D18: the meal-plan is the narrow centred reading column (560px),
+   not a full-width sheet — the hero specimen's .wrap width. */
+.manager.meal-plan {
+  max-width: 40rem;
+}
+
+.manager-header h2 {
+  margin: 0 0 0.25rem 0;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-bold);
+  letter-spacing: -0.01em;
+}
+
+/* phase 09-03 — mono uppercase eyebrow that opens each manager view
+   (DESIGN-LANGUAGE §3 / §6). Sits above the <h2> title. */
+.manager-eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+  margin: 0.25rem 0 0.4rem;
+}
+
+.manager .help {
+  font-size: var(--fs-sm);
+  color: var(--color-ink-muted);
+  line-height: 1.45;
+  margin: 0 0 1rem 0;
+  max-width: 60ch;
+}
+
+.manager-controls {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.manager-filter {
+  flex: 1 1 auto;
+  padding: 0.4rem 0.6rem;
+  font: inherit;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-sizing: border-box;
+}
+
+/* quick 260620-sqw — the Add-ingredient button is a flex sibling of the
+   filter input; with default flex-shrink it got squeezed and wrapped onto
+   two lines ("Add" / "ingredient"). Pin it to one line at its intrinsic
+   width. */
+.add-ingredient-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* phase 09-03 — add-new sub-form as a hairline card on surface (no shadow). */
+.manager-add-form {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.manager-add-form h3 {
+  margin-top: 0;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+}
+
+/* Scroll container — long master scrolls inside the view, not the page.
+   phase 09-03 — hairline card on paper, no shadow (DESIGN-LANGUAGE §3). */
+.manager-table-wrap {
+  max-height: calc(100vh - 18rem);
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+}
+
+.manager-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-md);
+}
+
+/* phase 09-03 — header row as a mono uppercase eyebrow band (DESIGN-LANGUAGE
+   §3 / §6 "mono for all data cells"): the column labels are system labels. */
+.manager-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--color-surface);
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--color-border-strong);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+}
+
+.manager-table tbody tr {
+  border-bottom: 1px solid var(--color-border);   /* phase 09-03 — house hairline */
+}
+
+/* phase 09-03 — drop the zebra in favour of clean hairline rows on surface
+   (DESIGN-LANGUAGE §6 "hairline rows on paper"). */
+.manager-table tbody tr:nth-child(even) .manager-row-cell {
+  background: var(--color-surface);
+}
+
+/* phase 09-03 — hover affordance: accent-tint wash on clickable browse rows
+   (the active-row wash, §1). Disabled rows (approving/merging) keep it subtle. */
+.manager-table tbody tr:not(.editing) .manager-row:hover,
+.manager-table tbody tr:not(.editing) .manager-row:focus-within {
+  background: var(--color-accent-tint);
+}
+
+/* phase 09-03 — active/expanded-row highlight: the row whose inline edit panel
+   is open gets the accent-tint wash + a petrol inset accent on the edit cell. */
+.manager-table tbody tr.editing {
+  background: var(--color-accent-tint);
+}
+.manager-table tbody tr.editing .manager-edit-cell {
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
+.manager-row-cell,
+.manager-edit-cell {
+  padding: 0;
+}
+
+/* The non-editing row renders as a flex strip inside a colspan cell so the
+   columns line up loosely without fighting the edit-panel layout. */
+.manager-row {
+  display: grid;
+  grid-template-columns: 4rem 1.4fr 2fr 7rem 4rem;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.45rem 0.75rem;
+  cursor: pointer;
+}
+
+.manager-row.is-disabled {
+  cursor: default;
+}
+
+/* phase 09-03 — manager data cells: mono ledger faces (IDs, units) per the
+   sans/mono split (DESIGN-LANGUAGE §2 / §6). IDs are right-aligned tabular
+   figures so the numeric column scans a clean edge (flush-right data band,
+   §4.2). Name stays SANS (it's language a person reads). */
+.manager-id {
+  font-family: var(--font-mono);
+  color: var(--color-ink-faint);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.manager-name {
+  font-weight: var(--fw-medium);
+}
+
+/* phase 09-03 / quick 260625-vhp — D35 allergen split: the allergen DISPLAY
+   column reads MUTED by default (the no-allergen '—' sentinel must NOT look like
+   danger); only ACTUAL allergen names render danger RED via an inner .danger
+   span. Matches the specimen .c-allerg / .c-allerg .danger split
+   (.planning/ui-reviews/specimen-manager.html ~L74-75). (Distinct from the
+   add-new allergen PICK control, which is petrol-tint when selected — see
+   .add-new-allergens.) */
+.manager-allergens {
+  color: var(--color-ink-muted);
+  font-size: var(--fs-sm);
+}
+.manager-allergens .danger {
+  color: var(--color-danger);
+  font-weight: var(--fw-semibold);
+}
+
+/* shopping-unit is a system token → mono, muted ink. */
+.manager-shopping-unit {
+  font-family: var(--font-mono);
+  color: var(--color-ink-muted);
+  font-size: var(--fs-sm);
+}
+
+/* phase 09-03 — the per-row Edit affordance is a petrol link-control, not a
+   filled button (DESIGN-LANGUAGE §6 "petrol Edit link"). Right-aligned in its
+   narrow column to sit at the row's clean right edge. */
+.manager-edit-btn {
+  padding: 0.25rem 0.4rem;
+  font-family: var(--font-body);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  color: var(--color-accent);
+  text-align: right;
+  justify-self: end;
+}
+.manager-edit-btn:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.manager-edit-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* quick 260608-bd5 — Pending merges view (additive only; reuses the existing
+   .manager-* + .banner-warning palettes, no new color system). One .delta-card
+   per un-merged delta folder; .status-old reuses the warning text color. */
+.delta-card {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--color-border-strong);   /* 2026-06-08 — bolder card separator (was #ddd) */
+  border-radius: var(--radius-card);
+  margin: 0 0 0.75rem 0;
+  background: var(--color-surface);
+}
+
+.delta-card.is-old {
+  border-left: 4px solid var(--warn-border);
+}
+
+/* 2026-06-08 — card hover + active/focused highlight, consistent with the
+   manager rows. focus-within (a button inside the card focused, e.g. mid
+   delete-confirm or upgrade) gets the blue tint; non-old cards also get the
+   3px inset left accent. is-old keeps its amber left bar (the inset accent is
+   suppressed there so the two don't fight), but still tints blue when active. */
+.delta-card:hover {
+  background: #f6f9fd;
+  border-color: var(--color-border-strong);
+}
+.delta-card:focus-within {
+  background: #e8f1fb;
+  border-color: var(--color-border-strong);
+}
+.delta-card:not(.is-old):focus-within {
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+/* keep the amber "blocker" left bar on old-schema cards even while focused
+   (the :focus-within border-color above would otherwise grey it out). */
+.delta-card.is-old:hover,
+.delta-card.is-old:focus-within {
+  border-left-color: var(--warn-border);
+}
+
+.delta-name {
+  font-family: var(--font-mono);
+  font-weight: var(--fw-medium);
+  margin: 0 0 0.35rem 0;
+}
+
+.delta-meta {
+  color: #555;
+  font-size: var(--fs-base);
+  margin: 0 0 0.35rem 0;
+  line-height: 1.4;
+}
+
+.delta-status {
+  font-size: var(--fs-base);
+  margin: 0 0 0.5rem 0;
+}
+
+.delta-status.status-old {
+  color: var(--warn-text-strong);
+  font-weight: 500;
+}
+
+.delta-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.delta-confirm {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+/* quick 260608-agp — recipe-manager additions (additive only). The recipe
+   browse table has 4 columns (ID / Name / Type / Edit) vs the ingredient
+   manager's 5, so override the .manager-row grid inside .recipe-manager. */
+.recipe-manager .manager-row {
+  /* quick 260613-a2t — 5 columns: id / name / type / caveats (flexible) / Edit.
+     The caveats cell holds both the allergen + qty-gap caveats so a long flag is
+     fully readable and Edit keeps its own column. */
+  grid-template-columns: 4rem 1.4fr 5rem minmax(0, 1fr) 4rem;
+}
+
+/* quick 260613-a2t — both browse-list caveats share one grid cell; wrap within
+   it (don't overflow), the container gap supplies spacing. */
+.manager-caveats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem 0.5rem;
+  min-width: 0;
+}
+.manager-caveats .manager-allergen-caveat,
+.manager-caveats .manager-qty-caveat {
+  margin-left: 0;
+  white-space: normal;
+}
+
+/* Type-to-confirm destructive zone for delete. phase 09-03 — bordered DANGER
+   zone (DESIGN-LANGUAGE §6) on the danger palette tokens (was bare #e0a0a0 /
+   #fcf3f3).
+   quick 260627-q7x — finished to the specimen .danger-zone: softer
+   --color-danger-border edge, mono "DANGER ZONE" eyebrow, the copy, then the
+   DELETE-confirm input + delete button on ONE .dz-row. */
+.recipe-delete-zone {
+  margin-top: 1.5rem;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-card);
+  background: var(--color-danger-bg);
+}
+.recipe-delete-zone .danger-zone-eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: var(--fw-semibold);
+  color: var(--color-danger);
+  margin: 0 0 0.4rem;
+}
+.recipe-delete-zone .help {
+  margin: 0 0 0.6rem;
+}
+/* input + button on one row (specimen .dz-row). */
+.recipe-delete-zone .dz-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.recipe-delete-confirm-input {
+  flex: 1;
+  font-family: var(--font-mono);
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-2);
+  padding: 0.5rem 0.7143rem;
+}
+
+.recipe-delete-btn {
+  flex: none;
+  background: var(--color-danger);
+  color: #fff;
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-control);
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+}
+
+.recipe-delete-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* quick 260625-vsw — the edit-ingredient modal as a raised-card with bands
+   (specimen-modal.html .modal-head / .modal-body / .modal-foot). The
+   .modal-content shell (L508, shared with Settings/restore-prompt) becomes a
+   flex column with padding:0 ONLY for this modal (scoped via :has so the other
+   modals keep their flat padding); the bands carry their own padding and the
+   body scrolls. NO drop shadow (live DESIGN-LANGUAGE §4.3 — separation is
+   border + ground; KEEP it). */
+.modal-content:has(> .manager-edit-panel) {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+.manager-edit-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+}
+/* header band: title + mono ink-faint #id sub-line, bottom hairline */
+.manager-edit-panel .modal-head {
+  padding: 1rem 1.4286rem;
+  border-bottom: 1px solid var(--color-border);
+  flex: none;
+}
+.manager-edit-panel .modal-head h2 {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
+}
+/* scrolling body band */
+.manager-edit-panel .modal-body {
+  padding: 1.2857rem 1.4286rem;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.manager-edit-id {
+  font-family: var(--font-mono);   /* phase 09-03 — the id is a system token */
+  /* quick 260625-vsw — match the specimen .modal-head .sub (fs-xs, ink-faint) */
+  font-size: var(--fs-xs);
+  color: var(--color-ink-faint);
+  margin: 0.1429rem 0 0 0;
+}
+
+/* quick 260627-q7x — recipe-edit head band: title block left, × close right
+   (specimen-recipe-editor.html .modal-head). The edit-ingredient .modal-head is a
+   simple stacked head (no close button), so this flex row is scoped to the recipe
+   editor only via .recipe-edit-head. */
+.manager-edit-panel .modal-head.recipe-edit-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.8571rem;
+}
+.manager-edit-panel .modal-head.recipe-edit-head h2 {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
+  line-height: 1.2;
+}
+/* × close: a quiet ink-faint glyph that darkens on hover (specimen .modal-close);
+   routes through the same dirty-guard path as escape/backdrop. */
+.modal-close {
+  background: transparent;
+  border: 0;
+  /* on-scale token (specimen used a bare 1.3rem; --fs-xl=1.4rem is the nearest
+     token — keeps the consolidation clean, no off-scale literal). */
+  font-size: var(--fs-xl);
+  line-height: 1;
+  color: var(--color-ink-faint);
+  cursor: pointer;
+  padding: 0.1429rem 0.4286rem;
+  flex: none;
+}
+.modal-close:hover {
+  color: var(--color-ink);
+}
+.modal-close:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.manager .modal-buttons {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  justify-content: flex-end;
+}
+
+/* quick 260625-vsw — footer band (specimen .modal-foot): top hairline, surface
+   bg, right-aligned, flex:none. Scoped to the edit-ingredient modal footer; the
+   margin-top:1rem from .manager .modal-buttons does not apply here (this footer
+   is not inside .manager). */
+.manager-edit-panel .modal-foot {
+  display: flex;
+  gap: 0.6429rem;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 0.9286rem 1.4286rem;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+  flex: none;
+  margin: 0;
+}
+
+/* phase 09-03/09-04 — the Cancel button as the GHOST face of the one button
+   hierarchy (bordered neutral, DESIGN-LANGUAGE §4.6/§6). Sits beside the petrol
+   primary (.primary-cta-btn) so every modal footer reads as the SAME hierarchy
+   (primary petrol / ghost cancel / danger delete). Three footers share it:
+   the manager add-new form (.manager .modal-buttons), the edit-INGREDIENT modal
+   footer (.manager-edit-panel .modal-buttons — a top-level .modal, NOT inside
+   .manager, so it needs its own scope), and the edit-RECIPE modal sticky-header
+   Cancel (.recipe-edit-modal .sticky-header). The parse-view .sticky-header
+   .start-fresh-btn (its own scope at L563) is deliberately untouched. */
+/* quick 260627-q7x — the edit-RECIPE modal now uses the SAME .manager-edit-panel
+   .modal-foot footer as the edit-ingredient modal (its old .sticky-header retired),
+   so the dedicated .recipe-edit-modal .sticky-header .start-fresh-btn scope is gone —
+   the .manager-edit-panel .modal-buttons selector below already covers both modals'
+   ghost Cancel. (The parse-view .sticky-header .start-fresh-btn at its own scope,
+   ~L731, is unaffected and stays.) */
+.manager .modal-buttons .start-fresh-btn,
+.manager-edit-panel .modal-buttons .start-fresh-btn {
+  background: var(--color-surface-2);
+  color: var(--color-ink-muted);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+}
+.manager .modal-buttons .start-fresh-btn:disabled,
+.manager-edit-panel .modal-buttons .start-fresh-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* quick 260610-eyh — Recipe Manager type + allergen filters (additive; the
+   original .manager-controls / .manager-filter blocks above are unmodified). */
+
+/* Let the browse controls wrap once the type + allergen groups are added. Same
+   specificity as the base rule but later in the file → wins for the wrap/gap
+   properties without overriding the original block. */
+.recipe-manager-browse .manager-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  row-gap: 0.5rem;
+}
+
+.manager-filter-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 0.3rem 0.6rem;
+  margin: 0;
+}
+
+.manager-filter-group legend {
+  font-size: var(--fs-base);
+  color: var(--color-ink-muted);
+  padding: 0 0.3rem;
+}
+
+.manager-filter-note {
+  font-size: var(--fs-sm);
+  color: var(--warn-text);
+}
+
+.manager-result-count {
+  font-family: var(--font-mono);   /* phase 09-03 — a count is a measured value */
+  font-size: var(--fs-sm);
+  color: var(--color-ink-muted);
+  margin: 0.25rem 0;
+}
+
+.manager-empty-state {
+  padding: 1rem;
+  color: var(--color-ink-muted);
+  font-style: italic;
+}
+
+/* .manager-qty-caveat — quick 260613-a2t — grouped with the allergen caveat:
+   identical warning palette (var(--warn-text)) + small font + no wrap. */
+.manager-allergen-caveat,
+.manager-qty-caveat {
+  font-size: var(--fs-sm);
+  color: var(--warn-text);
+  margin-left: 0.5rem;
+  white-space: nowrap;
+}
+
+/* ==========================================================================
+   quick 260611-enp — Meal plan view (additive only; reuses the .manager visual
+   language and the var(--warn-text) caveat palette — no new color system).
+   ========================================================================== */
+.meal-plan-picker {
+  margin-bottom: 1rem;
+}
+.meal-plan-pick-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+.meal-plan-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--color-border);
+}
+/* quick 260612-lob — the picker must STACK: filter input full-width on top, the
+   candidate pick-list full-width below. Override the shared
+   .manager-controls flex (display:flex; align-items:center) which otherwise sits
+   the input and the <ul> side-by-side and squeezes the list. Scoped — no !important. */
+.meal-plan-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+/* quick 260620-fn6 — the old .meal-plan-picker-bar (260618-e1z single flat row)
+   was removed when the picker was restructured into the search-first + Filters
+   disclosure layout below; its markup no longer exists. */
+.meal-plan-pick-row .manager-name {
+  flex: 1;
+}
+/* quick 260620-fn6 — Option A picker layout: search-first + Filters disclosure.
+   Segmented chips, disclosure button, badge pill, primary/meta/advanced rows.
+   Tokens only — the ONLY bare literal is #fff for text ON --color-accent fill
+   (matches the established on-accent CTA idiom; no on-accent token exists).
+
+   quick 260621-9lo — the generalized filter-* co-selectors below (.filter-primary,
+   .filter-meta, .filter-chip, .filter-disclosure, .filter-badge, .filter-clear-link,
+   .filter-advanced) are SHARED by the Recipe Manager browse filters, which were
+   re-skinned to match this picker. Single source of truth — the declarations are
+   not duplicated; the meal-plan-* selectors stay so the picker is unchanged. The
+   picker-only sub-element rules (sort, numeric inputs) are deliberately NOT aliased. */
+.meal-plan-picker-primary,
+.filter-primary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+.meal-plan-picker-primary .meal-plan-picker-sort {
+  margin-left: auto;
+  gap: 0.3rem;
+  font-size: var(--fs-base);
+}
+.meal-plan-picker-meta,
+.filter-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+.meal-plan-picker-meta .manager-result-count,
+.filter-meta .manager-result-count {
+  margin-left: auto;
+}
+/* phase 09-02 — pill chip (DESIGN-LANGUAGE §4.4): hairline ghost by default,
+   accent-tint wash + accent text when selected (NOT a solid accent fill). */
+.meal-plan-chip,
+.filter-chip {
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-ink-muted);
+  border-radius: var(--radius-control);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+}
+.meal-plan-chip.active,
+.filter-chip.active {
+  border-color: var(--color-accent-tint);
+  background: var(--color-accent-tint);
+  color: var(--color-accent);
+  font-weight: var(--fw-semibold);
+}
+.meal-plan-chip:disabled,
+.filter-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.meal-plan-disclosure,
+.filter-disclosure {
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: var(--fs-base);
+  cursor: pointer;
+  padding: 0;
+}
+.meal-plan-filter-badge,
+.filter-badge {
+  display: inline-block;
+  background: var(--color-accent);
+  color: #fff;
+  border-radius: 71.3571rem;
+  font-size: var(--fs-sm);
+  padding: 0 0.4rem;
+  margin-left: 0.35rem;
+}
+.meal-plan-clear-link,
+.filter-clear-link {
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: var(--fs-base);
+  cursor: pointer;
+  padding: 0;
+}
+.meal-plan-clear-link:hover,
+.filter-clear-link:hover {
+  text-decoration: underline;
+}
+.meal-plan-picker-advanced,
+.filter-advanced {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.75rem;
+  margin-top: 0.5rem;
+}
+.meal-plan-picker-advanced .meal-plan-picker-num {
+  gap: 0.3rem;
+  font-size: var(--fs-base);
+}
+.meal-plan-picker-advanced .meal-plan-picker-num input[type="number"] {
+  width: 4rem;
+}
+/* phase 09-02 — hairline card on paper, NO shadow (DESIGN-LANGUAGE §3). Separation
+   is border + ground; shadows are absent by design. Surface on paper. */
+/* Round-2 fidelity (quick 260625-itm) — FLAT entry (specimen `.entry`): the per-recipe
+   surface CARD (border + radius + surface fill + card padding) is removed so entries
+   read as flat rows inside the ONE day card (see .meal-plan-day-group below), separated
+   by a single hairline like the specimen. The last entry in a day drops its rule. */
+.meal-plan-recipe {
+  border: none;
+  border-radius: 0;
+  padding: 0.3rem 0;
+  margin: 0;
+  background: none;
+  border-bottom: 1px solid var(--color-border);
+}
+.meal-plan-entry-block:last-child .meal-plan-recipe {
+  border-bottom: none;
+}
+/* quick 260612-lob — head is a flex row: title flexes to fill, Remove is pushed
+   right, the live scale-note wraps to its own line below. Subtle bar + padding. */
+/* Round-2 fidelity (quick 260625-itm) — the head is now a FLAT entry row (specimen
+   `.entry`): the paper-ground header bar + its bleed margins + bottom rule + top radius
+   are dropped (those framed the now-removed per-recipe card). Just a baseline flex row. */
+.meal-plan-recipe-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0.25rem 0;
+  background: none;
+  border-bottom: none;
+  border-radius: 0;
+}
+/* F10 (quick 260625-itm) — the title flexes to fill the head row; size now comes from
+   the base .meal-plan-recipe-link rule (.fs-base, single-line) — the old .fs-lg override
+   is dropped so the name reads as the quieter specimen `.entry-name`. min-width:0 lets
+   the flex item shrink so the ellipsis truncation actually fires. */
+.meal-plan-recipe-head .meal-plan-recipe-link {
+  flex: 1;
+  min-width: 0;
+}
+.meal-plan-recipe-head .manager-edit-btn {
+  margin-left: auto;
+}
+.meal-plan-scale-note {
+  flex-basis: 100%;
+  font-size: var(--fs-sm);
+  color: var(--color-ink-muted);
+  margin-top: 0.1rem;
+}
+/* quick 260620-rm6 — a real headcount-driven suggestion reads more prominently
+   than the muted scaled-line fallback.
+   phase 09-08 / PORT-04 — restyled to the specimen `.suggest-sub`: a small mono
+   underlined subtitle (ink-muted at rest, accent on hover). The clickable "apply"
+   semantics are preserved; only the visual treatment moves from accent-bold to the
+   mono-underlined subtitle the design specifies. */
+.meal-plan-suggested {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-ink-muted);
+  font-weight: var(--fw-regular);
+}
+/* quick 260620-sg9 — the suggestion rendered as a clickable apply-button. Reset the
+   UA button chrome (font-family must be re-inherited — it is NOT inherited by
+   default); colour/size/weight come from .meal-plan-scale-note + .meal-plan-suggested.
+   phase 09-08 — the underline is now at-rest (specimen `.suggest-sub`, a faint
+   border-strong underline), brightening to accent on hover. */
+.meal-plan-suggested-btn {
+  font-family: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--color-border-strong);
+  text-underline-offset: 2px;
+}
+.meal-plan-suggested-btn:hover {
+  color: var(--color-accent);
+  text-decoration-color: var(--color-accent);
+}
+/* F8/F9 (quick 260625-itm) — INLINE servings control (specimen `.serving-control`):
+   a mono lowercase `serves` lbl + the narrow number input + the suggest-sub, all on
+   one baseline-aligned row. Was a stacked "Servings"-above-input label. Tokens only. */
+.meal-plan-servings {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--color-ink-muted);
+}
+/* Round-2 fidelity (quick 260625-itm) — the specimen `.serving-control .lbl` is a tiny
+   UPPERCASE tracked mono eyebrow in ink-faint. (Specimen uses .6rem; we hold to the
+   token scale floor --fs-xs to respect the no-off-scale-font rule.) */
+.meal-plan-serves-lbl {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+}
+/* Round-2 fidelity (quick 260625-itm) — the shared form rule `label input[type=number]`
+   (block + width:100% + margin-top, specificity 0,1,2) was beating the old
+   `.meal-plan-servings input` (0,1,1), so the input rendered ~170px wide and stacked.
+   Qualify with .meal-plan-recipe-head (0,3,2) to win, and reset to the narrow,
+   right-aligned, inline specimen `.servings-input` (≈46px). */
+.meal-plan-recipe-head .meal-plan-servings input[type="number"] {
+  display: inline-block;
+  width: 3rem;
+  margin-top: 0;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-sm);
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  box-sizing: border-box;
+}
+/* F9 (quick 260625-itm) — the suggested-servings as the specimen `.suggest-sub`: a
+   borderless mono petrol micro-button beside the input (an actionable suggestion =
+   petrol), underline on hover. Click still applies via applySuggestedServings. */
+/* Round-2 fidelity (quick 260625-itm) — specimen `.suggest-sub` is a quiet ink-muted
+   mono subtitle with an at-rest faint underline (NOT petrol), brightening to accent on
+   hover. (Was full petrol + no rest underline.) Click still applies via the handler. */
+.meal-plan-suggest-sub {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-ink-muted);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--color-border-strong);
+  text-underline-offset: 2px;
+}
+.meal-plan-suggest-sub:hover {
+  color: var(--color-accent);
+  text-decoration-color: var(--color-accent);
+}
+/* F7 (quick 260625-itm) — mono uppercase typegroup label (specimen `.typegroup-label`)
+   heading each type group within a day. Matches the eyebrow scale; CSS uppercases the
+   raw entry.type (data not mutated). Tokens only. */
+.meal-plan-typegroup-label {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+  margin: 0.6rem 0 0.25rem;
+}
+.meal-plan-typegroup-label:first-child {
+  margin-top: 0;
+}
+/* quick 260620-esf — three demarcated meal-plan ZONES (Add recipes / day-by-day
+   plan / Shopping & trays). Card framing via existing tokens only; bare-rem
+   spacing consistent with .meal-plan-day-group. */
+/* phase 09-02 — RESERVED PLACEHOLDER HOME (DEFERRED D6/D11 conflict banner +
+   D13a order-scope selector). Styled home ONLY — no logic. Hairline surface card
+   on paper, a mono scope label + an ink-faint italic placeholder note (mirrors the
+   specimen's .scopebar / .placeholder-note). Tokens only. */
+/* phase 09-07 / PORT-04 — the reserved block is now just a layout wrapper; its two
+   children (scopebar + conflict-banner) carry the specimen styling themselves. */
+.meal-plan-reserved {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+/* phase 09-07 — specimen .scopebar: a surface card, hairline border, radius-card,
+   a mono eyebrow, the ghost/active Upcoming-Past tabs, a mono petrol scope chip. */
+.meal-plan-scopebar-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.55rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 0.6rem 0.85rem;
+}
+/* F2/F3 (quick 260625-itm) — the bound Upcoming/Past tabs now head the scopebar.
+   .meal-plan-scope-tabs also carries .meal-list-tabs-bar (the tab row layout); this
+   rule keeps the standalone-class fallback gap. The old "Order scope"
+   .meal-plan-scope-eyebrow rule was removed with its markup. */
+.meal-plan-scope-tabs {
+  display: flex;
+  gap: 0.5rem;
+}
+/* F3 (quick 260625-itm) — specimen `.scope-hint`: a quiet explanatory line under
+   the scopebar controls. Tokens only. */
+.meal-plan-scope-hint {
+  font-family: var(--font-body);
+  font-size: var(--fs-sm);
+  color: var(--color-ink-muted);
+  line-height: 1.35;
+  margin: 0.15rem 0 0;
+}
+.meal-plan-scope-pick {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.meal-plan-scope-lbl {
+  font-size: var(--fs-sm);
+  color: var(--color-ink-muted);
+}
+.meal-plan-scope-range {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-accent);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-control);
+  padding: 0.1rem 0.55rem;
+  /* quick 260627-i6h (D13a) — the chip is now a <button> opening the range picker;
+     reset native button chrome so it still reads as the mono petrol chip. */
+  cursor: pointer;
+  line-height: inherit;
+}
+/* quick 260627-i6h (D13a) — order-scope from→to range picker. The wrapper anchors the
+   popover (reuses the .meal-plan-menu-pop shell); the popover holds a "Whole plan"
+   reset + stacked From/To selects. Tokens only — no bare hexes / off-scale sizes. */
+.meal-plan-scope-picker {
+  position: relative;
+  display: inline-flex;
+}
+.meal-plan-scope-pop {
+  left: 0;
+  right: auto;
+}
+.meal-plan-menu-item-active {
+  color: var(--color-accent);
+  font-weight: var(--fw-semibold);
+}
+.meal-plan-scope-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.35rem 0.55rem 0.15rem;
+}
+.meal-plan-scope-field {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: var(--fs-sm);
+  color: var(--color-ink);
+}
+.meal-plan-scope-field-lbl {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-ink-muted);
+  min-width: 2.6rem;
+}
+.meal-plan-scope-select {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--color-ink);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 0.15rem 0.4rem;
+}
+/* quick 260627-e6t — LIVE per-day allergen-conflict banner (SAFETY-CRITICAL,
+   advisory-only). Base layout (was the static .meal-plan-conflict-placeholder).
+   Per-state colour comes from the modifier classes below — the FIVE states MUST
+   stay visually distinguishable (especially clear vs cant-check). Tokens only:
+   danger = --color-danger / --color-danger-bg / --color-danger-border;
+   caution = --warn-text / --warn-bg / --warn-border;
+   neutral (cant-check) = --color-ink-faint / --color-surface / --color-border-strong;
+   clear = --color-success / --color-accent-tint / --color-accent-border.
+   NO bare hex, NO parallel palette. */
+.meal-plan-conflict-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  margin: 0.45rem 0;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--color-border);
+  border-left: 5px solid var(--color-border-strong);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+}
+/* conflict — most severe: full danger palette (reuses the phase 09-07 danger look). */
+.meal-plan-conflict-banner-conflict {
+  background: var(--color-danger-bg);
+  border-color: var(--color-danger-border);
+  border-left-color: var(--color-danger);
+}
+.meal-plan-conflict-banner-conflict .meal-plan-conflict-mark,
+.meal-plan-conflict-banner-conflict .meal-plan-conflict-head {
+  color: var(--color-danger);
+}
+/* unmatched + unknown — caution (amber): a present resident we can't clear. */
+.meal-plan-conflict-banner-unmatched,
+.meal-plan-conflict-banner-unknown {
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
+  border-left-color: var(--warn-border);
+}
+.meal-plan-conflict-banner-unmatched .meal-plan-conflict-mark,
+.meal-plan-conflict-banner-unknown .meal-plan-conflict-mark,
+.meal-plan-conflict-banner-unmatched .meal-plan-conflict-head,
+.meal-plan-conflict-banner-unknown .meal-plan-conflict-head {
+  color: var(--warn-text-strong);
+}
+/* cant-check — NEUTRAL (muted grey): roster not loaded, NOT a safety claim.
+   Deliberately desaturated so it never reads as the positive "clear" state. */
+.meal-plan-conflict-banner-cant-check {
+  background: var(--color-surface);
+  border-color: var(--color-border-strong);
+  border-left-color: var(--color-ink-faint);
+}
+.meal-plan-conflict-banner-cant-check .meal-plan-conflict-mark,
+.meal-plan-conflict-banner-cant-check .meal-plan-conflict-head {
+  color: var(--color-ink-faint);
+}
+/* clear — calm/positive (herb + petrol tint): checked, no conflict. Must NOT
+   look identical to cant-check — uses the accent-tint ground + success ink. */
+.meal-plan-conflict-banner-clear {
+  background: var(--color-accent-tint);
+  border-color: var(--color-accent-border);
+  border-left-color: var(--color-success);
+}
+.meal-plan-conflict-banner-clear .meal-plan-conflict-mark,
+.meal-plan-conflict-banner-clear .meal-plan-conflict-head {
+  color: var(--color-success);
+}
+.meal-plan-conflict-mark {
+  font-size: var(--fs-lg);
+  line-height: 1.2;
+  color: var(--color-ink-faint);
+}
+.meal-plan-conflict-body {
+  flex: 1;
+}
+.meal-plan-conflict-head {
+  font-weight: var(--fw-bold);
+  color: var(--color-ink);
+  font-size: var(--fs-base);
+}
+.meal-plan-conflict-detail {
+  font-size: var(--fs-sm);
+  color: var(--color-ink);
+  margin-top: 0.1rem;
+  line-height: 1.3;
+}
+/* secondary caveat line (unmatched/unknown carried under a conflict banner). */
+.meal-plan-conflict-caveat {
+  font-size: var(--fs-xs);
+  color: var(--warn-text-strong);
+  margin-top: 0.2rem;
+  line-height: 1.3;
+}
+.meal-plan-placeholder-note {
+  font-size: var(--fs-xs);
+  font-style: italic;
+  color: var(--color-ink-faint);
+  margin: 0;
+  line-height: 1.3;
+}
+
+.meal-plan-zone {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 0.75rem 1rem 1rem;
+  margin-bottom: 1.25rem;
+}
+/* phase 09-02 — mono uppercase EYEBROW section label (DESIGN-LANGUAGE §3). One per
+   region; encodes "what this block is". Faint ink, tight tracking, mono tabular. */
+.meal-plan-zone-heading {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+  margin: 0.25rem 0 0.6rem;
+}
+/* Add-recipes caret header reuses the tray-header treatment (no new color). */
+.meal-plan-zone-toggle {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+}
+/* quick 260620-esf — collapsible day HEADER ROW: caret · label · tray toggle ·
+   Cook button on one wrapping flex row. Keeps the accent label + bottom border
+   from .meal-plan-day-header (which still styles the inner <h4>). */
+/* phase 09-07 / PORT-04 — the day-header reads as a header BAND (specimen
+   .day-head): a faint petrol wash distinct from BOTH the paper ground and the
+   surface card body, top-rounded so it caps the day card. Children + bindings
+   unchanged; only the band background / radius / padding change. */
+.meal-plan-day-header-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  /* Round-2 (quick 260625-itm) — bleed horizontally over the day card's 0.9rem padding
+     so the tint strip caps the card edge-to-edge; flush at the top, gap below. */
+  margin: 0 -0.9rem 0.5rem;
+  padding: 0.4rem 0.75rem;
+  background: var(--color-accent-tint);
+  border-bottom: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-card) var(--radius-card) 0 0;
+}
+/* The label <h4> inside the row drops its own border/margin (the row owns them).
+   phase 09-08 / PORT-04 — the day label is now rendered as the specimen `.day-tick`:
+   a compact mono DATE CHIP (dark ink fill + surface-2 text) rather than an accent
+   heading. group.label ("Tuesday, 24/06") is unchanged — only its presentation. */
+/* F5 (quick 260625-itm) — the day label is the specimen `.day-tick`: a plain mono
+   ink date chip ("FRI 26/06"), tabular figures, no fill / no decoration. The dark
+   ink-fill chip from 09-08 is replaced by the quieter specimen treatment. */
+/* Round-2 fix (quick 260625-itm) — the date chip is the FILLED specimen `.day-tick`:
+   a dark ink-fill pill with light (surface-2) mono text. (Regression repair: round-1
+   F5 wrongly flattened the 09-08 dark chip to plain text on a misread of the specimen,
+   which actually sets `background:var(--color-ink); color:var(--color-surface-2)`.) */
+.meal-plan-day-header-row .meal-plan-day-header {
+  margin: 0;
+  padding: 0.12rem 0.5rem;
+  border-bottom: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.05em;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-surface-2);
+  background: var(--color-ink);
+  border-radius: var(--radius-control);
+}
+.meal-plan-day-caret {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+}
+/* F6 (quick 260625-itm) — the day actions cluster (specimen `.day-tools`), pushed
+   to the right of the header row. */
+.meal-plan-day-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+/* F6 — ghost bordered day buttons (specimen `.daybtn`): surface ground, hairline
+   border, ink-muted text, mono-free body label, hover → petrol. Layered ON TOP of
+   the .manager-edit-btn base so the per-day buttons read as one ghost family. The
+   .prep modifier gets a subtle accent hint (specimen `.daybtn.prep`). Tokens only. */
+.meal-plan-daybtn.meal-plan-daybtn,
+.meal-plan-day-tools .meal-plan-daybtn {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 0.2rem 0.6rem;
+  font-family: var(--font-body);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--color-ink-muted);
+  cursor: pointer;
+}
+.meal-plan-day-tools .meal-plan-daybtn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+/* Round-2 fix (quick 260625-itm) — Prep is the AMBER "this day needs prep" button
+   (specimen `.daybtn.prep`): warn-bg fill + warn border + strong-amber bold text, so a
+   day that needs prepping jumps out (amber = attention; red stays reserved for
+   allergens, D6). Was only petrol text on the ghost surface. */
+.meal-plan-day-tools .meal-plan-daybtn-prep {
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
+  color: var(--warn-text-strong);
+  font-weight: var(--fw-bold);
+}
+/* keep the amber identity on hover (don't fall back to the ghost petrol hover). */
+.meal-plan-day-tools .meal-plan-daybtn-prep:hover {
+  border-color: var(--warn-border);
+  color: var(--warn-text-strong);
+}
+/* quick 260627-iy8 — green "prep DONE" override. EQUAL specificity to the amber base
+   above, so it must stay AFTER it in source order to WIN — do NOT reorder. The day's
+   Prep button stays visible (x-show unchanged) but flips amber→green to mark advance-
+   prep complete. var() tokens only (the green ground is the new --color-success-bg). */
+.meal-plan-day-tools .meal-plan-daybtn-prep-done {
+  background: var(--color-success-bg);
+  border-color: var(--color-success);
+  color: var(--color-success);
+  font-weight: var(--fw-bold);
+}
+/* keep the green identity on hover (mirror the amber :hover shape). */
+.meal-plan-day-tools .meal-plan-daybtn-prep-done:hover {
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+/* quick 260620-gi4 — at-a-glance day subtitle (headcount + recipes-by-type).
+   Color/size inherited from `.help` (muted) — NOT redeclared here, so no new hex.
+   Left indent sits the line under the day label, past the caret. Pieces are
+   dot-separated BETWEEN siblings only via the ::before rule. */
+/* Round-2 (quick 260625-itm) — now an INLINE meta span in the header band beside the
+   date chip (was a block <p> on its own line below). The `help` class was dropped from
+   the span: `.manager .help` (0,2,0) was forcing margin-bottom:1rem onto this flex item,
+   which shifted the "N present" meta ~7px above the chip centre. Colour/size are set
+   here directly instead. align-items:center keeps the meta on the chip's centre line. */
+.meal-plan-day-subtitle {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  font-size: var(--fs-sm);
+  color: var(--color-ink-muted);
+}
+/* quick 260620-gi4 — dot separator is now an INDEX-GATED element (.meal-plan-day-sep,
+   x-show="i > 0") rather than a CSS `* + *::before`, so a hidden/absent headcount
+   never leaves a stray leading dot. Inherits the muted `.help` colour. */
+.meal-plan-day-sep {
+  margin-right: 0.4rem;
+}
+.meal-plan-day-typegroup strong {
+  font-weight: var(--fw-medium);
+}
+/* phase 09-08 / PORT-04 — the headcount segment ("8 present") is a measured value
+   → mono ink-muted per the specimen `.headcount`. Size unchanged (inherits the
+   `.help` muted colour for everything else; only the headcount becomes tabular). */
+.meal-plan-day-headcount {
+  font-family: var(--font-mono);
+  color: var(--color-ink-muted);
+}
+/* quick 260627-r94 (R94-2) — the day's HEADLINE recipe name in the header band, sat
+   between the headcount subtitle and the right-pushed day-tools cluster. Tokens only:
+   slightly stronger than the muted subtitle so the "what" reads as the day's anchor. */
+.meal-plan-day-headline {
+  margin-left: 0.25rem;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--color-ink);
+}
+/* quick 260627-r94 (R94-3) — the per-day ALLERGEN ICON button (replaces the inline
+   banner) sits at the start of .meal-plan-day-tools. Inherits the ghost .meal-plan-daybtn
+   frame; only the glyph sizing/padding is tuned here so the emoji reads clearly and the
+   button stays compact. Tokens only. */
+.meal-plan-day-tools .meal-plan-allergen-icon {
+  font-size: var(--fs-base);
+  line-height: 1;
+  padding: 0.15rem 0.4rem;
+}
+/* quick 260627-r94 follow-up — the warning triangle is a text-presentation glyph, so
+   CSS `color` tints it. Severity classes set by the button's :class binding: red for an
+   allergen conflict, amber for unmatched/unknown allergy text. cant-check's ❓ takes
+   neither (emoji, keeps its own colour). Tokens only. */
+.meal-plan-day-tools .meal-plan-allergen-icon.allergen-icon-danger {
+  color: var(--color-danger);
+}
+.meal-plan-day-tools .meal-plan-allergen-icon.allergen-icon-warn {
+  color: var(--warn-text);
+}
+/* quick 260620-esf — Tray-lists tab: per-day sub-block spacing. */
+.meal-plan-tray-day {
+  margin-bottom: 1rem;
+}
+/* quick 260615-lzq — per-day grouping. Day-header per group + the per-entry date
+   input (sits in the recipe-head flex row next to Servings). Tokens only. */
+/* Round-2 fidelity (quick 260625-itm) — the day is ONE hairline surface card (specimen
+   `.day`): the tinted header strip caps it, the body (cooks, entries) sits in the card's
+   horizontal padding, entries are flat rows. overflow:visible so the ⋯ menu can escape. */
+.meal-plan-day-group {
+  margin-bottom: 0.9rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 0 0.9rem 0.7rem;
+  overflow: visible;
+}
+/* quick 260627-joq — TRULY EMPTY day (group.entries.length === 0 → .meal-plan-day-empty):
+   render JUST the petrol header band. The cooks line, allergen banner, and day body are
+   already entries-gated, so the only things to suppress are the body whitespace + the
+   expand caret. A run of empty days then stacks ~80% tighter than the 0.9rem populated-day
+   gap. Populated days never carry the class, so they are untouched. Tokens only. */
+.meal-plan-day-group.meal-plan-day-empty {
+  padding-bottom: 0;                  /* drop the 0.7rem card bottom-padding */
+}
+.meal-plan-day-group.meal-plan-day-empty .meal-plan-day-header-row {
+  margin-bottom: 0;                   /* drop the 0.5rem gap below the band */
+  border-bottom: none;                /* no body to separate from */
+  border-radius: var(--radius-card);  /* round ALL four corners — the band IS the card */
+}
+.meal-plan-day-group.meal-plan-day-empty .meal-plan-day-caret {
+  display: none;                      /* nothing to expand */
+}
+/* Tighten the gap ONLY between an empty day and another empty day that immediately
+   follows it (:has), so the LAST empty before a populated day keeps the normal 0.9rem. */
+.meal-plan-day-group.meal-plan-day-empty:has(+ .meal-plan-day-group.meal-plan-day-empty) {
+  margin-bottom: 0.18rem;             /* 0.9rem − 80% */
+}
+.meal-plan-day-header {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  color: var(--color-accent);
+  margin: 0 0 0.6rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--color-border-strong);
+}
+/* J2 (quick 260625-itm) — the per-entry "Day" <input type=date> control was removed,
+   so its .meal-plan-date rule is gone with it (nothing references it now). */
+/* quick 260612-lob — amount-led rows.
+   F11/F12/J3/J5 (quick 260625-itm) — the provenance SECOND line (.meal-plan-row-meta)
+   is GONE; a row is now the single clean specimen `.irow`: plain-ink name left, mono
+   qty (+ optional vol + the J5 marker) flush right. Switched from the old 3-col grid
+   to a baseline flex row so the name truncates and the qty group sits right. */
+/* Round-2 fidelity (quick 260625-itm) — the ingredient list is the narrow indented
+   specimen `.entry-rows` (max-width ~330px, indented under the recipe name) so the qty
+   sits close to the name instead of flung to the far card edge; rows are tight. */
+.meal-plan-rows {
+  max-width: 21rem;
+  padding-left: 1.4rem;
+}
+.meal-plan-row {
+  display: flex;
+  flex-direction: column;
+  padding: 0.05rem 0;
+}
+.meal-plan-row-main {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+/* quick 260612-k86 — matched meal-plan ingredient renders as a SUBTLE inline link
+   (not a button chrome): transparent, borderless, zero padding, inherited type, and
+   the SAME min-width as .meal-plan-ing-name so matched/unmatched rows align
+   identically. Hover/focus underline + an accessible focus-visible ring. */
+.meal-plan-ing-link {
+  display: inline-block;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  /* quick 260614-sht — rest-state link affordance (UI-REVIEW WARNING): accent +
+     dotted underline so clickable ingredient/shopping links read as clickable at
+     rest, not as plain text. Token-based (no bare hex). Hover/focus below keep the
+     solid underline, which visually overrides this dotted rest cue. */
+  color: var(--color-accent);
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.meal-plan-ing-link:hover,
+.meal-plan-ing-link:focus-visible,
+.meal-plan-recipe-link:hover,
+.meal-plan-recipe-link:focus-visible {
+  text-decoration: underline;
+}
+.meal-plan-ing-link:focus-visible,
+.meal-plan-recipe-link:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 0.1429rem;
+}
+/* F11 (quick 260625-itm) — ROW-SCOPED plain-ink ingredient name (specimen `.iname`).
+   The matched-ingredient .meal-plan-ing-link is GLOBALLY a petrol link (correct in the
+   shopping/regulars/check-stock lists — DO NOT change those .shop-name links), but in
+   the day-body recipe ROW it should read as plain ink. This override is scoped to
+   .meal-plan-row-main ONLY: ink colour, no underline, normal weight; the
+   openEditIngredient click is unchanged (hover still hints petrol, so it stays
+   discoverable as clickable). Both the matched link + the unmatched span flex to fill
+   and truncate so the qty group sits flush right. */
+.meal-plan-row-main .meal-plan-ing-link,
+.meal-plan-row-main .meal-plan-ing-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Round-2 (quick 260625-itm) — specimen `.iname` is ink-MUTED, not full ink. */
+  color: var(--color-ink-muted);
+  font-weight: var(--fw-regular);
+  text-decoration: none;
+}
+.meal-plan-row-main .meal-plan-ing-link:hover,
+.meal-plan-row-main .meal-plan-ing-link:focus-visible {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+/* quick 260612-kv1 — meal-plan recipe TITLE as a click-through link. Shares the
+   borderless-button link affordance with .meal-plan-ing-link, but it REPLACES a
+   .manager-name span inside .meal-plan-recipe-head, so `font: inherit` would pick
+   up the head container's font rather than the old span's. Restore the title's
+   prior prominence explicitly: .manager-name's font-weight:500, the head's 1rem
+   size, and inherited color. */
+/* F10 (quick 260625-itm) — entry name is the specimen `.entry-name`: a plain petrol
+   single-line name (no underline at rest, no wrap — truncates with an ellipsis). Still
+   a clickable button (openEditRecipe); hover hints the underline. Was an accent +
+   dotted-underline link at .fs-lg; demoted to .fs-base semibold single-line. */
+.meal-plan-recipe-link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: none;
+  font-family: inherit;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+  color: var(--color-accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* quick 260612-k86 — back-to-meal-plan button, visually consistent with the
+   other manager buttons (matches .toolbar button padding/sizing). */
+.manager-back-to-mealplan {
+  padding: 0.4rem 0.9rem;
+  font-size: var(--fs-md);
+  cursor: pointer;
+  margin-bottom: 0.5rem;
+}
+/* phase 09-02 — measured value → MONO, flush-right (DESIGN-LANGUAGE §2/§4.2). */
+.meal-plan-ing-metric {
+  font-family: var(--font-mono);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-base);
+  text-align: right;
+}
+/* quick 260612-lob — vol amount is the muted parenthetical, right-aligned in col 3.
+   phase 09-02 — also a measured value → mono; muted via ink-faint token. */
+.meal-plan-ing-vol {
+  font-family: var(--font-mono);
+  text-align: right;
+  font-size: var(--fs-sm);
+  color: var(--color-ink-faint);
+}
+/* J3 (quick 260625-itm) — the .meal-plan .orig provenance reference rule is removed
+   with its markup (the row's second/provenance line is gone). */
+.meal-plan-hint {
+  color: var(--color-ink-muted);
+  font-style: italic;
+  padding: 0.5rem;
+}
+
+/* J3 (quick 260625-itm) — .meal-plan-cat (the provenance category label) is removed
+   with the meta line. */
+/* J5 (quick 260625-itm) — estimate/fixed markers, relocated onto the row-main line
+   after the qty (specimen estimate `⚠` on the qty). .meal-plan-taste is a compact amber
+   ⚠ (matches the specimen `.estimated .iqty` amber, --warn-text); .meal-plan-fixed keeps
+   a short muted "fixed" word so it stays visually DISTINCT from the taste glyph (a fixed
+   item is a fact, not a caution). The full meaning still lives in each span's title. */
+.meal-plan-taste {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--warn-text);
+  font-weight: var(--fw-medium);
+}
+.meal-plan-fixed {
+  font-size: var(--fs-sm);
+  color: var(--color-ink-faint);
+  font-style: italic;
+}
+/* The once-per-plan times/pans reminder. F4 (quick 260625-itm) — with the
+   "Day-by-day plan" wrapper card + heading gone, this relocates to a single QUIET
+   muted line (not a card heading): --color-ink-muted / --fs-sm (was a bare #555 /
+   --fs-base). Tokens only. */
+.meal-plan-reminder {
+  color: var(--color-ink-muted);
+  font-style: normal;
+  font-size: var(--fs-sm);
+  padding: 0.25rem 0.5rem 0.5rem;
+}
+
+/* quick 260612-dr4 — Settings "Scaling" section. */
+.scaling-settings {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 0.5rem 0.75rem 0.75rem;
+  margin: 0.5rem 0;
+}
+.scaling-settings legend {
+  font-weight: 500;
+  padding: 0 0.35rem;
+}
+.scaling-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.2rem 0;
+}
+.scaling-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.scaling-input input {
+  width: 4.5rem;
+}
+.scaling-pct {
+  color: #888;
+}
+
+/* ============================================================================
+   Settings — left-nav sectioned modal (phase 09-06 / PORT-08 / D38)
+   ----------------------------------------------------------------------------
+   The old Settings scroll-wall is restructured into a left-nav sectioned modal
+   (Connection / Planning / Data / Advanced) — one section visible at a time,
+   per specimen-settings.html. The section nav reuses THE ONE tab idiom
+   (.meal-list-tab: ghost default ink-muted, active = accent-tint wash + accent
+   text) laid out vertically. The modal body is a wider surface-2 card than the
+   default .modal-content-sm so the two-column nav+panel layout breathes; the
+   footer is Close-only (auto-save means no global Save). Tokens only — no new
+   bare hexes (reuses the 09-02/09-04 palette + the 09-06 --color-danger-border).
+   NO BEHAVIOUR CHANGE: this is presentation/structure for the SAME handlers. */
+.modal-content.settings-modal-content {
+  width: var(--modal-lg);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.settings-modal-content > h2 {
+  margin: 0;
+  padding: 0.9rem 1.25rem;
+  border-bottom: 1px solid var(--color-border);
+  flex: none;
+}
+.settings-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+/* left nav — vertical layout of THE ONE tab idiom */
+.settings-nav {
+  width: 12.25rem;
+  flex: none;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+  padding: 0.75rem 0.625rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+.settings-nav .meal-list-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 0.0625rem;
+  text-align: left;
+  width: 100%;
+  border-color: transparent;
+}
+.settings-nav .meal-list-tab small {
+  font-weight: var(--fw-medium);
+  font-size: var(--fs-xs);
+  color: var(--color-ink-faint);
+}
+.settings-nav .meal-list-tab.meal-list-tab-active small {
+  color: var(--color-accent);
+}
+/* The shared .meal-list-tab-active carries a `box-shadow: inset 0 -2px 0 accent`
+   horizontal-tab bottom rule. The specimen's VERTICAL `.nav button.active` has
+   accent-tint bg + accent text and NO underline — suppress the leaked inset rule
+   here (the accent-tint bg + accent text from the shared rule are kept). */
+.settings-nav .meal-list-tab.meal-list-tab-active {
+  box-shadow: none;
+}
+/* right panel — scrolls; one section shown at a time via x-show */
+.settings-panel {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem 1.5rem;
+}
+.settings-panel .scaling-settings:first-child,
+.settings-panel > label:first-child {
+  margin-top: 0;
+}
+/* mono UPPERCASE eyebrow + section heading per the specimen */
+.settings-sec-eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+  font-weight: var(--fw-semibold);
+  margin: 0 0 0.25rem;
+}
+.settings-sec-h {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-bold);
+  margin: 0 0 0.875rem;
+}
+/* inline "Saved ✓" — mono + herb success, sparing positive confirmation (D6) */
+.settings-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-success);
+}
+/* a label row that carries the inline Saved ✓ beside the field name */
+.settings-field-head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 0.25rem;
+}
+/* SIMPLE-settings field labels + subsec legends → uppercase-mono eyebrow, per
+   the specimen `.setting .lab` / `.subsec legend` (settled-decision #1). The
+   carriers are: `.settings-field-head` (the Saved-✓ label spans), the plain
+   `<label>` text nodes (Export doc id / Residency / Onboarding / Main / Side /
+   Salad / Standard / Liquid / Seasoning / Leavening / Fixed), and the four
+   `.scaling-settings legend`s. text-transform/letter-spacing INHERIT, and the
+   plain labels WRAP their <input>/<select>, so we RESET casing on those
+   descendants (option b) — the field VALUE must never render uppercased. The
+   inline "Saved ✓" span is also a descendant of these eyebrow carriers, so it
+   is reset too (else it reads "SAVED ✓"). The Advanced filename carve-out
+   (`.settings-adv-editor .settings-adv-label`, a <span>, not a label/legend)
+   does NOT match these selectors and keeps its own normal-case mono rule. */
+.settings-panel label,
+.settings-panel .settings-field-head,
+.settings-panel .scaling-settings legend {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+  font-weight: var(--fw-semibold);
+}
+/* …but never cascade the eyebrow casing/letter-spacing/size onto the field
+   controls or the inline Saved ✓ — only the label's own TEXT is the eyebrow.
+   (Advanced uses <span class="settings-adv-label"> + <textarea>, no <label>, so
+   the eyebrow rule above never touches the filename carve-out.) */
+.settings-panel label input,
+.settings-panel label select,
+.settings-panel label textarea,
+.settings-panel .settings-saved,
+.settings-panel .scaling-pct,
+.settings-panel .scaling-input {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: var(--fs-base);
+}
+/* danger zone — destructive actions in a bordered tomato-ground container,
+   never loose among the settings (DESIGN-LANGUAGE §6) */
+.settings-danger-zone {
+  border: 1px solid var(--color-danger-border);
+  background: var(--color-danger-bg);
+  border-radius: var(--radius-card);
+  padding: 0.8rem 0.95rem;
+  margin-top: 0.75rem;
+}
+.settings-danger-zone .settings-sec-eyebrow {
+  color: var(--color-danger);
+}
+.settings-danger-zone button {
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger-border);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-control);
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+}
+/* Clear Coda config — danger-ghost button (PII clear) inside the Coda subsec,
+   per specimen-settings.html. Danger text + soft tomato hairline, surface ground
+   (NOT the full danger-zone container — that holds the global Reset/Clear). */
+.settings-coda-clear {
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger-border);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-control);
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+}
+
+/* advanced free-text editor labels — mono but NORMAL-case (never uppercase a
+   filename like conversions.json). Keep their explicit Save/Reset buttons. */
+.settings-adv-editor {
+  margin-bottom: 1.125rem;
+}
+.settings-adv-editor .settings-adv-label {
+  font-family: var(--font-mono);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-ink-muted);
+  display: block;
+  margin-bottom: 0.35rem;
+}
+.settings-adv-editor textarea {
+  font-family: var(--font-mono);
+  font-size: var(--fs-base);
+  width: 100%;
+  resize: vertical;
+}
+.settings-adv-editor .advanced-buttons {
+  margin-top: 0.5rem;
+}
+.settings-adv-note {
+  font-size: var(--fs-xs);
+  color: var(--warn-text);
+  margin: 0 0 1rem;
+}
+/* footer — Close only, with a quiet "changes save automatically" note */
+.settings-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.8rem 1.25rem;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+  flex: none;
+}
+.settings-foot-note {
+  margin-right: auto;
+  font-size: var(--fs-xs);
+  color: var(--color-ink-faint);
+}
+/* herb ✓ marker before the "Changes save automatically" note, per the specimen
+   `.foot-note::before`. The note text stays ink-faint; only the ✓ is success. */
+.settings-foot-note::before {
+  content: "✓";
+  color: var(--color-success);
+  margin-right: 0.3rem;
+}
+
+/* INTEG-01 merge: master's left-nav sectioned-Settings CSS (above) is kept as the
+   structure; multiplayer's added connection/banner/lock CSS (below) is retained
+   verbatim. These sync surfaces are restyled onto the design-token system under
+   INTEG-03 (next wave). */
+/* Phase 10 (ACCESS-01/02, D-06) — loud inline connection error under the
+   "Connect to shared database" fields. Mirrors .banner-error's loud-red
+   treatment so the public-repo refusal / bad-token error reads as a hard stop,
+   NOT a soft hint. Inline (NOT a second modal) per the no-modal-stacking
+   convention. INTEG-03: on master's PALE --color-danger-bg, the original white
+   text was illegible — re-pointed to the --color-danger TEXT token to match the
+   shared .banner-error danger idiom (danger text on the pale danger ground,
+   bg and text roles kept SEPARATE per the token layer). No bare hex. */
+.connection-error {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  font-weight: var(--fw-medium);
+  font-size: var(--fs-base);
+  line-height: 1.4;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-card);
+  margin: 0.5rem 0;
+}
+/* The "Connected to owner/repo" status line — muted confirmation, tone mirrors
+   .help (no new hex; inherits the muted .help colour set elsewhere). */
+.connection-status {
+  font-size: var(--fs-sm);
+  margin: 0.25rem 0;
+}
+/* D-08 — the Disconnect affordance is PROMINENT because this PAT can WRITE
+   shared data. Its own row + danger-text outline so it stands apart from the
+   primary Save & connect button. Border/text use --color-danger (the danger
+   TEXT/border token); a subtle white fill keeps it legible without merging a
+   bg-hex with a text-hex. */
+.connection-disconnect-row {
+  margin-top: 0.5rem;
+}
+.connection-disconnect-btn {
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+  font-weight: var(--fw-medium);
+}
+
+/* Combined shopping list. .shopping-caveat reuses the var(--warn-text) caveat palette
+   (matches .manager-allergen-caveat — no new palette). */
+/* quick 260612-lob — the combined shopping list is the DELIVERABLE: a distinct
+   faint panel (not a per-recipe card) with a stronger top border + heading. */
+/* phase 09-02 — the combined list is the deliverable: a hairline surface card on
+   paper (no tinted bg), kept distinct by a petrol top-rule. Tokens only. */
+.shopping-list {
+  margin-top: 1.75rem;
+  border: 1px solid var(--color-border);
+  border-top: 3px solid var(--color-accent);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  padding: 1rem 1.1rem 1.1rem;
+}
+.shopping-list h3 {
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-medium);
+  margin-top: 0;
+}
+.shopping-list-items {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+/* quick 260612-lob — shopping list shares the SAME 3-col grid as the meal-plan
+   rows so amounts line up: name | amount | caveat. */
+.shopping-list-item {
+  display: grid;
+  grid-template-columns: minmax(11rem, 1fr) auto auto;
+  align-items: baseline;
+  column-gap: 0.75rem;
+  padding: 0.2rem 0;
+}
+/* F14 (quick 260625-itm) — the demoted "Combined shopping list" heading is now a
+   quiet scope note (specimen `.derived-note`) sat on a row beside the export button.
+   Tokens only. */
+.meal-plan-derived-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.6rem;
+}
+.meal-plan-derived-note {
+  font-family: var(--font-body);
+  font-size: var(--fs-sm);
+  color: var(--color-ink-muted);
+  line-height: 1.35;
+  margin: 0;
+  flex: 1 1 16rem;
+}
+/* phase 09-02 — pack/amount is a measured value → mono, flush-right data column. */
+.shopping-amount {
+  font-family: var(--font-mono);
+  font-weight: var(--fw-semibold);
+  text-align: right;
+}
+/* F13 (quick 260625-itm) — the combined-shopping buy band (specimen `.shop-q`): a
+   flush-right two-tier column — a faint mono "need …" DETAIL over a BOLD mono BUY
+   (= the unchanged formatPackLine), with the amber estimate caveat / red order-breaker
+   in between. Used by the SHOPPING list display only; check-stock/regulars/export keep
+   using formatPackLine's single string. Tokens only. */
+/* byd (quick 260628-byd) — ONE dense baseline line per row: amount | icons
+   (was column-stacked F13 two-tier band). flush-right in the grid's auto
+   column; small gap between the amount and its trailing ⚠/⛔ hover icons. */
+.meal-plan-shop-q {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  text-align: right;
+}
+.meal-plan-buy {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+  color: var(--color-ink);
+}
+/* F13 — order-breaker shouts in red (specimen `.shop-problem`). Only genuine
+   order-breakers (no shopping link) get this; estimates stay amber .shopping-caveat. */
+.meal-plan-shop-problem {
+  font-size: var(--fs-sm);
+  color: var(--color-danger);
+}
+.shopping-caveat {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--warn-text);
+}
+.shopping-unknown {
+  margin-top: 0.75rem;
+}
+/* quick 260615-e1n — per-storage-location group header in the combined shopping
+   list + check-stock list. A subtle subheading (tokens only): muted, small-caps-ish
+   label sitting above each group's <ul>. */
+.shopping-section-group {
+  margin-top: 0.75rem;
+}
+.shopping-section-group:first-child {
+  margin-top: 0;
+}
+/* quick 260625-s1g (X2) — per-storage-location group label restyled from the plain
+   bottom-bordered eyebrow into the specimen `.section` tinted petrol tag-chip:
+   an inline-flex mono chip on accent-tint ground with a 3px accent left rule (the
+   old border-bottom is dropped). It's an <h4> (block) so display:inline-flex shrinks
+   it to chip width. Shared by shopping + check + tray section groups — one edit hits
+   all three. Tokens only (.6rem / .12em are the specimen literals). */
+.shopping-section-header {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-weight: var(--fw-semibold);
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-ink);
+  background: var(--color-accent-tint);
+  padding: 0.1429rem 0.5rem;
+  border-radius: 0.2143rem;
+  border-left: 3px solid var(--color-accent);
+  margin: 0.5714rem 0 0.0714rem;
+}
+.shopping-section-group:first-child .shopping-section-header {
+  margin-top: 0;
+}
+
+/* quick 260618-9sq — meal-list tab switcher. The combined shopping list +
+   check-stock list share ONE panel with a two-tab switcher. Tokens only. */
+.meal-list-tabs-bar {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.9rem;
+}
+/* phase 09-02 — THE ONE TAB COMPONENT (DESIGN-LANGUAGE §4.5). Ghost default reads
+   in ink-muted; active = accent-tint wash + accent text (NOT a solid accent fill).
+   Reused by the meal-plan Upcoming/Past switcher AND the derived-list tabs
+   (Shopping / Regulars / Check / Tray) — one edit, one component everywhere. */
+.meal-list-tab {
+  flex: 0 0 auto;
+  background: transparent;
+  color: var(--color-ink-muted);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 0.35rem 0.85rem;
+  cursor: pointer;
+}
+.meal-list-tab-active {
+  background: var(--color-accent-tint);
+  border-color: var(--color-accent-tint);
+  color: var(--color-accent);
+  /* phase 09-08 / PORT-04 — petrol inset underline per the specimen `.ml-tab.active`
+     so the active tab reads with a bottom accent rule, not only the tint wash. */
+  box-shadow: inset 0 -2px 0 var(--color-accent);
+}
+
+/* quick 260625-s1g (X4) — DERIVED-switcher folder-tab strip. SCOPED via the
+   `.meal-list-tabs` container (the derived bar lives inside
+   `.shopping-list.meal-list-tabs`) so the SHARED `.meal-list-tab` border is NOT
+   stripped globally — the Upcoming/Past switcher (.meal-plan-scope-tabs) and the
+   Settings nav (.settings-nav) keep their rounded-button face untouched. Here the
+   bar reads as the specimen `.ml-tabs`: accent-tint ground + bottom hairline + a
+   small top padding; the tabs are borderless top-rounded ghosts; the active tab
+   sits on surface bg with accent text + the inherited inset petrol underline. */
+.meal-list-tabs > .meal-list-tabs-bar {
+  gap: 0.1429rem;
+  margin-bottom: 0.9rem;
+  padding: 0.3571rem 0.4286rem 0;
+  background: var(--color-accent-tint);
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+}
+.meal-list-tabs > .meal-list-tabs-bar .meal-list-tab {
+  border: 0;
+  background: transparent;
+  padding: 0.5rem 0.8571rem;
+  white-space: nowrap;
+  border-radius: var(--radius-control) var(--radius-control) 0 0;
+}
+.meal-list-tabs > .meal-list-tabs-bar .meal-list-tab-active {
+  background: var(--color-surface);
+  border-color: transparent;
+  color: var(--color-accent);
+  box-shadow: inset 0 -2px 0 var(--color-accent);
+}
+
+/* quick 260625-s1g (X3) — per-panel footer (specimen `.ml-foot`): a paper-ground,
+   top-bordered strip that ends each derived panel with a summary line + an export
+   pill (or, for Regulars, the no-export italic). Values copied verbatim from the
+   specimen; all token-based. */
+.ml-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.7143rem;
+  padding: 0.6429rem 1rem;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-paper);
+}
+.ml-summary {
+  font-size: var(--fs-xs);
+  color: var(--color-ink-muted);
+  margin-right: auto;
+}
+/* quick 260625-s1g (X3, fidelity fix) — SCOPED to `.ml-foot .ml-export` (0,2,0) so the
+   specimen pill's font-size + padding WIN over the shared `.shopping-export-btn` (0,1,0,
+   defined later in this file) the footer button also carries. Without the descendant
+   scope, .shopping-export-btn's --fs-sm / 0.25rem 0.6rem overrode the specimen's
+   --fs-xs / 6px 12px (verified by getComputedStyle, not eyeballed). */
+.ml-foot .ml-export {
+  font-family: var(--font-body);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-xs);
+  padding: 0.4286rem 0.8571rem;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--color-accent);
+  background: var(--color-surface);
+  color: var(--color-accent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ml-noexport {
+  font-size: var(--fs-xs);
+  color: var(--color-ink-faint);
+  font-style: italic;
+}
+
+/* quick 260625-sv2 — Regulars .reg-grid rebuild (R1–R7). Specimen-verbatim, tokens only.
+   The small bare dimension literals (.54rem/.08em/.6rem/.78rem/3.6em/1px 4px/4px 14px/2px)
+   are the specimen's OWN sanctioned values (260625-s1g precedent) — NOT token-ized.
+   Replaces the orphaned phase-08 "regulars" sub-view block (regulars-row / -row-skipped /
+   -controls / -qty / -qty input / -packs / -edited / -reset / -nudge / -skip). */
+.reg-grid {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 0.2857rem 1rem;
+  align-items: baseline;
+  font-size: var(--fs-sm);
+}
+.reg-row {
+  display: contents;
+} /* LOAD-BEARING: row wrapper participates in the parent grid so columns align AND per-row .skipped works */
+.reg-head {
+  font-family: var(--font-mono);
+  font-size: 0.54rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+  padding-bottom: 0.1429rem;
+}
+.reg-head.r {
+  justify-self: end;
+}
+.reg-name {
+  font-weight: 500;
+  color: var(--color-accent);
+}
+.reg-qty {
+  justify-self: end;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.2857rem;
+}
+/* quick 260625-sv2 (fidelity fix) — SCOPED `.reg-qty .qty-in` (0,2,0) so width 3.6em
+   WINS over the generic `input[type=number] { width:100% }` reset (0,1,1, line ~954):
+   unscoped `.qty-in` (0,1,0) lost to it and the inputs rendered content-width (verified by
+   getComputedStyle, not eyeballed). */
+.reg-qty .qty-in {
+  width: 3.6em;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  text-align: right;
+  padding: 0.0714rem 0.2857rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-2);
+  color: var(--color-ink);
+}
+.reg-qty .qty-in.qty-on {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  font-weight: 600;
+} /* an overridden (edited) quantity */
+.qty-unit {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  color: var(--color-ink-faint);
+}
+.qty-reset {
+  flex: 0 0 auto;
+  align-self: center;
+  border: 0;
+  background: transparent;
+  color: var(--color-ink-faint);
+  cursor: pointer;
+  font-size: 0.78rem;
+  line-height: 1;
+  padding: 0;
+}
+.qty-reset:hover {
+  color: var(--color-accent);
+}
+.reg-buy {
+  justify-self: end;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--color-ink);
+  white-space: nowrap;
+}
+.reg-buy-empty {
+  color: var(--color-ink-faint);
+  font-weight: 400;
+}
+.reg-nudge {
+  justify-self: end;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  color: var(--warn-text);
+  white-space: nowrap;
+}
+.reg-skip {
+  justify-self: end;
+  border: 0;
+  background: transparent;
+  font-size: var(--fs-xs);
+  color: var(--color-ink-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  padding: 0;
+  text-decoration: underline;
+}
+.reg-row.skipped .reg-name,
+.reg-row.skipped .reg-buy {
+  color: var(--color-ink-faint);
+  text-decoration: line-through;
+}
+
+/* quick 260612-m6c — order-format shopping-list export. Additive, scoped. */
+.shopping-list h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+/* phase 09-02 — the order/check/tray export triggers are SECONDARY actions:
+   petrol outline on surface (DESIGN-LANGUAGE §4.6 button hierarchy). Scoped to the
+   meal-plan shopping zone; the shared .manager-btn base is untouched (Unit 4). */
+.shopping-export-btn {
+  flex: 0 0 auto;
+  font-size: var(--fs-sm);
+  padding: 0.25rem 0.6rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-accent);
+  color: var(--color-accent);
+  font-weight: var(--fw-semibold);
+}
+.shopping-export-text {
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 50vh;
+  overflow: auto;
+  /* phase 09-02 — export ledger reads on paper ground, hairline (tokens, no bare hex). */
+  background: var(--color-paper);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-base);
+  line-height: 1.5;
+}
+
+/* quick 260613-aw1 — check-stock list. Optional/garnish/to-taste items, NOT
+   ordered. Mirrors the .shopping-list panel but with a muted (non-blue) top
+   border to signal "verify stock, not order". Additive + scoped; no !important. */
+.check-stock-list {
+  margin-top: 1.25rem;
+  border: 1px solid var(--color-border);
+  border-top: 3px solid var(--color-panel-accent-muted);
+  border-radius: var(--radius-card);
+  /* phase 09-02 — hairline surface card on paper (tokens, no bare hex). */
+  background: var(--color-surface);
+  padding: 1rem 1.1rem 1.1rem;
+}
+.check-stock-list h3 {
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-medium);
+  margin-top: 0;
+}
+/* phase 09-02 — role/status ("to taste", "pantry staple") is a system token → mono.
+   Still used by the Tray panel + day modal — DO NOT remove. */
+.check-stock-role {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--color-ink-muted);
+  text-align: right;
+}
+/* quick 260625-tum (C1–C4) — Check panel per-item row, rebuilt to the design
+   specimen's .check-line shape (mise-design-sketch.html L350–354). Five rules
+   copied VERBATIM from the specimen; tokens are the live :root vars. The bare
+   literals (gap 7px, padding 2.5px/2px 9px, .54rem/.6rem font-sizes, .06em
+   letter-spacing, 20px radius) are sanctioned specimen-verbatim values (s1g/sv2
+   precedent) — no off-scale token exists for them and they carry NO bare hexes.
+   The .add-shop.is-added accent-fill modifier is added for the "now on the order
+   list" toggle state (Task 2's pill references is-added). Replaces the now-dead
+   .check-stock-items / .check-stock-add / .check-stock-added rules. */
+.check-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.1786rem 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--fs-sm);
+}
+.check-name {
+  font-weight: 500;
+  color: var(--color-ink);
+}
+.check-flag {
+  flex: 0 0 auto;
+  /* quick 260627-jax — anchors the right group (need + add-shop pill) to the edge
+     when .check-need is ABSENT, i.e. to-taste / garnish rows that have a role tag
+     but no scaled quantity. With a need present, this auto meets .check-need's
+     margin-left:auto at the same boundary, so layout is unchanged. */
+  margin-right: auto;
+  font-family: var(--font-mono);
+  font-size: .54rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--warn-text);
+}
+.check-need {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: .6rem;
+  color: var(--color-ink-faint);
+  white-space: nowrap;
+}
+.add-shop {
+  flex: 0 0 auto;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: .6rem;
+  padding: 0.1429rem 0.6429rem;
+  border-radius: 1.4286rem;
+  border: 1px solid var(--color-accent);
+  background: var(--color-surface);
+  color: var(--color-accent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.add-shop.is-added {
+  background: var(--color-accent);
+  color: var(--color-surface);
+}
+
+/* quick 260615-ms3 — per-day Tray button. phase 09-08 (D24): the inline collapse
+   container (.meal-plan-tray / -body / -title / -caption) was REMOVED — Tray is now a
+   modal (.meal-plan-day-modal below). The .meal-plan-tray-header BUTTON survives (it
+   opens the modal); it shares the .manager-edit-btn chrome. The modal body reuses the
+   shared .shopping-section-group / .shopping-list-items / .shopping-amount /
+   .shopping-caveat / .check-stock-role / .meal-plan-ing-link classes. */
+.meal-plan-tray-header {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+}
+/* quick 260621-co6 (restyled 260621) — per-day 🛒 include/exclude-from-shopping
+   toggle on the day header row. The ON/OFF distinction must be UNMISSABLE, and a
+   color emoji ignores `color`/`font-weight`, so the state is carried by the button
+/* phase 09-08 / PORT-04 — the standalone per-day 🛒 include/exclude toggle was
+   REMOVED: that action now lives as the "Exclude/Include from this order" item in the
+   ⋯ overflow menu (.meal-plan-day-menu below). Its CSS (.meal-plan-day-shopping-toggle
+   / .shopping-excluded) is gone with it. */
+/* quick 260621-lft — per-day 🥡 leftovers toggle on EMPTY upcoming days. DEFAULT
+   (not a leftovers day) inherits the plain grey .manager-edit-btn chip, matching the
+   sibling toggles. ON (.leftovers-on) is a BOLD filled-accent chip (same treatment as
+   the 🛒 included state) so a marked leftovers day reads clearly. Tokens only. */
+.meal-plan-day-leftovers-toggle.leftovers-on {
+  background: var(--color-accent);
+  border-color: var(--color-accent-border);
+  font-weight: var(--fw-medium);
+}
+/* The "Leftovers → [prev day]" subtitle segment on a leftovers day — accent text so
+   it reads as the day's status, consistent with other accent affordances. */
+.meal-plan-day-leftovers-note {
+  color: var(--color-accent);
+  font-weight: var(--fw-medium);
+}
+/* phase 09-08 / PORT-04 — the standalone "Cook this day" header button was REMOVED:
+   per the specimen "Cook day is NOT a featured button (this isn't a cookbook)", that
+   action now lives as the first item in the ⋯ overflow menu (.meal-plan-day-menu). Its
+   CSS (.meal-plan-cook-btn) is gone with it. */
+/* phase 09-08 / PORT-04 — per-day ⋯ OVERFLOW MENU (specimen `.day-menu` / `.menu-btn`
+   / `.menu-pop` / `.menu-item`). The wrapper is position:relative so the popup anchors
+   to the ⋯ button. The popup is a raised surface-2 card; items are full-width ghost
+   rows that wash accent-tint on hover; the active "Include" (excluded-state) item reads
+   in danger to mirror the specimen `.menu-item.danger`. Tokens only. */
+.meal-plan-day-menu {
+  position: relative;
+  display: inline-flex;
+}
+.meal-plan-menu-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.3rem);
+  z-index: 50;
+  min-width: 11rem;
+  padding: 0.25rem;
+  text-align: left;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-card);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+.meal-plan-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-control);
+  padding: 0.4rem 0.55rem;
+  font-family: var(--font-body);
+  font-size: var(--fs-sm);
+  color: var(--color-ink);
+  cursor: pointer;
+}
+.meal-plan-menu-item:hover {
+  background: var(--color-accent-tint);
+  color: var(--color-accent);
+}
+.meal-plan-menu-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.meal-plan-menu-item-danger {
+  color: var(--color-danger);
+}
+.meal-plan-menu-item-danger:hover {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+/* quick 260621-amm — per-day "+ Add recipe" affordance on the day header row.
+   Re-skinned onto the .manager-edit-btn base (shares padding/radius/height with
+   the Tray/Cooks/Cook controls) with the accent treatment so it reads as the day's
+   primary add ACTION — and pushed to the far right of the header row (margin-left:
+   auto) so on an empty rolling-window day it's the obvious affordance after the
+   label. Tokens only. */
+/* F6 (quick 260625-itm) — the Add button now lives inside the .meal-plan-day-tools
+   cluster and wears the ghost .meal-plan-daybtn look; the old margin-left:auto (which
+   pushed it right of the header row) + accent outline are removed so it sits in the
+   Prep · Add · Tray · ⋯ order with its siblings. (Rule kept empty-of-layout to avoid
+   a dangling selector; the ghost styling comes from .meal-plan-daybtn.) */
+.meal-plan-add-recipe-btn {
+  font-weight: var(--fw-medium);
+}
+/* quick 260625-ue4 — .tray-staple is RETAINED: re-grep at execution time found a
+   SECOND consumer (the Tray export modal at index.html ~L3019, explicitly out of
+   scope for this rebuild), so the rule is NOT orphaned by dropping the Tray-lists
+   TAB usage. Only the tab-body markup drops it (it's a pull list). */
+.tray-staple {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--warn-text);
+}
+
+/* quick 260625-ue4 (T2/T3) — Tray-lists derived-tab day layout, specimen-verbatim
+   from mise-design-sketch.html. NEW classes (NOT the shared .meal-plan-tray-day /
+   .meal-plan-day-header, still used by the inline day-zone tray). The bare literals
+   (14px/12px/9px/4px/3px/2px 7px/7px/2px/.04em) are sanctioned specimen values
+   (s1g/sv2/tum precedent); all colour/font/size values use var(--…) tokens. */
+.tray-day { margin: 0 0 1rem; }
+.tray-day:last-of-type { margin-bottom: 0; }
+.tray-day-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6429rem;
+  margin: 0.8571rem 0 0.2857rem;
+  padding-bottom: 0.2143rem;
+  border-bottom: 1px solid var(--color-border-strong);
+}
+.tray-day-head:first-child { margin-top: 0; }
+.day-tick-sm {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: var(--fs-xs);
+  letter-spacing: .04em;
+  background: var(--color-accent-tint);
+  color: var(--color-accent);
+  padding: 0.1429rem 0.5rem;
+  border-radius: 0.2143rem;
+  white-space: nowrap;
+}
+.tray-day-recipes {
+  font-size: var(--fs-xs);
+  color: var(--color-ink-muted);
+}
+.tray-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.1429rem 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--fs-sm);
+  line-height: 1.25;
+}
+.tray-line .nm { color: var(--color-ink-muted); }
+.tray-line .qty {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--color-ink);
+  white-space: nowrap;
+}
+
+/* quick 260621-sjs — per-day Prep button. phase 09-08 (D24): the inline collapse
+   container (.meal-plan-prep / -body / -title / -caption) was REMOVED — Prep is now a
+   modal (.meal-plan-day-modal below). The .meal-plan-prep-header BUTTON survives (it
+   opens the modal). The recipe prep text keeps white-space: pre-line so multi-line
+   recipe-level prep_notes keep their newlines (rendered via x-text, NEVER x-html —
+   T-sjs-01). */
+.meal-plan-prep-header {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+}
+.meal-plan-prep-recipe {
+  font-weight: var(--fw-medium);
+}
+.meal-plan-prep-text {
+  white-space: pre-line;
+  font-size: var(--fs-sm);
+  margin-bottom: 0.4rem;
+}
+/* phase 09-08 / PORT-04 (D24) — shared Tray/Prep day-MODAL. Sized to the medium tier
+   (these lists are wider than the small-modal default); the title is the mono region
+   eyebrow the old inline tray/prep titles used. Body scrolls within the modal. */
+.meal-plan-day-modal {
+  width: var(--modal-md);
+}
+/* qualified under .modal-content so it beats the `.modal-content h2` base specificity. */
+.modal-content h2.meal-plan-day-modal-title {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.04em;
+  color: var(--color-accent);
+}
+.meal-plan-day-modal-body {
+  margin-top: 0.5rem;
+}
+
+/* quick 260620-s49 — per-day COOKS multi-select popover (decision 8: token-based).
+   Modelled on .combobox-list: the #fff background + rgba(...) shadow are the
+   established absolute-dropdown exceptions; border/radius use tokens. The wrapper
+   is position:relative so the absolute popover anchors to the Cooks button. */
+.meal-plan-cooks-wrap {
+  position: relative;
+  display: inline-block;
+}
+.meal-plan-cooks-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 50;
+  min-width: 12rem;
+  margin-top: 0.2rem;
+  padding: 0.3rem 0.5rem;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+.meal-plan-cooks-option {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.25rem 0;
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+/* Cap-reached affordance: a disabled (unselected-at-3) checkbox dims its label. */
+.meal-plan-cooks-option input:disabled + span {
+  opacity: 0.5;
+}
+/* phase 09-08 / PORT-04 — COOKS CHIP LINE (specimen `.cooks`). Its OWN line below the
+   day header: a mono "Cooks" eyebrow, then petrol selected-cook chips, then a dashed
+   add affordance. The wrapper keeps position:relative (shares .meal-plan-cooks-wrap)
+   so the popover still anchors to it. Tokens only. */
+.meal-plan-cooks-line {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  margin: 0 0 0.4rem;
+  padding-left: 0.75rem;
+}
+.meal-plan-cooks-lbl {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+}
+/* Selected cook = petrol chip (specimen `.cook-chip`): accent-tint pill, accent text. */
+.meal-plan-cook-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  padding: 0.1rem 0.55rem;
+  border-radius: 1.4286rem;
+  background: var(--color-accent-tint);
+  color: var(--color-accent);
+}
+.meal-plan-cook-chip-remove {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: var(--fs-xs);
+  line-height: 1;
+  color: var(--color-accent);
+  opacity: 0.65;
+}
+.meal-plan-cook-chip-remove:hover {
+  opacity: 1;
+}
+/* Add affordance = dashed outline pill (specimen `.cook-add`). */
+.meal-plan-cook-add {
+  /* Round-2 fix (quick 260625-itm) — a <button> does NOT inherit font-family, so this
+     was rendering in the UA default (Arial). Set the body font like every other control. */
+  font-family: var(--font-body);
+  font-size: var(--fs-xs);
+  padding: 0.1rem 0.55rem;
+  border-radius: 1.4286rem;
+  border: 1px dashed var(--color-border-strong);
+  background: transparent;
+  color: var(--color-ink-muted);
+  cursor: pointer;
+}
+.meal-plan-cook-add:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+/* Phase 16 follow-up — Residents present-list at-a-glance allergen/review status.
+   RAW-TEXT-FREE (T-07-07): only curated FSA-14 tags + a status label render here;
+   raw allergy text stays modal-only. Tokens only — danger family for the allergen
+   pills (matches the manager's red allergen display + the conflict-banner danger),
+   warn/amber for "Needs review" (matches the banner's caution states), ink-muted
+   for the calm "No allergens". Inline — does not restructure the row's flow. */
+.resident-allergen-summary { display: inline-flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; }
+.resident-allergen-tags { display: inline-flex; gap: 0.25rem; flex-wrap: wrap; }
+.resident-allergen-pill {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-control);
+  padding: 0.0714rem 0.5rem;
+}
+.resident-allergen-flag {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--warn-text);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  border-radius: var(--radius-control);
+  padding: 0.0714rem 0.5rem;
+}
+.resident-allergen-none {
+  font-size: var(--fs-xs);
+  color: var(--color-ink-muted);
+}
