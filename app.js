@@ -347,7 +347,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '38a5f7c 2026-06-28';
+const APP_VERSION = '3c2af8d 2026-06-28';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -7063,16 +7063,16 @@ Alpine.data('app', () => ({
   },
 
   /**
-   * openShoppingLink — quick 260625-cg8. The combined-shopping name-click opener.
-   * GUARD: only a matched ingredient WITH a non-empty link1 opens (hasShoppingLink).
-   * Opens the buy URL in a new tab; deliberately view-independent (no navigation,
-   * no view switch, no async) — mirrors openEditIngredient. Replaces the edit-modal
-   * open for combined-Shopping name-clicks (edit moved to the Ingredient Manager).
+   * shoppingLink — quick 260628-u6r. Returns the buy URL (1st_link) for a matched
+   * ingredient WITH a non-empty link1, else ''. The combined-shopping list binds this
+   * to the trailing 🛒 cart-icon anchor's href (the icon IS the link to the product
+   * page; opens in a new tab). The ingredient NAME reverted to opening the edit modal
+   * (openEditIngredient), superseding quick 260625-cg8's name-opens-link behaviour.
    */
-  openShoppingLink(ingredient_id) {
-    if (!this.hasShoppingLink(ingredient_id)) return;
+  shoppingLink(ingredient_id) {
+    if (!this.hasShoppingLink(ingredient_id)) return '';
     const row = this.ingredientMaster.find(m => m.ingredient_id === ingredient_id);
-    window.open(row.link1, '_blank', 'noopener');
+    return row ? row.link1 : '';
   },
 
   /**

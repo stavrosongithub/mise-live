@@ -2269,7 +2269,7 @@
              the panel footer (.ml-foot, end of this body); only the quiet derived-note
              remains at the top. -->
         <div class="meal-plan-derived-row">
-          <p class="meal-plan-derived-note">Tap a name to open its product page; the text export feeds the cart-filler. Order-breakers are flagged red.</p>
+          <p class="meal-plan-derived-note">Tap a name to edit the ingredient; tap the 🛒 to open its product page. The text export feeds the cart-filler. Order-breakers are flagged red.</p>
         </div>
         <p class="manager-empty-state"
            x-show="combinedShoppingList.lines.length === 0 && combinedShoppingList.unknown.length === 0"
@@ -2283,21 +2283,30 @@
             <ul class="shopping-list-items">
               <template x-for="(line, i) in grp.items" :key="line.ingredient_id ?? i">
                 <li class="shopping-list-item">
-                  <!-- quick 260625-cg8 — a MATCHED ingredient WITH a 1st_link
-                       (hasShoppingLink) renders a click-through that opens its
-                       shopping link in a NEW TAB; everything else — no link, or an
-                       unmatched id — is the plain non-clickable span. Edit-ingredient
-                       moved to the Ingredient Manager only. Reuses the generic
-                       .meal-plan-ing-link class (no new CSS). -->
-                  <template x-if="hasShoppingLink(line.ingredient_id)">
-                    <button type="button" class="meal-plan-ing-link"
-                            @click="openShoppingLink(line.ingredient_id)"
-                            :title="'Open shopping link for ' + (line.ingredient_name || 'ingredient')"
-                            x-text="line.ingredient_name"></button>
-                  </template>
-                  <template x-if="!hasShoppingLink(line.ingredient_id)">
-                    <span class="shopping-name" x-text="line.ingredient_name"></span>
-                  </template>
+                  <!-- quick 260628-u6r — the ingredient NAME reverted to opening the
+                       edit-ingredient modal (canEditIngredient gate; unmatched ids stay
+                       a plain non-clickable span), undoing cg8's name-opens-link. The
+                       shopping LINK moved onto a trailing 🛒 cart icon — a real anchor to
+                       the product page (new tab), shown only when hasShoppingLink. Name +
+                       cart share one flex cell (.shopping-name-cell) in grid column 1. -->
+                  <span class="shopping-name-cell">
+                    <template x-if="canEditIngredient(line.ingredient_id)">
+                      <button type="button" class="meal-plan-ing-link"
+                              @click="openEditIngredient(line.ingredient_id)"
+                              :title="'Edit ' + (line.ingredient_name || 'ingredient')"
+                              x-text="line.ingredient_name"></button>
+                    </template>
+                    <template x-if="!canEditIngredient(line.ingredient_id)">
+                      <span class="shopping-name" x-text="line.ingredient_name"></span>
+                    </template>
+                    <template x-if="hasShoppingLink(line.ingredient_id)">
+                      <a class="shopping-cart-link"
+                         :href="shoppingLink(line.ingredient_id)"
+                         target="_blank" rel="noopener"
+                         aria-label="Open shopping link"
+                         :title="'Open shopping link for ' + (line.ingredient_name || 'ingredient')">🛒</a>
+                    </template>
+                  </span>
                   <!-- byd (quick 260628-byd) — ONE baseline line: amount | icons.
                        The F13 two-tier "need …"/"buy …" stack (2-4 lines tall per
                        row) is collapsed: the amount is the single bold mono span
