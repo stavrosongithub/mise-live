@@ -108,27 +108,104 @@
               @click="goToView('settings')">Settings</button>
     </nav>
 
-    <!-- quick 260612-abt — first-run IMPORT surface. Shown only before a store
-         exists (csvStoreLoaded false). One multi-file input mapped by filename:
-         the user selects recipes.csv, ingredients.csv and recipe_ingredients.csv;
-         importCsvs() parses + seeds the IndexedDB store, then loadFromStore()
-         populates session state. Once a store exists this whole block hides
-         (boot auto-loads). The durability note tells the user where data lives. -->
-    <!-- quick 260628-ldr — boot-gate (!booting) so the import surface does not flash
+    <!-- quick 260628-mbq — new-user ONBOARDING landing (Variant A, stacked). Shown
+         only before a store exists (csvStoreLoaded false). Replaces the bare import
+         surface (quick 260612-abt): steers a new device to CONNECT to the shared
+         database first; the Anthropic API key is step 2 ("Optional now"); import-CSVs
+         is demoted to the advanced <details> disclosure below.
+         The import file-input keeps its EXACT load-bearing bindings (it parses + seeds
+         the IndexedDB store via importCsvs(), then loadFromStore() populates session
+         state). Design ground truth: .planning/ui-reviews/specimen-onboarding.html. -->
+    <!-- quick 260628-ldr — boot-gate (!booting) so the onboarding does not flash
          before init() resolves the landing view. -->
     <div class="boot-loading" x-show="booting" x-cloak>Loading…</div>
-    <div class="import-surface" x-show="!booting && !csvStoreLoaded" x-cloak>
-      <p class="import-prompt">Import your three CSVs to get started — they're saved in this browser so you only do this once.</p>
-      <label class="import-label">
-        <span>Choose recipes.csv, ingredients.csv and recipe_ingredients.csv</span>
-        <input type="file"
-               accept=".csv"
-               multiple
-               @change="importCsvs($event)"
-               :disabled="!apiKey" />
-      </label>
-      <p class="import-note" x-show="!apiKey" x-cloak>Add your Anthropic API key in Settings first.</p>
-      <p class="durability-note">Your data lives in this browser — export to back it up.</p>
+    <div class="onboarding" x-show="!booting && !csvStoreLoaded" x-cloak>
+
+      <!-- HERO -->
+      <div class="ob-hero">
+        <p class="ob-eyebrow">Welcome</p>
+        <h1 class="ob-hero-h">Welcome to Mise.</h1>
+        <p class="ob-lede">Your shared kitchen — recipes, meal plans and shopping lists, all in one place. Let's get this device connected.</p>
+      </div>
+
+      <!-- SETUP STEPS -->
+      <div class="ob-card">
+        <p class="ob-eyebrow ob-card-eyebrow">Get set up</p>
+
+        <div class="ob-step">
+          <span class="ob-num">1</span>
+          <div>
+            <h3 class="ob-step-h">Connect to your shared database</h3>
+            <p class="ob-help">Paste the access token from whoever set up your kitchen. This connects this device to the shared recipe database.</p>
+            <div class="ob-step-actions">
+              <button type="button" class="ob-btn ob-btn-primary ob-btn-lg"
+                      @click="settingsOpen = true; $nextTick(() => focusSettingsField('ob-github-token-input'))">Connect to your kitchen</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="ob-step">
+          <span class="ob-num ob-num-opt">2</span>
+          <div>
+            <h3 class="ob-step-h">Add your Anthropic API key<span class="ob-opt-tag">Optional now</span></h3>
+            <p class="ob-help">Lets Mise turn pasted recipe text into structured entries. You can browse, plan and shop without it — add it whenever you want to import a new recipe.</p>
+            <div class="ob-step-actions">
+              <button type="button" class="ob-btn ob-btn-secondary"
+                      @click="settingsOpen = true; $nextTick(() => focusSettingsField('ob-api-key-input'))">Add API key</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="ob-loaded-note"><span class="ob-tick">✓</span> Once you connect, your recipes load automatically — no import needed.</div>
+      </div>
+
+      <!-- FEATURE EXPLAINER -->
+      <div class="ob-features">
+        <p class="ob-eyebrow">What you can do</p>
+        <div class="ob-feature-grid">
+          <div class="ob-feat">
+            <span class="ob-ico">📝</span>
+            <h4 class="ob-feat-h">Add recipes</h4>
+            <p>Paste any recipe text — Mise structures it into your database, ready to scale and shop.</p>
+          </div>
+          <div class="ob-feat">
+            <span class="ob-ico">🗓️</span>
+            <h4 class="ob-feat-h">Plan meals</h4>
+            <p>Scale recipes to the day's headcount and build a meal plan everyone shares.</p>
+          </div>
+          <div class="ob-feat">
+            <span class="ob-ico">🛒</span>
+            <h4 class="ob-feat-h">Shop</h4>
+            <p>Turn the plan into shopping lists and orders, grouped by where things live.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ADVANCED — the original import surface, moved here VERBATIM (load-bearing
+           bindings preserved exactly: @change="importCsvs($event)", :disabled="!apiKey",
+           the x-show="!apiKey" import-note, and the durability-note). -->
+      <div class="ob-advanced">
+        <details class="ob-adv">
+          <summary><span class="ob-chev">▸</span> Starting a brand-new kitchen from scratch? <span class="ob-adv-sub">— import CSVs</span></summary>
+          <div class="ob-adv-body">
+            <div class="import-surface">
+              <p class="import-prompt">Import your three CSVs to get started — they're saved in this browser so you only do this once.</p>
+              <label class="import-label">
+                <span>Choose recipes.csv, ingredients.csv and recipe_ingredients.csv</span>
+                <input type="file"
+                       accept=".csv"
+                       multiple
+                       @change="importCsvs($event)"
+                       :disabled="!apiKey" />
+              </label>
+              <p class="import-note" x-show="!apiKey" x-cloak>Add your Anthropic API key in Settings first.</p>
+              <p class="durability-note">Your data lives in this browser — export to back it up.</p>
+              <p class="ob-adv-warn">⚠ Only use this to set up a fresh database. To join an existing kitchen, connect with a token above instead.</p>
+            </div>
+          </div>
+        </details>
+      </div>
+
     </div>
 
     <!-- quick 260615-nx6 — the old .toolbar button strip is REMOVED. Its three
@@ -234,7 +311,11 @@
          display:none until Alpine inits; without it the inert pre-init x-show lets the
          browser paint this view for one frame on hard refresh (the booting gate only
          takes effect AFTER Alpine starts). -->
-    <main class="workspace" x-cloak x-show="!booting && !managerView && !recipeManagerView && !mealPlanView && !residentsView">
+    <!-- quick 260628-mbq — also gate on csvStoreLoaded: with no data, the onboarding
+         landing is the only screen; the empty Parse two-pane must not render beneath
+         it. Parse is only reached via navigation once data exists (openMealPlan is the
+         post-boot landing). -->
+    <main class="workspace" x-cloak x-show="!booting && csvStoreLoaded && !managerView && !recipeManagerView && !mealPlanView && !residentsView">
       <!-- quick 260615-nx6 (NAV-PARSE-VIA-RECIPE-MANAGER) — Back control. Parse is
            no longer home; its parent is the Recipe Manager, so Back always returns
            there (fresh, fail-closed browse read). Thin header row above the panes. -->
@@ -3051,6 +3132,8 @@
               <label>
                 <span class="settings-field-head">Anthropic API key<span class="settings-saved" x-show="savedTick === 'apikey'" x-cloak>Saved ✓</span></span>
                 <input type="password"
+                       id="ob-api-key-input"
+                       x-ref="apiKeyInput"
                        x-model="apiKeyDraft"
                        placeholder="sk-ant-..."
                        autocomplete="off"
@@ -3156,6 +3239,8 @@
                 <label>
                   Shared access token (PAT)
                   <input type="password"
+                         id="ob-github-token-input"
+                         x-ref="githubTokenInput"
                          x-model="githubTokenDraft"
                          autocomplete="off" />
                 </label>

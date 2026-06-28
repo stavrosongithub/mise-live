@@ -489,6 +489,252 @@ html, body {
   margin-right: auto;   /* keep it left of the right-clustered manager toggles */
 }
 
+/* ----- New-user ONBOARDING landing (quick 260628-mbq) -----
+   Variant A (stacked) from .planning/ui-reviews/specimen-onboarding.html. Steers a
+   new device to connect to the shared DB first; the import-CSVs surface is demoted
+   to the advanced <details>. Namespaced `.ob-*` so nothing collides with the app.
+   Tokens only — no bare hex, no off-scale font-size (CLAUDE.md Conventions). The
+   specimen's off-scale hero (1.7rem) maps to --fs-xl, the largest token. */
+.onboarding {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 6rem;
+}
+
+/* shared eyebrow label (mono, uppercase, letterspaced, faint) */
+.ob-eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+  font-weight: 600;
+  margin: 0 0 0.4rem;
+}
+
+/* hero */
+.ob-hero {
+  text-align: center;
+  margin-bottom: 1.6rem;
+}
+.ob-hero-h {
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: var(--fs-xl);
+  letter-spacing: -0.01em;
+  margin: 0 0 0.5rem;
+}
+.ob-lede {
+  font-size: var(--fs-md);
+  color: var(--color-ink-muted);
+  margin: 0 auto;
+  max-width: 52ch;
+}
+
+/* setup card */
+.ob-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-card);
+  padding: 1.25rem 1.4rem;
+}
+.ob-card-eyebrow {
+  margin-bottom: 0.9rem;
+}
+
+.ob-step {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 0.9rem;
+  align-items: start;
+  padding: 1rem 0;
+  border-top: 1px solid var(--color-border);
+}
+.ob-step:first-of-type {
+  border-top: 0;
+  padding-top: 0.15rem;
+}
+.ob-step:last-of-type {
+  padding-bottom: 0.15rem;
+}
+.ob-num {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: var(--color-surface-2);   /* white-on-accent (token, == #FFFFFF) */
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: var(--fs-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ob-num-opt {
+  background: var(--color-accent-tint);
+  color: var(--color-accent);
+}
+.ob-step-h {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  margin: 0.25rem 0 0.15rem;
+}
+.ob-opt-tag {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+  margin-left: 0.5rem;
+  font-weight: 600;
+}
+.ob-help {
+  font-size: var(--fs-base);
+  color: var(--color-ink-muted);
+  margin: 0.3rem 0 0;
+  max-width: 62ch;
+}
+.ob-step-actions {
+  margin-top: 0.7rem;
+}
+.ob-loaded-note {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--color-border);
+  font-size: var(--fs-sm);
+  color: var(--color-ink-muted);
+}
+.ob-loaded-note .ob-tick {
+  color: var(--color-success);
+  font-weight: 700;
+}
+
+/* onboarding buttons (namespaced; mirror the app's accent button language) */
+.ob-btn {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  padding: 0.5rem 0.95rem;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.ob-btn-primary {
+  background: var(--color-accent);
+  color: var(--color-surface-2);
+  border-color: var(--color-accent-border);
+}
+.ob-btn-secondary {
+  background: var(--color-surface-2);
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+.ob-btn-lg {
+  font-size: var(--fs-base);
+  padding: 0.62rem 1.15rem;
+}
+
+/* feature explainer */
+.ob-features {
+  margin-top: 1.6rem;
+}
+.ob-feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.9rem;
+  margin-top: 0.75rem;
+}
+.ob-feat {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 0.95rem 1rem;
+}
+.ob-ico {
+  font-size: var(--fs-xl);
+  line-height: 1;
+  display: block;
+  margin-bottom: 0.55rem;
+}
+.ob-feat-h {
+  font-size: var(--fs-base);
+  font-weight: 600;
+  margin: 0 0 0.25rem;
+}
+.ob-feat p {
+  font-size: var(--fs-sm);
+  color: var(--color-ink-muted);
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* advanced disclosure (rotating chevron) */
+.ob-advanced {
+  margin-top: 1.5rem;
+}
+details.ob-adv {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+details.ob-adv > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.8rem 1.15rem;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--color-ink-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+details.ob-adv > summary::-webkit-details-marker {
+  display: none;
+}
+.ob-chev {
+  font-family: var(--font-mono);
+  color: var(--color-ink-faint);
+  transition: transform 0.15s;
+}
+details.ob-adv[open] > summary .ob-chev {
+  transform: rotate(90deg);
+}
+.ob-adv-sub {
+  font-weight: 400;
+  color: var(--color-ink-faint);
+}
+.ob-adv-body {
+  padding: 0.25rem 1.15rem 1.15rem;
+  border-top: 1px solid var(--color-border);
+}
+/* the moved import-surface keeps its own rules; this disclosure-scoped reset drops
+   its standalone panel chrome/margins so it sits flush inside the <details> body. */
+.ob-adv-body .import-surface {
+  margin: 0;
+  padding: 0.9rem 0 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+.ob-adv-warn {
+  font-size: var(--fs-base);
+  color: var(--warn-text);
+  margin: 0.7rem 0 0;
+}
+
+@media (max-width: 640px) {
+  .ob-feature-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ----- Two-pane workspace (RESEARCH §Pattern 1d) ----- */
 .workspace {
   display: grid;

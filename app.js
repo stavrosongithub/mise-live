@@ -347,7 +347,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '7385876 2026-06-28';
+const APP_VERSION = '6968d2a 2026-06-28';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -3366,22 +3366,16 @@ Alpine.data('app', () => ({
   // ----- Lifecycle -----
   async init() {
     // Synchronous fields above already capture chromiumSupported + apiKey
-    // (read from localStorage). The only init-time side effect in Phase 1 is
-    // to auto-open the Settings modal when there's no saved API key — this is
-    // SHELL-02 (first-run flow). We do NOT touch the File System Access API
+    // (read from localStorage). We do NOT touch the File System Access API
     // here; that's gated behind a user-gesture click on Pick CSV folder.
-    // 03-REVIEW WR-07 — gate the Settings auto-open on no-restore-pending so
-    // the two modals (.modal sharing z-index 1000) cannot stack. If the
-    // user has no API key AND an inflight slot exists, the restore prompt
-    // wins on first render; the user dismisses or resumes, then we re-open
-    // Settings if the key is still missing (see end of restoreInflight /
-    // dismissInflight). Order of evaluation matters: the inflight-restore
-    // read happens AFTER this conditional, so we use a forward-reference
-    // check by reading the persisted localStorage key directly here.
-    const _inflightPending = localStorage.getItem(INFLIGHT_REVIEW_KEY) != null;
-    if (!this.apiKey && !_inflightPending) {
-      this.settingsOpen = true;
-    }
+    //
+    // quick 260628-mbq — on-load Settings auto-open REMOVED (user request). New
+    // users are guided by the onboarding landing's Connect/Add-key buttons; the
+    // no-key Parse path stays gated/messaged. (Historically this auto-opened
+    // Settings on first run — SHELL-02 / 03-REVIEW WR-07 — gated on no-inflight
+    // so the restore prompt didn't stack with it; the matching restoreInflight /
+    // dismissInflight re-opens have also been removed. Settings now only opens on
+    // an explicit user action: the Settings nav item / the onboarding buttons.)
 
     // Plan 07-03 — default the residents-panel date to LOCAL today. Build it from
     // a local Date's getFullYear/getMonth/getDate (NOT toISOString, which is UTC
@@ -5528,6 +5522,41 @@ Alpine.data('app', () => ({
       // SWALLOWED — it never sets rosterError and never fails the Coda fetch. The
       // roster is fully usable locally; the next refresh re-attempts the snapshot.
     }
+  },
+
+  /**
+   * focusSettingsField — quick 260628-mbq. Helper for the new-user onboarding
+   * landing's two "open Settings to the right field" buttons. The Settings modal
+   * is a SEPARATE nested Alpine component (`x-data="{ settingsSection, … }"`), so
+   * `$refs`/`settingsSection` from the root `app` scope cannot reach into it; we
+   * resolve the field by id, reach its OWNING component via `Alpine.$data(el)` to
+   * switch to the 'connection' section (the modal stays mounted via x-show so its
+   * section persists across opens), then scroll+focus on the next paint once the
+   * section is visible. The caller opens the modal (`settingsOpen = true`) and
+   * defers this to `$nextTick`. No-op if the element is absent.
+   *
+   * @param {string} fieldId — DOM id of the Settings input to reveal + focus
+   */
+  focusSettingsField(fieldId) {
+    const el = document.getElementById(fieldId);
+    if (!el) return;
+    // Switch the modal's nested component to the Connection section so the field
+    // is rendered/visible (it lives under x-show="settingsSection === 'connection'").
+    try {
+      const data = window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null;
+      if (data && 'settingsSection' in data) data.settingsSection = 'connection';
+    } catch (_e) {
+      // Best-effort: if the section can't be switched, the focus below still runs.
+    }
+    // Defer scroll+focus until the section toggle has actually rendered the field.
+    // The section lives on a SEPARATE nested Alpine component, so the app's
+    // $nextTick can fire BEFORE that component's x-show re-displays the field —
+    // focus() would then no-op on a still-display:none input (verified). A double
+    // requestAnimationFrame waits for the post-toggle layout/paint. (quick 260628-mbq)
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      el.scrollIntoView({ block: 'center' });
+      el.focus();
+    }));
   },
 
   /**
@@ -13391,10 +13420,7 @@ Alpine.data('app', () => ({
     this.restorePromptOpen = false;
     this.inflightRestorable = null;
     this.transition(STATES.REVIEWING);
-    // 03-REVIEW WR-07 — re-evaluate the Settings auto-open contract now that
-    // the restore prompt is closed. init() suppressed it to avoid two-modal
-    // stacking; surface it now if the user is still keyless.
-    if (!this.apiKey) this.settingsOpen = true;
+    // quick 260628-mbq — Settings no longer auto-opens when the API key is missing (user request); the onboarding + gated Parse path handle this.
   },
 
   // Restore-prompt → "Start fresh" click. Clears the slot per D-44 and
@@ -13403,8 +13429,7 @@ Alpine.data('app', () => ({
     localStorage.removeItem(INFLIGHT_REVIEW_KEY);
     this.inflightRestorable = null;
     this.restorePromptOpen = false;
-    // 03-REVIEW WR-07 — see restoreInflight().
-    if (!this.apiKey) this.settingsOpen = true;
+    // quick 260628-mbq — Settings no longer auto-opens when the API key is missing (user request); the onboarding + gated Parse path handle this.
   },
 
   // ----- REVIEW-10 / D-46 (Plan 03-04) — recipe_id recompute on Approve -----
