@@ -1831,8 +1831,6 @@
            must run even when mealPlan is empty. Gate the wrapper to show on the
            Upcoming tab OR (Past tab AND there are entries). -->
       <div class="meal-plan-recipes" x-show="mealPlanTab === 'upcoming' || mealPlan.length > 0" x-cloak>
-        <!-- quick 260612-dr4 — nonlinear scaling does NOT touch cooking times / pan sizes. -->
-        <p class="meal-plan-hint meal-plan-reminder">Cooking times &amp; pan sizes don't scale — check the recipe.</p>
         <!-- quick 260615-nev — tray-list text-export trigger. Opens a copy/print
              plaintext of the per-day tray lists. quick 260620-esf follow-up MOVED
              this button into the "Tray lists" tab (Zone C); it no longer lives here. -->
