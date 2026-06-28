@@ -8183,18 +8183,34 @@ Alpine.data('app', () => ({
       const { text, sha } = await ghGetFile(cfg, 'meal_plan.json');
       const parsed = JSON.parse(text);
       // Shape gate (WR-01): the boot-pull path rejects a structurally-wrong remote
-      // via putJsonFile's shapeCheck, but this pull-on-open path applies the doc
-      // directly. Without this gate a valid-JSON-but-wrong-shape remote (e.g. `{}`,
-      // a manual edit) would coerce to empty, wipe the in-memory plan + base, and
-      // propagate empty on the next push. Skip-and-keep-local instead of wiping.
+      // via putJsonFile's shapeCheck. This pull-on-open path now 3-way-MERGES the
+      // pulled doc with the local plan (below) rather than applying it directly, but
+      // the gate is still load-bearing: without it a valid-JSON-but-wrong-shape
+      // remote (e.g. `{}`, a manual edit) would coerce to empty and feed an empty doc
+      // into the merge / become a new base. Skip-and-keep-local entirely instead —
+      // a wrong-shape remote never becomes a merge input nor a new base.
       if (!this._jsonShapeCheckFor('meal_plan.json')(parsed)) {
         this.mealPlanSyncStatus = 'Remote plan has an unexpected shape — kept your local plan.';
         return;
       }
       const pulled = coerceSharedPlanDoc(parsed);
-      this.applySharedPlanDoc(pulled);
+      // quick 260628-it8 — 3-WAY MERGE on pull-on-open (do NOT wholesale-replace).
+      // Previously applySharedPlanDoc(pulled) clobbered a richer LOCAL plan with an
+      // emptier remote (real data loss, 2026-06-28). Mirror the merge-on-push path
+      // (_pushPlanOnce): merge this device's local plan (vs the persisted base) onto
+      // the fresh remote so local-only entries are UNIONED in, never dropped.
+      // mergeMealPlan is pure, idempotent against the base, and already covered by
+      // scripts/mealplan-sync.test.mjs.
+      const base = this._mealPlanBase || this._restoreMealPlanBase();
+      const local = this.buildSharedPlanDoc();
+      const merged = mergeMealPlan(base, local, pulled);
+      this.applySharedPlanDoc(merged);
       this._mealPlanSha = sha;
-      this._persistMealPlanBase(pulled); // the pulled doc is the new 3-way base (D-01)
+      // Base = the ACTUAL remote we just observed (NOT `merged`). Local-only entries
+      // must read as "new vs base" on the next push so they PROPAGATE; adopting
+      // `merged` as the base would make them "in base, absent on remote" → delete-wins
+      // would eat them on the next push. (merged != remote until a push writes it out.)
+      this._persistMealPlanBase(pulled);
       this.mealPlanLastSyncedAt = new Date().toISOString();
       this.mealPlanSyncStatus = '';
     } catch (e) {
