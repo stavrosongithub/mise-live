@@ -347,7 +347,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '9841830 2026-06-28';
+const APP_VERSION = '38a5f7c 2026-06-28';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -2482,6 +2482,17 @@ Alpine.data('app', () => ({
     // index.html would miss it. Explicit unconfirm required here.
     this.unconfirm(rowKey);
     row.ingredient_id = ingredientId == null ? null : parseInt(ingredientId, 10);
+    // quick 260628-no6 — in the RECIPE EDITOR (manager edit / new-recipe;
+    // editingRecipeId !== null), default the row's metric unit to the chosen
+    // ingredient's master unit (`pack_unit` = the `1st_pack_unit` column: g/ml/whole).
+    // GATED to the recipe editor so the PARSE flow (editingRecipeId === null), whose
+    // units come verbatim from the recipe text ("2 tbsp"), is never clobbered. Only
+    // overwrites when the master carries a non-blank unit; quantity + the volumetric
+    // pair are left untouched.
+    if (this.editingRecipeId !== null && row.ingredient_id != null) {
+      const master = (this.ingredientMaster || []).find(m => m.ingredient_id === row.ingredient_id);
+      if (master && master.pack_unit) row.unit_metric = master.pack_unit;
+    }
     const st = this.comboboxStateFor(rowKey);
     st.query = this.displaySelectedIngredient(row.ingredient_id);
     st.open = false;
@@ -2601,6 +2612,31 @@ Alpine.data('app', () => ({
     }
     const fb = String(fallback ?? '').trim();
     return fb !== '' ? fallback : '(unnamed)';
+  },
+
+  // quick 260628-no6 — option list for the recipe-editor Type (`main_side_salad`)
+  // dropdown. `main_side_salad` is a FREE STRING in the v2 schema (no enum), and
+  // real data carries non-canonical values (e.g. "Salad Dressing", "Component")
+  // plus casing variants. To make it a <select> WITHOUT data loss, the options are:
+  //   canonical curated list
+  //   ∪ distinct non-blank types present in the loaded recipeList (case-insensitive
+  //     dedupe against canonical)
+  //   ∪ the CURRENTLY-edited recipe's value verbatim (so open+save can never
+  //     silently rewrite a stored value the curated list doesn't case-match).
+  // READ-ONLY getter; recomputed on read from recipeList + the live form value.
+  get recipeTypeOptions() {
+    const canonical = ['Main', 'Side', 'Salad', 'Salad Dressing', 'Component'];
+    const seen = new Set(canonical.map(s => s.toLowerCase()));
+    const opts = [...canonical];
+    for (const r of (Array.isArray(this.recipeList) ? this.recipeList : [])) {
+      const t = String(r?.type ?? '').trim();
+      if (t && !seen.has(t.toLowerCase())) { seen.add(t.toLowerCase()); opts.push(t); }
+    }
+    // Always make the current value selectable VERBATIM (case-sensitive) — no
+    // silent change on save even when the curated list case-matches it.
+    const cur = String(this.form?.header?.main_side_salad ?? '').trim();
+    if (cur && !opts.includes(cur)) opts.push(cur);
+    return opts;
   },
 
   // quick 260607-anu — the quick-9zz originalVolumetric(row) helper (which
