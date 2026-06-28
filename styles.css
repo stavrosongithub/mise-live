@@ -257,6 +257,18 @@ html, body {
   font-weight: var(--fw-regular);
 }
 
+/* quick 260628-jcm — passive deploy-version label beside the wordmark. Mono
+   micro, muted neutral (distinct from the herb .connected / amber .sync-status
+   STATUS badges — this is build info, not status). */
+.topbar .app-version {
+  margin-left: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-ink-muted);
+  font-weight: var(--fw-regular);
+  flex: 0 0 auto;
+}
+
 .topbar button {
   padding: 0.35rem 0.75rem;
   font-size: var(--fs-md);

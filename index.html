@@ -58,6 +58,10 @@
               :disabled="anyModalOpen"
               @click="drawerOpen = true">☰</button>
       <h1>Mise<span class="dot">.</span></h1>
+      <!-- quick 260628-jcm — deploy version indicator. Stamped by deploy-to-live.sh
+           (git short-SHA + UTC date); shows 'dev' un-deployed. Lets a device confirm
+           it's on the latest deploy after a hard-refresh. -->
+      <span class="app-version" x-text="appVersionLabel" :title="appVersionTitle"></span>
       <span class="topbar-spacer"></span>
       <!-- quick 260612-abt — store-loaded indicator. -->
       <span class="connected" x-show="csvStoreLoaded" x-cloak>Loaded (browser-stored)</span>

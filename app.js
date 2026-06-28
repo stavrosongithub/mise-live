@@ -343,6 +343,11 @@ const INFLIGHT_REVIEW_KEY = 'recipe_ingest_inflight_review';
 // (rebuilt fresh on open). The plan survives a browser refresh; a pick whose
 // recipe no longer exists is reconciled (dropped + user notified) on open.
 const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
+// quick 260628-jcm — deploy version stamp. scripts/deploy-to-live.sh rewrites the
+// placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
+// un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
+// here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
+const APP_VERSION = '21b367e 2026-06-28';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -2077,6 +2082,19 @@ Alpine.data('app', () => ({
     if (mins < 60) return `Last synced ${mins} min ago`;
     const hrs = Math.floor(mins / 60);
     return `Last synced ${hrs} h ago`;
+  },
+
+  // quick 260628-jcm — topbar version label. 'dev' when un-stamped (local copy:
+  // APP_VERSION still starts with the literal '__'); otherwise format the injected
+  // "<sha> <date>" into "<sha> · <date>".
+  get appVersionLabel() {
+    if (!APP_VERSION || APP_VERSION.indexOf('__') === 0) return 'dev';
+    const parts = APP_VERSION.split(' ');
+    return parts.length === 2 ? `${parts[0]} · ${parts[1]}` : APP_VERSION;
+  },
+  get appVersionTitle() {
+    if (!APP_VERSION || APP_VERSION.indexOf('__') === 0) return 'Running a local (un-deployed) build';
+    return `Deployed build: ${APP_VERSION}`;
   },
 
   // openRecentChanges — Phase 14 (CHANGES-02). Fetches GET /commits, filters out
