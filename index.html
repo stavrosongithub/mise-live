@@ -230,7 +230,11 @@
     <!-- Two-pane workspace (Plan 02 fills .raw-pane; Plan 03 fills .form-pane) -->
     <!-- quick 260607-qbj — Parse view is gated x-show on !managerView (NOT x-if):
          the manager toggle must preserve in-progress parse/form state underneath. -->
-    <main class="workspace" x-show="!booting && !managerView && !recipeManagerView && !mealPlanView && !residentsView">
+    <!-- quick 260628-ldr — x-cloak (like every sibling view) so the Parse workspace is
+         display:none until Alpine inits; without it the inert pre-init x-show lets the
+         browser paint this view for one frame on hard refresh (the booting gate only
+         takes effect AFTER Alpine starts). -->
+    <main class="workspace" x-cloak x-show="!booting && !managerView && !recipeManagerView && !mealPlanView && !residentsView">
       <!-- quick 260615-nx6 (NAV-PARSE-VIA-RECIPE-MANAGER) — Back control. Parse is
            no longer home; its parent is the Recipe Manager, so Back always returns
            there (fresh, fail-closed browse read). Thin header row above the panes. -->
