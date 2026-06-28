@@ -347,7 +347,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'a1ec9e5 2026-06-28';
+const APP_VERSION = '6c40d4e 2026-06-28';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -7988,8 +7988,10 @@ Alpine.data('app', () => ({
    * Alpine state. The shared entries are merged with this device's LOCAL-ONLY
    * `collapsed` view-state by id (a pulled entry keeps its prior collapsed value,
    * defaulting to collapsed=true for a brand-new entry); the 6 maps + orderScopeRange
-   * are assigned. name/type are left as placeholders — openMealPlan's reconcile loop
-   * refreshes them from the fresh recipe list immediately after this is called.
+   * are assigned. name/type are now populated here from `this.recipeList` (so the PUSH
+   * path — which calls this with NO following reconcile — shows correct titles, not
+   * "(unnamed)"); openMealPlan's reconcile still runs on the PULL path to DROP entries
+   * whose recipe no longer exists (that delete behaviour is not duplicated here).
    * Defensive: a corrupt doc coerces to the empty default (never throws).
    * @param {object} doc — a shared doc (or anything; coerced)
    */
@@ -8007,16 +8009,30 @@ Alpine.data('app', () => ({
         .filter(e => e && e.id != null)
         .map(e => [e.id, e.collapsed])
     );
-    this.mealPlan = safe.entries.map(e => ({
-      id: e.id,
-      recipe_id: Number(e.recipe_id),
-      name: '',   // refreshed by openMealPlan's reconcile loop
-      type: '',
-      servings: Number(e.servings),
-      date: typeof e.date === 'string' ? e.date : '',
-      // local-only collapsed: keep this device's value, default collapsed=true.
-      collapsed: priorCollapsed.has(e.id) ? (priorCollapsed.get(e.id) !== false) : true
-    }));
+    // quick 260628-k0x — populate name/type from the CURRENT recipe list here, not
+    // as '' placeholders. The PUSH path (_pushPlanOnce + the Guard-2 no-op skip) calls
+    // applySharedPlanDoc with NO following reconcile (only openMealPlan reconciles), so
+    // blanking name/type made every recipe render "(unnamed)" after a sync. recipeList
+    // is built in openMealPlan before any push can fire, so this lookup is valid; an
+    // unmatched id falls back to '' (openMealPlan's reconcile still drops a truly
+    // deleted recipe — that DROP is intentionally not duplicated here).
+    const recipeById = new Map(
+      (Array.isArray(this.recipeList) ? this.recipeList : []).map(r => [r.recipe_id, r])
+    );
+    this.mealPlan = safe.entries.map(e => {
+      const rid = Number(e.recipe_id);
+      const meta = recipeById.get(rid);
+      return {
+        id: e.id,
+        recipe_id: rid,
+        name: meta ? meta.name : '',
+        type: meta ? meta.type : '',
+        servings: Number(e.servings),
+        date: typeof e.date === 'string' ? e.date : '',
+        // local-only collapsed: keep this device's value, default collapsed=true.
+        collapsed: priorCollapsed.has(e.id) ? (priorCollapsed.get(e.id) !== false) : true
+      };
+    });
     this.cooksByDay = safe.cooksByDay;
     this.dayLeftovers = safe.dayLeftovers;
     this.prepDoneByDay = safe.prepDoneByDay;
