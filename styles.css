@@ -5115,3 +5115,13 @@ textarea {
   font-size: var(--fs-xs);
   color: var(--color-ink-muted);
 }
+
+/* quick 260628-ldr — transient boot indicator shown while init() resolves the
+   landing view, so the area isn't blank (and the Parse view / import surface can't
+   flash) during the boot data-load. Muted, centered, minimal. */
+.boot-loading {
+  text-align: center;
+  padding: 2rem 1rem;
+  font-size: var(--fs-lg);
+  color: var(--color-ink-muted);
+}

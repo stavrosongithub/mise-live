@@ -114,7 +114,10 @@
          importCsvs() parses + seeds the IndexedDB store, then loadFromStore()
          populates session state. Once a store exists this whole block hides
          (boot auto-loads). The durability note tells the user where data lives. -->
-    <div class="import-surface" x-show="!csvStoreLoaded" x-cloak>
+    <!-- quick 260628-ldr — boot-gate (!booting) so the import surface does not flash
+         before init() resolves the landing view. -->
+    <div class="boot-loading" x-show="booting" x-cloak>Loading…</div>
+    <div class="import-surface" x-show="!booting && !csvStoreLoaded" x-cloak>
       <p class="import-prompt">Import your three CSVs to get started — they're saved in this browser so you only do this once.</p>
       <label class="import-label">
         <span>Choose recipes.csv, ingredients.csv and recipe_ingredients.csv</span>
@@ -227,7 +230,7 @@
     <!-- Two-pane workspace (Plan 02 fills .raw-pane; Plan 03 fills .form-pane) -->
     <!-- quick 260607-qbj — Parse view is gated x-show on !managerView (NOT x-if):
          the manager toggle must preserve in-progress parse/form state underneath. -->
-    <main class="workspace" x-show="!managerView && !recipeManagerView && !mealPlanView && !residentsView">
+    <main class="workspace" x-show="!booting && !managerView && !recipeManagerView && !mealPlanView && !residentsView">
       <!-- quick 260615-nx6 (NAV-PARSE-VIA-RECIPE-MANAGER) — Back control. Parse is
            no longer home; its parent is the Recipe Manager, so Back always returns
            there (fresh, fail-closed browse read). Thin header row above the panes. -->

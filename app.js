@@ -347,7 +347,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '377f774 2026-06-28';
+const APP_VERSION = 'e7d0b57 2026-06-28';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -3017,6 +3017,14 @@ Alpine.data('app', () => ({
   mealPlanView: false,
   mealPlanError: '',
 
+  // quick 260628-ldr — boot-gate. On boot all four view flags start false, so the
+  // default Parse view (index.html) + the import surface render immediately and stay
+  // visible for the whole boot data-load (the GitHub pull in loadFromStore), then snap
+  // to the Meal Planner. This flag hides the default Parse view + import surface until
+  // init() has resolved the landing view; init() flips it false right after the
+  // loadFromStore try/catch (both success and error paths).
+  booting: true,
+
   // Phase 17 (Plan 17-02) — meal-plan SYNC slice. The shared plan rides
   // meal_plan.json; these track the 3-way merge base + the debounced push state.
   // OWN error channel (mealPlanSyncStatus) — never parseError, never blocks boot.
@@ -3517,6 +3525,15 @@ Alpine.data('app', () => ({
     } catch (e) {
       this.parseError = `Couldn't load your saved data from this browser: ${(e && e.message) || 'unknown error'}.`;
     }
+
+    // quick 260628-ldr — the landing view is now settled: for a returning user
+    // loadFromStore has already called openMealPlan() (mealPlanView=true); for a
+    // first-run user csvStoreLoaded is still false (the import surface should show).
+    // Reveal the view area. Set unconditionally AFTER the try/catch (not inside try)
+    // so a load error still reveals the UI / error banner. The later roster /
+    // resident-allergen loads are non-fatal and do NOT affect the landing view, so we
+    // do not wait for them.
+    this.booting = false;
 
     // Phase 07 (ROSTER-02) — load the cached resident roster as a SEPARATE,
     // non-fatal slice AFTER loadFromStore. These two awaited blocks are
