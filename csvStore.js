@@ -51,6 +51,18 @@
 export const REQUIRED_STORE_FILES = ['recipes.csv', 'ingredients.csv', 'recipe_ingredients.csv'];
 export const STORE_FILES = ['recipes.csv', 'ingredients.csv', 'recipe_ingredients.csv', 'residents_allergens.csv'];
 
+// Phase 17 (D-15) — the two GitHub-synced JSON artifacts (shared meal plan +
+// Coda roster snapshot). They ride the SAME `csvFiles` IndexedDB store keyed by
+// filename (exactly like a CSV), but are NOT CSVs: they store/verify JSON, so
+// they are deliberately KEPT OUT of both STORE_FILES (which routes every entry
+// through the CSV parseCsv+putFile PASS-2 write loop in pullFromRemote — wrong
+// for JSON) AND REQUIRED_STORE_FILES (the empty/partial/full shape-counting set).
+// A 404 on either file is a first-class "optional-absent → seed empty/local"
+// state, never PARTIAL and never an error — a pre-Phase-17 repo with NO JSON
+// files MUST classify 'full', not 'partial' (D-15, SPEC acceptance #7). They are
+// probed/pulled on their OWN JSON path (app.js), never via the CSV machinery.
+export const OPTIONAL_JSON_FILES = ['meal_plan.json', 'residents_roster.json'];
+
 const DB_NAME = 'recipe_ingest';
 const STORE_NAME = 'csvFiles';
 // v1->v2 (Phase 07): adds the codaRoster store (resident-roster slice) alongside
@@ -377,6 +389,111 @@ export async function putFile(name, record, { Papa, headerCheckFn } = {}) {
     headerCheckFn,
     filename: name
   });
+
+  // (4) AUTOMATIC in-band REVERT on failure.
+  if (!ok) {
+    if (snapshot) {
+      await rawPut(db, snapshot);
+    } else {
+      await rawDelete(db, name);
+    }
+    const sentinel = new Error(reason);
+    sentinel.isRestoreOfferSentinel = true;
+    throw sentinel;
+  }
+}
+
+/**
+ * getJsonFile — read one stored JSON record, or null if absent. Sibling of
+ * getFile for the two OPTIONAL_JSON_FILES (Phase 17). The stored shape is
+ * {name, json, meta} — `meta:{sha,fetchedAt}` rides alongside the value exactly
+ * like getFile's meta (the GitHub blob sha + fetch time), `undefined` until the
+ * file has been pulled. JSON has no columns/rows/BOM/newline — those CSV-only
+ * keys are absent on a JSON record.
+ *
+ * @param {string} name — filename key (e.g. 'meal_plan.json')
+ * @returns {Promise<{json:*, meta:*} | null>}
+ */
+export async function getJsonFile(name) {
+  const db = await openStore();
+  const rec = await tx(db, 'readonly', store => store.get(name));
+  if (!rec) return null;
+  return { json: rec.json, meta: rec.meta };
+}
+
+/**
+ * putJsonFile — THE JSON data-safety write (Phase 17 / D-11, D-12). A PARALLEL
+ * sibling of putFile that mirrors its four steps — snapshot -> write -> re-read +
+ * verify -> AUTOMATIC in-band REVERT on failure — but stores/verifies JSON
+ * instead of CSV. putFile (the proven recipe-CSV path, SENSITIVE-tier) is left
+ * UNTOUCHED: this is a separate function reusing only the low-level primitives
+ * (openStore / tx / rawPut / rawDelete), exactly as the in-module comment on tx
+ * requires (do NOT generalize tx).
+ *
+ *   (1) SNAPSHOT the prior record (may be null = the file didn't exist).
+ *   (2) WRITE the new {name, json, meta?} record.
+ *   (3) Re-read it back; verify = a JSON round-trip (JSON.parse(JSON.stringify))
+ *       AND shapeCheck(parsed) === true. A structurally-wrong-but-valid-JSON blob
+ *       (e.g. {} with no entries) FAILS shapeCheck and is reverted — it must NOT
+ *       blank the stored value (D-12).
+ *   (4) On failure: AUTOMATICALLY REVERT — put the snapshot back (or delete if the
+ *       snapshot was null, mirroring putFile's rawDelete branch), then throw a
+ *       tagged isRestoreOfferSentinel Error. The reason copy mirrors putFile's so
+ *       the existing app.js auto-revert banner reads consistently.
+ *
+ * JSON has no columns/rows/BOM/newline, so it is NOT routed through
+ * serializeCsv/parseCsv/verifyRoundTrip — those are CSV-specific.
+ *
+ * @param {string} name — filename key (e.g. 'meal_plan.json')
+ * @param {*} jsonValue — the value to store (must be JSON-serializable)
+ * @param {object} opts
+ * @param {(parsed:*)=>boolean} [opts.shapeCheck] — top-level shape gate; a falsy
+ *   return reverts the write (D-12). Defaults to "any valid JSON" if omitted.
+ * @param {{sha:string, fetchedAt:string}} [opts.meta] — additive sync metadata,
+ *   persisted ONLY when supplied (a remote pull), kept ABSENT otherwise.
+ * @returns {Promise<void>}
+ */
+export async function putJsonFile(name, jsonValue, { shapeCheck, meta } = {}) {
+  const db = await openStore();
+
+  // Structured-clone safety: the value can arrive as an Alpine reactive Proxy
+  // (the meal-plan / roster push paths derive `jsonValue` from reactive state).
+  // IndexedDB cannot structured-clone a Proxy — store.put throws DataCloneError
+  // ("[object Array] could not be cloned"). The value is JSON by contract, so
+  // canonicalize to a plain deep copy before any IDB write. (Phase 17 live-gate fix.)
+  const plainValue = JSON.parse(JSON.stringify(jsonValue));
+
+  // (1) SNAPSHOT the prior version (may be null = the file didn't exist).
+  const snapshot = await tx(db, 'readonly', store => store.get(name));
+
+  const newRecord = {
+    name,
+    json: plainValue,
+    // Additive: persist meta:{sha,fetchedAt} ONLY when supplied (a remote pull);
+    // kept ABSENT otherwise (never written as `meta: undefined`) so a
+    // lazy-created / never-synced record stays "never synced". Mirrors putFile.
+    ...(meta !== undefined ? { meta } : {})
+  };
+
+  // (2) WRITE the new record.
+  await rawPut(db, newRecord);
+
+  // (3) Re-read + verify. Re-read the just-written value, prove it survives a
+  //     JSON round-trip (valid JSON), then run the top-level shapeCheck (D-12).
+  const readBack = await tx(db, 'readonly', store => store.get(name));
+  let ok = false;
+  let reason = '';
+  try {
+    const parsed = JSON.parse(JSON.stringify(readBack.json));
+    const passesShape = typeof shapeCheck === 'function' ? shapeCheck(parsed) === true : true;
+    if (!passesShape) {
+      reason = `The save to ${name} did not match the expected structure. The save was stopped so your file can be restored.`;
+    } else {
+      ok = true;
+    }
+  } catch (_e) {
+    reason = `The save to ${name} could not be re-read as valid JSON. The save was stopped so your file can be restored.`;
+  }
 
   // (4) AUTOMATIC in-band REVERT on failure.
   if (!ok) {

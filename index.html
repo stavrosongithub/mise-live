@@ -1586,6 +1586,20 @@
              `.eyebrow`); the big sans <h2> + help paragraph are dropped. Reuses the
              existing .manager-eyebrow class — no new class invented. -->
         <p class="manager-eyebrow">Meal plan — where ~90% of the work happens</p>
+        <!-- Phase 17 Plan 04 (SPEC-3 / D-07) — meal-plan sync controls. Mirrors the
+             top-bar .sync-status idiom (x-show="githubConnected" x-cloak) but binds
+             the meal-plan-specific surface from Plan 02: mealPlanSyncLabel
+             ('Syncing…' / own-channel error / 'Synced' / 'Last synced HH:MM') +
+             syncPlanNow() (flush + force the merge-on-push, the missed-debounce
+             fallback). The button only triggers a push (opens no modal), so NO
+             :disabled="anyModalOpen" gate is needed. -->
+        <div class="meal-plan-sync" x-show="githubConnected" x-cloak>
+          <span class="sync-status meal-plan-sync-status" x-text="mealPlanSyncLabel"></span>
+          <button type="button"
+                  class="meal-plan-sync-now"
+                  :disabled="planSyncing"
+                  @click="syncPlanNow()">Sync now</button>
+        </div>
       </div>
 
       <!-- Read-error / old-schema refusal surface. -->

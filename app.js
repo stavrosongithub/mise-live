@@ -68,6 +68,21 @@ import { factor, scaleRow, classifyIngredientCategory, isValidScaleCategory, SCA
 // orderEntriesByType applies the main->side->salad->other dish sort. Both are
 // unit-tested under scripts/cook-artifact.test.mjs (scale.js precedent).
 import { splitInstructionSteps, orderEntriesByType } from './cook-artifact.js';
+// Phase 17 (Plan 17-02) — PURE meal-plan sync helpers (shared/local field split +
+// the 3-way merge: delete-wins D-04, id-keyed entries D-03, per-key maps D-02).
+// Node-tested in scripts/mealplan-sync.test.mjs; the impure wiring (Alpine state,
+// debounce, putJsonFile/ghPutFile, pull-on-open) lives in this file and calls them.
+import {
+  projectSharedPlanDoc,
+  coerceSharedPlanDoc,
+  emptySharedPlanDoc,
+  mergeMealPlan
+} from './mealplan-sync.js';
+// Phase 17 (Plan 17-03) — PURE roster-snapshot helper (residents_roster.json
+// shape, ROWS-ONLY, NO credential — T-17-08). Node-tested in
+// scripts/roster-sync.test.mjs; the impure wiring (fetchRoster push hook,
+// putJsonFile/ghPutFile LWW, tokenless read-in) lives in this file.
+import { buildRosterSnapshot } from './roster-sync.js';
 // merge.js — schema migration transforms + detectors + CSV convention probe.
 // (The delta/merge file-I/O helpers are removed in quick 260612-abt; only the
 // migration transforms + detectCsvConventions + isShoppingUnitValue remain.)
@@ -108,7 +123,11 @@ import {
   parseCsv,
   STORE_FILES,
   REQUIRED_STORE_FILES,
-  classifyRemoteShape
+  classifyRemoteShape,
+  // Phase 17 (D-11/D-15) — the parallel JSON data-safety write + read, and the
+  // optional-absent JSON file-set the shared meal plan + roster snapshot ride.
+  putJsonFile,
+  OPTIONAL_JSON_FILES
 } from './csvStore.js';
 
 // Phase 10 (ACCESS-01/02) — the GitHub Contents transport (Phase 09 module,
@@ -328,6 +347,12 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
 const MEAL_PLAN_UI_KEY = 'recipe_ingest_meal_plan_ui';
+// Phase 17 (Plan 17-02, D-01/D-14) — the persisted 3-way MERGE BASE: the last
+// shared meal_plan.json doc this device pulled/wrote. The merge-on-push diffs
+// THIS device's changes vs this base and applies only those onto fresh remote
+// (no whole-doc clobber, no 409 hard-stop). It MUST survive reloads (D-14) or the
+// merge degrades to last-write-wins; restored on boot alongside _restoreMealPlan.
+const MEAL_PLAN_BASE_KEY = 'recipe_ingest_meal_plan_base';
 
 // Hardcoded short recipe shown when the user clicks the dev-only Load Example
 // button. Already framed as scaled-to-20-servings (D-07). Trivial to remove.
@@ -2974,6 +2999,18 @@ Alpine.data('app', () => ({
   mealPlanView: false,
   mealPlanError: '',
 
+  // Phase 17 (Plan 17-02) — meal-plan SYNC slice. The shared plan rides
+  // meal_plan.json; these track the 3-way merge base + the debounced push state.
+  // OWN error channel (mealPlanSyncStatus) — never parseError, never blocks boot.
+  _mealPlanBase: null,        // the persisted 3-way merge base (D-01/D-14); restored on boot
+  _mealPlanSha: undefined,    // cached blob sha for meal_plan.json (D-13: absent = CREATE first write)
+  _planPushTimer: null,       // the ~10s debounce handle (D-05); null = no push pending
+  _planPushPending: false,    // true while a debounced push is scheduled OR in flight
+  _suppressPlanPush: false,   // set while a NON-user mutation runs (boot restore / pull-apply / open reconcile) so a pull never bounces back into a push
+  planSyncing: false,         // true while a push/pull is actually in flight (for the label)
+  mealPlanSyncStatus: '',     // own-error-channel copy on a failed plan sync (never parseError)
+  mealPlanLastSyncedAt: '',   // ISO of the last successful plan push/pull (for mealPlanSyncLabel)
+
   // Phase 07 (ROSTER-02) — resident-roster session slice. DATA-ISOLATED from the
   // recipe csvFiles slice (PATTERNS §D, CONTEXT data-isolation LOCKED): these
   // fields are NEVER mixed with csvStoreLoaded / csvHeaders / ingredientMaster,
@@ -2997,6 +3034,11 @@ Alpine.data('app', () => ({
   // cached residency table's fetchedAt), used by maybeAutoFetchRoster for the
   // once-per-day staleness check. null when the cache is absent.
   rosterFetchedAt: null,
+  // Phase 17 (Plan 17-03, D-09/D-13) — cached blob sha for residents_roster.json.
+  // absent/undefined = CREATE on the first snapshot write; present = UPDATE
+  // thereafter. The snapshot push is LWW OUTSIDE the advisory lock: on a stale-sha
+  // 409 it re-pulls this sha and re-PUTs (overwrite), never a hard-stop.
+  _rosterSnapshotSha: undefined,
 
   // Phase 16 (D40/D41) — the curated 4th-file (residents_allergens.csv) session
   // slice. DATA-ISOLATED like the roster: loaded NON-FATALLY (a missing 4th file
@@ -3425,10 +3467,18 @@ Alpine.data('app', () => ({
     // belt-and-braces ONLY — explicit _persistMealPlan() calls on each mutation
     // are the load-bearing persist path (Alpine $watch is unreliable on nested
     // array-element mutations — plan-check WARNING).
+    // Phase 17 (Plan 17-02, D-05) — boot restore mutates the plan but is NOT a
+    // user edit; suppress the debounced push so a reload never auto-pushes.
+    this._suppressPlanPush = true;
     this._restoreMealPlan();
     // quick 260620-esf — restore the meal-plan UI prefs (Add-recipes collapsed +
     // per-day collapse map). UI-prefs only; no disk read.
     this._restoreMealPlanUi();
+    // Phase 17 (Plan 17-02, D-14) — restore the persisted 3-way merge base BEFORE
+    // any plan pull so the first merge-on-push diffs against the surviving base
+    // (not a fresh-empty base, which would degrade to last-write-wins).
+    this._restoreMealPlanBase();
+    this._suppressPlanPush = false;
     this.$watch('mealPlan', () => this._persistMealPlan());
 
     // Phase 10 (CR-01) — rehydrate the shared-store connection from the persisted
@@ -3622,12 +3672,22 @@ Alpine.data('app', () => ({
    * not PARTIAL/read-only, for a 4-file client — the 4th file's 404 is the calm
    * "optional-absent → seed locally" state, never an error.
    *
+   * Phase 17 (D-15) — the two OPTIONAL_JSON_FILES (`meal_plan.json`,
+   * `residents_roster.json`) are probed in a DEDICATED JSON pass with the SAME
+   * 404-vs-error policy, but their absence is recorded as `jsonOptionalAbsent` and
+   * NEVER counted into `absentCount` (they are not CSVs and not in STORE_FILES).
+   * Present JSON files' bytes are captured into `jsonFiles` ([{name,text,sha}]) so
+   * pullFromRemote can write them via putJsonFile without a second round-trip. The
+   * invariant: a pre-Phase-17 repo with NO JSON files yields absentCount unchanged
+   * → classifies 'full', never 'partial' (SPEC acceptance #7). All four return keys
+   * are additive — existing callers destructure only { absentCount, fetched }.
+   *
    * @param {object} cfg — {owner, repo, branch, token}
-   * @returns {Promise<{absentCount: number, fetched: Array<{name: string, text: string, sha: string}>, optionalAbsent: string[]}>}
+   * @returns {Promise<{absentCount: number, fetched: Array<{name: string, text: string, sha: string}>, optionalAbsent: string[], jsonFiles: Array<{name: string, text: string, sha: string}>, jsonOptionalAbsent: string[]}>}
    */
   async _probeRemoteShape(cfg) {
     let absentCount = 0;            // REQUIRED files only (shape classification)
-    const fetched = [];            // [{ name, text, sha }] for ALL present files
+    const fetched = [];            // [{ name, text, sha }] for ALL present CSV files
     const optionalAbsent = [];     // optional STORE_FILES (e.g. the 4th) that 404'd
     for (const name of STORE_FILES) {
       const isRequired = REQUIRED_STORE_FILES.includes(name);
@@ -3648,7 +3708,68 @@ Alpine.data('app', () => ({
         throw e;
       }
     }
-    return { absentCount, fetched, optionalAbsent };
+
+    // Phase 17 (D-15) — dedicated JSON probe pass. These ride their OWN path
+    // (NOT the CSV STORE_FILES loop / PASS-2 write), so they are probed here but
+    // NEVER touch absentCount: a 404 is optional-absent (seed empty/local), and
+    // any non-404 re-throws to the caller exactly like the CSV branch.
+    const jsonFiles = [];          // present OPTIONAL_JSON_FILES [{name,text,sha}]
+    const jsonOptionalAbsent = []; // JSON files that 404'd — NEVER absentCount++
+    for (const name of OPTIONAL_JSON_FILES) {
+      try {
+        const { text, sha } = await ghGetFile(cfg, name);
+        jsonFiles.push({ name, text, sha });
+      } catch (e) {
+        if (e && e.status === 404) {
+          jsonOptionalAbsent.push(name); // optional-absent, NOT partial (D-15)
+          continue;
+        }
+        throw e; // 401/403/network/rate-limit → caller's own channel
+      }
+    }
+
+    return { absentCount, fetched, optionalAbsent, jsonFiles, jsonOptionalAbsent };
+  },
+
+  /**
+   * _jsonShapeCheckFor — Phase 17 (D-12). The per-file top-level shape gate
+   * passed to putJsonFile so a structurally-wrong-but-valid-JSON blob is REVERTED
+   * (never blanks the stored plan/roster). The check is deliberately TOP-LEVEL
+   * only (presence + coarse type of the known keys) — it is a corruption tripwire,
+   * not a deep schema validator. An unknown name returns a permissive "any object"
+   * check (defensive; OPTIONAL_JSON_FILES is the only caller today).
+   *
+   * @param {string} name — 'meal_plan.json' | 'residents_roster.json'
+   * @returns {(parsed:*) => boolean}
+   */
+  _jsonShapeCheckFor(name) {
+    if (name === 'meal_plan.json') {
+      // entries array + the 6 known map keys present (D-12). orderScopeRange may
+      // be null; the maps may be empty objects — only presence + coarse type.
+      const MAP_KEYS = ['cooksByDay', 'dayLeftovers', 'prepDoneByDay', 'regularsOverrides'];
+      return (p) => {
+        if (!p || typeof p !== 'object' || Array.isArray(p)) return false;
+        if (!Array.isArray(p.entries)) return false;
+        // adHocExtras is an ARRAY, not a keyed map — `typeof [] === 'object'` would
+        // let a corrupt `{}` slip past a generic map check (WR-03). Gate it explicitly.
+        if (!Array.isArray(p.adHocExtras)) return false;
+        for (const k of MAP_KEYS) {
+          if (!(k in p) || typeof p[k] !== 'object' || p[k] === null) return false;
+        }
+        if (!('orderScopeRange' in p)) return false; // may be null
+        return true;
+      };
+    }
+    if (name === 'residents_roster.json') {
+      // residency + onboarding objects, each with a rows array (D-10 / D-12).
+      const hasRows = (t) => t && typeof t === 'object' && Array.isArray(t.rows);
+      return (p) => {
+        if (!p || typeof p !== 'object' || Array.isArray(p)) return false;
+        return hasRows(p.residency) && hasRows(p.onboarding);
+      };
+    }
+    // Defensive default: any non-null object passes (no known shape to enforce).
+    return (p) => !!p && typeof p === 'object';
   },
 
   /**
@@ -3704,7 +3825,7 @@ Alpine.data('app', () => ({
       // files' bytes, re-throws any non-404 error to the existing catch below as
       // the genuine 401/403/network reach failure). The captured `fetched` lets
       // PASS 2 write without a second network round-trip.
-      const { absentCount, fetched } = await this._probeRemoteShape(cfg);
+      const { absentCount, fetched, jsonFiles } = await this._probeRemoteShape(cfg);
 
       // Phase 16: classify over the REQUIRED set via the PURE helper (the optional
       // 4th file's absence is excluded from absentCount in _probeRemoteShape, so a
@@ -3744,6 +3865,30 @@ Alpine.data('app', () => ({
         await putFile(name, { ...record, meta: { sha, fetchedAt } }, { Papa });
         latestFetchedAt = fetchedAt;
       }
+
+      // Phase 17 (D-15 / D-12) — PARALLEL JSON write step. For each PRESENT
+      // OPTIONAL_JSON_FILE, JSON.parse the bytes and land them in the store via
+      // putJsonFile (its OWN snapshot->verify->auto-revert with the per-file
+      // shapeCheck — a structurally-wrong blob reverts, never blanks the value).
+      // This task ONLY lands the bytes + classifies absence; the in-memory
+      // meal-plan / roster read-in is owned by Plan 02 / Plan 03.
+      for (const { name, text, sha } of (jsonFiles || [])) {
+        const parsed = JSON.parse(text); // a parse throw routes to the catch below
+        const fetchedAt = new Date().toISOString();
+        await putJsonFile(name, parsed, { shapeCheck: this._jsonShapeCheckFor(name), meta: { sha, fetchedAt } });
+        // Phase 17 (Plan 17-03, D-08) — TOKENLESS roster read-in. Once the snapshot
+        // bytes have landed (+ passed putJsonFile's shapeCheck), write its two
+        // tables into the codaRoster cache so the existing roster UI renders with
+        // NO Coda token. Cache the pulled sha so a later token-holder push UPDATEs
+        // (D-13) instead of blindly CREATE-409ing. _readInRosterSnapshot is on the
+        // roster's OWN error channel — it never throws into this pull's catch (a
+        // read-in failure must not block the recipe pull / boot, T-17-10 parity).
+        if (name === 'residents_roster.json') {
+          this._rosterSnapshotSha = sha;
+          await this._readInRosterSnapshot(parsed);
+        }
+      }
+
       // Full success — remote-wins pull landed for all 3 files.
       this.remoteOk = true;
       this.remoteStatus = '';
@@ -4472,6 +4617,37 @@ Alpine.data('app', () => ({
     // quick 260620-p1f — stamp the cache's last-fetch time for the once-per-day
     // staleness check (residency record always carries fetchedAt, per residents.js).
     this.rosterFetchedAt = residency.fetchedAt || null;
+  },
+
+  /**
+   * _readInRosterSnapshot — Phase 17 (Plan 17-03, D-08). The TOKENLESS read-in: write
+   * a pulled residents_roster.json snapshot's two tables into the codaRoster cache via
+   * putRosterTable (reused verbatim from residents.js), then loadRosterFromCache so the
+   * existing roster UI recomputes — all with NO Coda token. This is what lets a fresh
+   * device holding only the shared PAT (no Coda credential) see the full roster (SPEC #4).
+   *
+   * Defensive (mirrors loadRosterFromCache's "empty cache is valid" discipline + the
+   * T-17-09 tampering mitigation): a malformed/absent snapshot — missing residency or
+   * onboarding, or either lacking a rows array — is a NO-OP. It does NOT throw and does
+   * NOT clobber the existing cache; the prior roster (if any) stays intact. The whole
+   * method is on the roster's OWN error channel (rosterError) — a read-in failure NEVER
+   * blocks boot or the recipe slice (T-17-10 parity).
+   * @param {object} snapshot — a pulled {residency:{rows,fetchedAt}, onboarding:{rows,fetchedAt}}
+   */
+  async _readInRosterSnapshot(snapshot) {
+    // Guard malformed/absent as a no-op (do not throw, leave the existing cache).
+    const res = snapshot && snapshot.residency;
+    const onb = snapshot && snapshot.onboarding;
+    if (!res || !Array.isArray(res.rows) || !onb || !Array.isArray(onb.rows)) return;
+    try {
+      await putRosterTable('residency', { rows: res.rows, fetchedAt: res.fetchedAt });
+      await putRosterTable('onboarding', { rows: onb.rows, fetchedAt: onb.fetchedAt });
+      // Existing roster UI recomputes from the cache — no Coda token needed (D-08).
+      await this.loadRosterFromCache();
+    } catch (e) {
+      // Roster's OWN error channel — a read-in failure never blocks boot / recipes.
+      this.rosterError = "Couldn't load the shared roster snapshot.";
+    }
   },
 
   /**
@@ -5204,9 +5380,14 @@ Alpine.data('app', () => ({
       const residencyRows = normalizeCodaRows(residencyItems);
       const onboardingRows = normalizeCodaRows(onboardingItems);
 
+      // One fetchedAt stamp shared by the cache write AND the GitHub snapshot
+      // (Phase 17, D-10) so the cached table and the snapshot agree on when this
+      // fetch happened.
+      const rosterFetchedAt = new Date().toISOString();
+
       // Plain cache write (no snapshot/verify/revert — re-fetchable cache).
-      await putRosterTable('residency', { rows: residencyRows });
-      await putRosterTable('onboarding', { rows: onboardingRows });
+      await putRosterTable('residency', { rows: residencyRows, fetchedAt: rosterFetchedAt });
+      await putRosterTable('onboarding', { rows: onboardingRows, fetchedAt: rosterFetchedAt });
 
       // Refresh the joined session slice + recompute the panel.
       await this.loadRosterFromCache();
@@ -5216,6 +5397,13 @@ Alpine.data('app', () => ({
       // curated record is NEVER re-clobbered. Best-effort + own error channel so a
       // seed failure never turns a successful roster fetch into a fetch error.
       await this._seedResidentAllergensFromRoster();
+
+      // Phase 17 (Plan 17-03, D-08/D-10) — snapshot BOTH roster tables to the
+      // shared repo so a tokenless device can read the roster. Best-effort with
+      // its OWN error channel (mirrors _seedResidentAllergensFromRoster above): a
+      // snapshot-push failure must NEVER set rosterError or turn this successful
+      // Coda fetch into a fetch error. Built from the rows already in hand.
+      await this._pushRosterSnapshot(this.buildRosterSnapshot(residencyRows, onboardingRows, rosterFetchedAt));
     } catch (e) {
       // Status-aware message — NEVER include the token (T-07-08).
       const msg = (e && e.message) || '';
@@ -5232,6 +5420,78 @@ Alpine.data('app', () => ({
       this.rosterError = friendly;
     } finally {
       this.rosterFetching = false;
+    }
+  },
+
+  /**
+   * buildRosterSnapshot — Phase 17 (Plan 17-03, D-10). Thin Alpine wrapper over the
+   * PURE roster-sync helper (Node-tested in scripts/roster-sync.test.mjs). Returns
+   * the ROWS-ONLY residents_roster.json shape from the rows already fetched in
+   * fetchRoster. CRITICAL (SENSITIVE tier, T-17-08): the payload is rows + fetchedAt
+   * only — the pure helper takes no credential parameter, so NO codaApiToken / PAT /
+   * cfg field can enter the snapshot. Kept as a method (not inlined) so the
+   * no-creds contract is verified once in the pure helper's test.
+   * @param {Array<object>} residencyRows
+   * @param {Array<object>} onboardingRows
+   * @param {string} fetchedAt — the ISO timestamp of this Coda fetch
+   * @returns {{residency:{rows,fetchedAt}, onboarding:{rows,fetchedAt}}}
+   */
+  buildRosterSnapshot(residencyRows, onboardingRows, fetchedAt) {
+    return buildRosterSnapshot(residencyRows, onboardingRows, fetchedAt);
+  },
+
+  /**
+   * _pushRosterSnapshot — Phase 17 (Plan 17-03, D-08/D-09/D-13). Write the roster
+   * snapshot to the shared repo. LOCAL-first (putJsonFile — its own snapshot ->
+   * verify[JSON.parse + the residents_roster.json shapeCheck] -> auto-revert, D-12)
+   * then REMOTE (ghPutFile). First write is a CREATE (sha undefined, D-13); the
+   * cached this._rosterSnapshotSha makes it an UPDATE thereafter.
+   *
+   * Concurrency is LAST-WRITE-WINS, OUTSIDE the advisory lock (D-09):
+   * - NEVER acquireLock/releaseLock — a roster refresh must not flip the other user
+   *   read-only (T-17-11). The snapshot is a pure Coda mirror with no user-authored
+   *   data to lose, so on a stale-sha 409 it re-reads the current sha and re-PUTs
+   *   (overwrite) — NO hard-stop, NO merge (contrast the meal plan's 3-way merge).
+   *
+   * Best-effort with its OWN error channel (T-17-10): a connection/name/transport
+   * failure is SWALLOWED here — it must NEVER set rosterError or turn a successful
+   * Coda fetch into a fetch error. Guards refuse on the network before any I/O:
+   * not connected / no token / no name set.
+   * @param {{residency:{rows,fetchedAt}, onboarding:{rows,fetchedAt}}} snapshot
+   */
+  async _pushRosterSnapshot(snapshot) {
+    // Guards — no connection / no token / no attribution = nothing to push (no
+    // network, no error surfaced). The roster still lives locally either way.
+    if (!this.githubConnected || !this.githubToken) return;
+    if (!(this.userName ?? '').trim()) return; // every commit needs a name (D-07)
+    try {
+      // LOCAL-first: putJsonFile verifies (shapeCheck) + auto-reverts a malformed
+      // blob before it ever reaches the wire (D-08/D-12).
+      await putJsonFile('residents_roster.json', snapshot, { shapeCheck: this._jsonShapeCheckFor('residents_roster.json') });
+      const cfg = this.githubCfg; // fresh per call (rotated token, no reload)
+      const message = this.buildCommitMessage({ action: 'sync', objectKind: 'residents roster', title: '', groupTag: 'roster' });
+      const text = JSON.stringify(snapshot);
+      try {
+        // CREATE on the first write (sha undefined, D-13); UPDATE with the cached sha.
+        const { sha: newSha } = await ghPutFile(cfg, 'residents_roster.json', text, this._rosterSnapshotSha, message);
+        this._rosterSnapshotSha = newSha;
+      } catch (e) {
+        // Stale-sha 409 → LWW: re-read the CURRENT sha and re-PUT (overwrite). The
+        // snapshot is a pure Coda mirror — there is nothing to merge or lose (D-09).
+        if (e instanceof GhConflictError) {
+          let currentSha;
+          try { const { sha } = await ghGetFile(cfg, 'residents_roster.json'); currentSha = sha; }
+          catch (_e) { currentSha = undefined; } // 404/etc → CREATE on the re-PUT
+          const { sha: newSha } = await ghPutFile(cfg, 'residents_roster.json', text, currentSha, message);
+          this._rosterSnapshotSha = newSha;
+          return;
+        }
+        throw e;
+      }
+    } catch (_e) {
+      // Own error channel (T-17-10): a snapshot-push failure is best-effort and
+      // SWALLOWED — it never sets rosterError and never fails the Coda fetch. The
+      // roster is fully usable locally; the next refresh re-attempts the snapshot.
     }
   },
 
@@ -6623,6 +6883,9 @@ Alpine.data('app', () => ({
   },
 
   openManager() {
+    // Phase 17 (Plan 17-02, D-05) — leaving the meal-plan view flushes any pending
+    // debounced push so an un-synced edit is never stranded.
+    if (this.mealPlanView) this._flushPlanPush();
     // quick 260608-bd5 — three-way mutual exclusion: opening this view clears the
     // other two so only one top-level view is ever visible.
     this.recipeManagerView = false;
@@ -6644,6 +6907,7 @@ Alpine.data('app', () => ({
    * only the roster/residents slice, never the recipe csvStore state.
    */
   openResidents() {
+    if (this.mealPlanView) this._flushPlanPush(); // Phase 17 (D-05) flush-on-close
     this.managerView = false;
     this.recipeManagerView = false;
     this.mealPlanView = false;
@@ -6978,6 +7242,7 @@ Alpine.data('app', () => ({
    */
   async openRecipeManager() {
     if (this.approving || this.merging) return;
+    if (this.mealPlanView) this._flushPlanPush(); // Phase 17 (D-05) flush-on-close
     // quick 260608-bd5 — three-way mutual exclusion: clear the other two views.
     this.managerView = false;
     this.mealPlanView = false; // quick 260611-enp — four-way mutual exclusion
@@ -7163,6 +7428,7 @@ Alpine.data('app', () => ({
   // touch this.form or rawText — in-progress parse state lives under x-show and
   // must survive the navigation.
   openParseFromRecipeManager() {
+    if (this.mealPlanView) this._flushPlanPush(); // Phase 17 (D-05) flush-on-close
     this.recipeManagerView = false;
     this.managerView = false;
     this.mealPlanView = false;
@@ -7232,13 +7498,20 @@ Alpine.data('app', () => ({
     // FRESH itself, so the open path and the post-save rebuild share one builder.
     await this._rebuildMealPlanGrouped();
 
+    // Phase 17 (Plan 17-02, D-06) — PULL-ON-OPEN. Pull the latest meal_plan.json
+    // and apply it BEFORE the reconcile loop runs, so the other cook's changes are
+    // reflected on open. NON-FATAL: a 404 / reach error routes to mealPlanSyncStatus
+    // (its own channel) and leaves the local plan in place — never blocks the view.
+    // applySharedPlanDoc suppresses the debounced push (this is a pull, not an edit).
+    await this.pullPlanFromRemote();
+
     // quick 260615-dap — RECONCILE the persisted plan against the fresh recipe
-    // list (runs AFTER recipeList is built + grouped is set). A pick whose
-    // recipe_id no longer exists is dropped; kept entries get their name/type
-    // refreshed from the current list (so renames show). Reassigning mealPlan
-    // also persists (via the $watch) — but we also call _persistMealPlan()
-    // explicitly to be safe. If any were dropped, surface a one-line notice;
-    // a clean open clears any stale notice.
+    // list (runs AFTER recipeList is built + grouped is set AND after the pull). A
+    // pick whose recipe_id no longer exists is dropped; kept entries get their
+    // name/type refreshed from the current list (so renames show). The explicit
+    // _persistMealPlan() below is SUPPRESSED from triggering a push (this is a
+    // pull/reconcile, not a user edit). If any were dropped, surface a one-line
+    // notice; a clean open clears any stale notice.
     const presentIds = new Set((Array.isArray(this.recipeList) ? this.recipeList : []).map(r => r.recipe_id));
     const kept = [];
     let droppedCount = 0;
@@ -7254,6 +7527,11 @@ Alpine.data('app', () => ({
         droppedCount++;
       }
     }
+    // Phase 17 (Plan 17-02, D-05) — the reconcile is NOT a user edit; suppress the
+    // debounced push around the assignment + explicit persist (and the deferred
+    // $watch flush) so opening the view never auto-pushes.
+    this._suppressPlanPush = true;
+    queueMicrotask(() => { this._suppressPlanPush = false; });
     this.mealPlan = kept;
     this._persistMealPlan();
     if (droppedCount > 0) {
@@ -7481,6 +7759,10 @@ Alpine.data('app', () => ({
     } catch (_e) {
       /* fail-open — persistence is best-effort, never block the UI. */
     }
+    // Phase 17 (Plan 17-02, D-05) — debounced REMOTE push alongside the instant
+    // local persist. Suppressed during boot restore / pull-apply / open reconcile
+    // (NOT user edits) so a pull never bounces straight back into a push.
+    if (!this._suppressPlanPush) this._schedulePlanPush();
   },
 
   /**
@@ -7557,6 +7839,12 @@ Alpine.data('app', () => ({
     } catch (_e) {
       /* fail-open — persistence is best-effort, never block the UI. */
     }
+    // Phase 17 (Plan 17-02, D-05) — this funnel also persists SHARED fields
+    // (cooksByDay/dayLeftovers/prepDoneByDay/regularsOverrides/adHocExtras/
+    // orderScopeRange), so it triggers the debounced push too. A toggle of the
+    // local-only pickerCollapsed/dayCollapsedByDay also lands here; the resulting
+    // push merges to identical shared bytes (a debounced no-op), so it is safe.
+    if (!this._suppressPlanPush) this._schedulePlanPush();
   },
 
   /**
@@ -7639,6 +7927,328 @@ Alpine.data('app', () => ({
       this.regularsOverrides = {};
       this.adHocExtras = [];
     }
+  },
+
+  // =========================================================================
+  // Phase 17 (Plan 17-02) — MEAL-PLAN SYNC ENGINE
+  // -------------------------------------------------------------------------
+  // The shared meal plan rides meal_plan.json (entries + the keyed maps +
+  // orderScopeRange). Pure view-state (per-entry collapsed, pickerCollapsed,
+  // dayCollapsedByDay) is EXCLUDED and stays in localStorage (SPEC #1). Sync
+  // is a 3-way merge against a persisted base (D-01..D-04), debounced ~10s
+  // (D-05), pull-on-open (D-06), OUTSIDE the advisory lock (SPEC #6).
+  // The PURE merge/projection helpers live in mealplan-sync.js (Node-tested);
+  // these methods are the Alpine-state + transport wiring.
+  // =========================================================================
+
+  /**
+   * buildSharedPlanDoc — Phase 17 (Plan 17-02, SPEC #1). Project the CURRENT
+   * Alpine plan state into the synced shared document, pruning all view-state
+   * (per-entry `collapsed`, pickerCollapsed, dayCollapsedByDay never enter it).
+   * Delegates to the PURE projectSharedPlanDoc so the field split is unit-tested.
+   * @returns {object} the shared doc { entries, cooksByDay, dayLeftovers,
+   *   prepDoneByDay, regularsOverrides, adHocExtras, orderScopeRange }
+   */
+  buildSharedPlanDoc() {
+    return projectSharedPlanDoc({
+      mealPlan: this.mealPlan,
+      cooksByDay: this.cooksByDay,
+      dayLeftovers: this.dayLeftovers,
+      prepDoneByDay: this.prepDoneByDay,
+      regularsOverrides: this.regularsOverrides,
+      adHocExtras: this.adHocExtras,
+      orderScopeRange: this.orderScopeRange
+    });
+  },
+
+  /**
+   * applySharedPlanDoc — Phase 17 (Plan 17-02, D-06). Load a shared doc back into
+   * Alpine state. The shared entries are merged with this device's LOCAL-ONLY
+   * `collapsed` view-state by id (a pulled entry keeps its prior collapsed value,
+   * defaulting to collapsed=true for a brand-new entry); the 6 maps + orderScopeRange
+   * are assigned. name/type are left as placeholders — openMealPlan's reconcile loop
+   * refreshes them from the fresh recipe list immediately after this is called.
+   * Defensive: a corrupt doc coerces to the empty default (never throws).
+   * @param {object} doc — a shared doc (or anything; coerced)
+   */
+  applySharedPlanDoc(doc) {
+    // Suppress the debounced push while we assign shared state (this is a pull/merge
+    // result, NOT a user edit). The $watch('mealPlan') + any _persist* fired by these
+    // assignments must not bounce a pull straight back into a push. Cleared on the
+    // next microtask so the deferred reactive flush is also covered.
+    this._suppressPlanPush = true;
+    queueMicrotask(() => { this._suppressPlanPush = false; });
+    const safe = coerceSharedPlanDoc(doc);
+    // Preserve LOCAL-ONLY per-entry collapsed by id (view-state stays local, SPEC #1).
+    const priorCollapsed = new Map(
+      (Array.isArray(this.mealPlan) ? this.mealPlan : [])
+        .filter(e => e && e.id != null)
+        .map(e => [e.id, e.collapsed])
+    );
+    this.mealPlan = safe.entries.map(e => ({
+      id: e.id,
+      recipe_id: Number(e.recipe_id),
+      name: '',   // refreshed by openMealPlan's reconcile loop
+      type: '',
+      servings: Number(e.servings),
+      date: typeof e.date === 'string' ? e.date : '',
+      // local-only collapsed: keep this device's value, default collapsed=true.
+      collapsed: priorCollapsed.has(e.id) ? (priorCollapsed.get(e.id) !== false) : true
+    }));
+    this.cooksByDay = safe.cooksByDay;
+    this.dayLeftovers = safe.dayLeftovers;
+    this.prepDoneByDay = safe.prepDoneByDay;
+    this.regularsOverrides = safe.regularsOverrides;
+    this.adHocExtras = safe.adHocExtras;
+    this.orderScopeRange = safe.orderScopeRange;
+  },
+
+  /**
+   * _persistMealPlanBase — Phase 17 (Plan 17-02, D-01/D-14). Snapshot the 3-way
+   * merge base to localStorage. Fail-open (mirrors _persistMealPlan): any
+   * quota/serialization error is swallowed so persistence never throws into the UI.
+   * @param {object} doc — the shared doc to store as the new base
+   */
+  _persistMealPlanBase(doc) {
+    const coerced = coerceSharedPlanDoc(doc);
+    // Update the in-memory merge mirror FIRST — a localStorage quota error must not
+    // leave the base stale on this front too (WR-02), which would skew later 3-way merges.
+    this._mealPlanBase = coerced;
+    try {
+      localStorage.setItem(MEAL_PLAN_BASE_KEY, JSON.stringify(coerced));
+    } catch (_e) {
+      /* fail-open — persistence is best-effort, never block the UI. In-memory mirror set above. */
+    }
+  },
+
+  /**
+   * _restoreMealPlanBase — Phase 17 (Plan 17-02, D-01/D-14). Read + defensively
+   * coerce the persisted base on boot. Any throw / corruption / non-object => the
+   * safe empty default (so the merge degrades to "everything local is new" rather
+   * than garbage). Caches the result in this._mealPlanBase. MUST be called on boot
+   * so the base survives reloads (D-14). @returns {object} the base shared doc
+   */
+  _restoreMealPlanBase() {
+    try {
+      const raw = localStorage.getItem(MEAL_PLAN_BASE_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      this._mealPlanBase = coerceSharedPlanDoc(parsed);
+    } catch (_e) {
+      this._mealPlanBase = emptySharedPlanDoc();
+    }
+    return this._mealPlanBase;
+  },
+
+  /**
+   * pushPlanToRemote — Phase 17 (Plan 17-02, D-01..D-04, D-13, SPEC #2/#6). The
+   * merge-on-push: re-pull FRESH remote meal_plan.json, 3-way-merge THIS device's
+   * changes (vs the persisted base) onto it, write LOCAL-first (putJsonFile verify
+   * + auto-revert) then REMOTE (ghPutFile), and update the base to the merged doc.
+   *
+   * Differs from the recipe pushToRemote:
+   * - NO 409 hard-stop. On a stale-sha GhConflictError it RE-PULLS fresh and
+   *   RE-MERGES (the merge is idempotent against the base — D-01), bounded to one
+   *   retry so a pathological race can never spin.
+   * - NEVER calls acquireLock/releaseLock (SPEC #6) — editing the plan must not
+   *   flip the other user read-only on recipes. Relies on merge + blob-SHA only.
+   * - First write is a CREATE (no sha → ghPutFile with sha undefined, D-13);
+   *   thereafter UPDATE with the cached this._mealPlanSha.
+   * - Own-error-channel: failures route to mealPlanSyncStatus (NEVER parseError,
+   *   NEVER blocks boot — mirrors pullFromRemote's remoteStatus discipline).
+   *
+   * Guards (no network on refusal): not connected / no token / no name set.
+   */
+  async pushPlanToRemote() {
+    if (!this.githubConnected || !this.githubToken) return; // nothing to push to
+    if (!(this.userName ?? '').trim()) {
+      // D-07 name guard (mirrors pushToRemote): every commit needs an attribution.
+      this.mealPlanSyncStatus = 'Set your name in Settings to sync the meal plan.';
+      return;
+    }
+    this.planSyncing = true;
+    this.mealPlanSyncStatus = '';
+    try {
+      await this._pushPlanOnce(/* allowRetry */ true);
+      this.mealPlanLastSyncedAt = new Date().toISOString();
+      this.mealPlanSyncStatus = '';
+    } catch (e) {
+      // Non-fatal: route to the plan's OWN channel; never parseError, never the token.
+      this.mealPlanSyncStatus = this.githubFriendlyError(e);
+      this._maybeRateLimitBanner(e); // ACCESS-04 parity
+    } finally {
+      this.planSyncing = false;
+    }
+  },
+
+  /**
+   * _pushPlanOnce — Phase 17 (Plan 17-02). One merge-then-write pass, factored out
+   * so the 409 path can re-run it exactly once. Reads fresh cfg per call (rotated
+   * token). A 404 on the GET means the file does not exist yet → CREATE (D-13):
+   * fresh remote = empty doc, sha undefined.
+   * @param {boolean} allowRetry — re-pull+re-merge once on a stale-sha 409
+   */
+  async _pushPlanOnce(allowRetry) {
+    const cfg = this.githubCfg; // fresh per call (rotated token, no reload)
+    // (1) FRESH remote doc + sha. 404 = not yet created → CREATE path (D-13).
+    let freshRemote = emptySharedPlanDoc();
+    let sha; // undefined = CREATE
+    try {
+      const { text, sha: remoteSha } = await ghGetFile(cfg, 'meal_plan.json');
+      freshRemote = coerceSharedPlanDoc(JSON.parse(text));
+      sha = remoteSha;
+    } catch (e) {
+      if (!(e && e.status === 404)) throw e; // a real reach error propagates
+      // 404 → first write: freshRemote stays empty, sha stays undefined (CREATE).
+    }
+    // (2) 3-way merge THIS device's changes (vs base) onto fresh remote (D-01..D-04).
+    const base = this._mealPlanBase || this._restoreMealPlanBase();
+    const local = this.buildSharedPlanDoc();
+    const merged = mergeMealPlan(base, local, freshRemote);
+    // (3) LOCAL-first write (putJsonFile verify + auto-revert) then REMOTE.
+    await putJsonFile('meal_plan.json', merged, { shapeCheck: this._jsonShapeCheckFor('meal_plan.json') });
+    const message = this.buildCommitMessage({ action: 'sync', objectKind: 'meal plan', title: '', groupTag: 'plan' });
+    try {
+      const { sha: newSha } = await ghPutFile(cfg, 'meal_plan.json', JSON.stringify(merged), sha, message);
+      // (4) Success — adopt the merged doc as the new base + cache the sha.
+      this._mealPlanSha = newSha;
+      this._persistMealPlanBase(merged);
+      // Reflect the merged result into Alpine state so a remote-only change made
+      // by the other cook becomes visible without waiting for the next open.
+      this.applySharedPlanDoc(merged);
+    } catch (e) {
+      // Stale-sha 409 → re-pull + re-merge ONCE (idempotent against the base, D-01).
+      // NO hard-stop, NO whole-doc clobber (T-17-05).
+      if (e instanceof GhConflictError && allowRetry) {
+        await this._pushPlanOnce(/* allowRetry */ false);
+        return;
+      }
+      throw e;
+    }
+  },
+
+  // Phase 17 (Plan 17-02, D-05) — the debounce window for the plan auto-push.
+  // ~10s after edits stop: a burst of N edits collapses to ONE bounded push
+  // (T-17-07 — never per-keystroke). Module-level would be cleaner but the timer
+  // handle must live on `this` for the flush-on-close path to clear it.
+  get _PLAN_PUSH_DEBOUNCE_MS() { return 10000; },
+
+  /**
+   * _schedulePlanPush — Phase 17 (Plan 17-02, D-05). The DEBOUNCED remote push.
+   * Called from every plan-mutation path ALONGSIDE the existing synchronous
+   * localStorage persist (the debounce is the REMOTE push only — local persist
+   * stays instant). Resets the ~10s timer on each call so a burst collapses to one
+   * push when edits stop. No-op when not connected (nothing to push to). The timer
+   * fires pushPlanToRemote, which owns its own error channel.
+   */
+  _schedulePlanPush() {
+    if (!this.githubConnected || !this.githubToken) return; // nothing to sync to
+    this._planPushPending = true;
+    if (this._planPushTimer) { clearTimeout(this._planPushTimer); }
+    this._planPushTimer = setTimeout(() => {
+      this._planPushTimer = null;
+      this._planPushPending = false;
+      // Fire-and-forget; pushPlanToRemote routes its own failures to mealPlanSyncStatus.
+      this.pushPlanToRemote();
+    }, this._PLAN_PUSH_DEBOUNCE_MS);
+  },
+
+  /**
+   * _flushPlanPush — Phase 17 (Plan 17-02, D-05 safety net). If a debounced push
+   * is pending, clear the timer and push IMMEDIATELY. Called on meal-plan-view
+   * close / navigation-away so an un-flushed edit is never stranded. Idempotent /
+   * safe when nothing is pending (no-op).
+   */
+  _flushPlanPush() {
+    if (!this._planPushTimer && !this._planPushPending) return;
+    if (this._planPushTimer) { clearTimeout(this._planPushTimer); this._planPushTimer = null; }
+    this._planPushPending = false;
+    if (!this.githubConnected || !this.githubToken) return;
+    this.pushPlanToRemote(); // fire-and-forget; own error channel
+  },
+
+  /**
+   * pullPlanFromRemote — Phase 17 (Plan 17-02, D-06). Pull the latest meal_plan.json
+   * and apply it before render. NON-FATAL: a missing file (404) or any reach error
+   * routes to the own channel and returns, leaving the local cache in place (mirrors
+   * pullFromRemote / loadFromStore boot-pull discipline at app.js init pull). On
+   * success it applies the pulled doc into Alpine state, adopts it as the 3-way base,
+   * and caches the sha. The CALLER (openMealPlan) runs the reconcile loop afterwards
+   * so an entry whose recipe_id is gone is dropped + names refresh.
+   */
+  async pullPlanFromRemote() {
+    if (!this.githubConnected || !this.githubToken) return; // nothing to pull
+    const cfg = this.githubCfg; // fresh per call (rotated token)
+    this.planSyncing = true;
+    try {
+      const { text, sha } = await ghGetFile(cfg, 'meal_plan.json');
+      const parsed = JSON.parse(text);
+      // Shape gate (WR-01): the boot-pull path rejects a structurally-wrong remote
+      // via putJsonFile's shapeCheck, but this pull-on-open path applies the doc
+      // directly. Without this gate a valid-JSON-but-wrong-shape remote (e.g. `{}`,
+      // a manual edit) would coerce to empty, wipe the in-memory plan + base, and
+      // propagate empty on the next push. Skip-and-keep-local instead of wiping.
+      if (!this._jsonShapeCheckFor('meal_plan.json')(parsed)) {
+        this.mealPlanSyncStatus = 'Remote plan has an unexpected shape — kept your local plan.';
+        return;
+      }
+      const pulled = coerceSharedPlanDoc(parsed);
+      this.applySharedPlanDoc(pulled);
+      this._mealPlanSha = sha;
+      this._persistMealPlanBase(pulled); // the pulled doc is the new 3-way base (D-01)
+      this.mealPlanLastSyncedAt = new Date().toISOString();
+      this.mealPlanSyncStatus = '';
+    } catch (e) {
+      if (e && e.status === 404) {
+        // Optional-absent (D-15): the file does not exist yet. NOT an error — the
+        // local plan is authoritative until this device's first push creates it.
+        this.mealPlanSyncStatus = '';
+        return;
+      }
+      if (e instanceof SyntaxError) {
+        // Invalid JSON (a status-less error) — githubFriendlyError would mislabel it
+        // "Couldn't reach GitHub" (IN-02). Give a data-format message; keep local.
+        this.mealPlanSyncStatus = 'Remote plan could not be read — file may be corrupted.';
+        return;
+      }
+      // Any other failure: own channel, render the local cache (NEVER parseError).
+      this.mealPlanSyncStatus = this.githubFriendlyError(e);
+      this._maybeRateLimitBanner(e);
+    } finally {
+      this.planSyncing = false;
+    }
+  },
+
+  /**
+   * mealPlanSyncLabel — Phase 17 (Plan 17-02, D-07). The binding surface for the
+   * Plan 04 UI. Side-effect-free getter (mirrors lastSyncedLabel's shape):
+   *   - 'Syncing…' while a push/pull is in flight OR a debounced push is pending
+   *   - an own-channel error copy when mealPlanSyncStatus is set
+   *   - 'Synced' just now / 'Last synced HH:MM' otherwise
+   *   - 'Not synced yet' when nothing has synced and nothing is connected
+   */
+  get mealPlanSyncLabel() {
+    if (this.planSyncing || this._planPushPending) return 'Syncing…';
+    if (this.mealPlanSyncStatus) return this.mealPlanSyncStatus;
+    if (!this.mealPlanLastSyncedAt) return 'Not synced yet';
+    const then = new Date(this.mealPlanLastSyncedAt).getTime();
+    if (!Number.isFinite(then)) return 'Not synced yet';
+    const mins = Math.floor((Date.now() - then) / 60000);
+    if (mins < 1) return 'Synced';
+    const d = new Date(this.mealPlanLastSyncedAt);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    return `Last synced ${hh}:${mm}`;
+  },
+
+  /**
+   * syncPlanNow — Phase 17 (Plan 17-02, D-07). The manual "Sync now" action for the
+   * Plan 04 UI — doubles as the fallback if a debounced push was missed. Flushes any
+   * pending debounce then forces a push. await-able so the UI can show a spinner.
+   */
+  async syncPlanNow() {
+    if (this._planPushTimer) { clearTimeout(this._planPushTimer); this._planPushTimer = null; }
+    this._planPushPending = false;
+    await this.pushPlanToRemote();
   },
 
   /**
