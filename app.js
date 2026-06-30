@@ -379,7 +379,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '09a9af6 2026-06-30';
+const APP_VERSION = '82d0efe 2026-06-30';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -2924,6 +2924,12 @@ Alpine.data('app', () => ({
   //   transient — the saved row drops out on the next filteredMaster recompute.
   inlineFillValues: {},
   inlineFillSaved: {},
+  // quick 260630-gl4 — true ONLY while saveInlineField runs. It reuses the shared
+  //   per-ingredient write path (startEditIngredient sets editingIngredientId),
+  //   which would otherwise flash the edit-ingredient modal open for the whole
+  //   async save. The modal's x-show is gated on !inlineFillBusy so it stays
+  //   hidden during an inline batch-fill save.
+  inlineFillBusy: false,
   // editingIngredientId — the ingredient_id (number) of the row currently in
   //   edit mode (inline expand), or null. editForm holds the in-flight edit; its
   //   pack_size/pack_unit are read FRESH from disk on edit-open (the in-memory
@@ -11540,25 +11546,46 @@ Alpine.data('app', () => ({
     if (!key) return;
     const value = this.inlineFillValues[ingredient_id];
     if (value == null || String(value).trim() === '') return;
-    // Open the existing per-ingredient editor (reads fresh disk, acquires lock,
-    // sets editingIngredientId + editForm). On a read/old-schema/not-found failure
-    // it sets managerError and returns WITHOUT setting editingIngredientId — bail.
-    await this.startEditIngredient(ingredient_id);
-    if (this.editingIngredientId == null || this.managerError) return;
-    // Set ONLY the one target field; every other editForm cell round-trips unchanged.
-    if (key === 'link') {
-      this.editForm.link1 = String(value).trim();
-    } else if (key === 'location') {
-      this.editForm.pantry_section = String(value).trim();
+    // quick 260630-gl4 — suppress the edit-ingredient modal for the whole inline
+    // save. startEditIngredient/saveEditIngredient set editingIngredientId (the
+    // modal's x-show), which would otherwise flash the modal open during the
+    // async write. The finally always clears the flag.
+    this.inlineFillBusy = true;
+    try {
+      // Open the existing per-ingredient editor (reads fresh disk, acquires lock,
+      // sets editingIngredientId + editForm). On a read/old-schema/not-found failure
+      // it sets managerError and returns WITHOUT setting editingIngredientId — bail.
+      await this.startEditIngredient(ingredient_id);
+      if (this.editingIngredientId == null || this.managerError) return;
+      // Set ONLY the one target field; every other editForm cell round-trips unchanged.
+      if (key === 'link') {
+        this.editForm.link1 = String(value).trim();
+      } else if (key === 'location') {
+        this.editForm.pantry_section = String(value).trim();
+      }
+      await this.saveEditIngredient();
+      // A clean save clears managerError and releases the lock + reloads the master.
+      if (!this.managerError) {
+        this.inlineFillSaved = { ...this.inlineFillSaved, [ingredient_id]: true };
+      }
+      // Dropped-field edge: saveEditIngredient KEEPS the modal open (leaves
+      // editingIngredientId non-null + sets editIngredientWarning) so the in-modal
+      // warning is seen. Inline fill has no visible modal, so the warning would be
+      // lost AND the modal would pop once inlineFillBusy clears — surface it as a
+      // managerError and close the editor instead. (Unreachable for link/location,
+      // which exist post-Migrate, but kept correct.)
+      if (this.editingIngredientId != null) {
+        if (this.editIngredientWarning) this.managerError = this.editIngredientWarning;
+        this.editingIngredientId = null;
+        this.editIngredientWarning = '';
+        this.releaseLock();
+      }
+      const nextValues = { ...this.inlineFillValues };
+      delete nextValues[ingredient_id];
+      this.inlineFillValues = nextValues;
+    } finally {
+      this.inlineFillBusy = false;
     }
-    await this.saveEditIngredient();
-    // A clean save clears managerError and releases the lock + reloads the master.
-    if (!this.managerError) {
-      this.inlineFillSaved = { ...this.inlineFillSaved, [ingredient_id]: true };
-    }
-    const nextValues = { ...this.inlineFillValues };
-    delete nextValues[ingredient_id];
-    this.inlineFillValues = nextValues;
   },
 
   /**

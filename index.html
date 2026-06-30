@@ -4015,7 +4015,7 @@
          the only content change is the ID display reads editingIngredientId
          (the modal is outside the manager x-for, so `ing` is no longer in scope).
          ==================================================================== -->
-    <div class="modal" x-show="editingIngredientId !== null" x-cloak
+    <div class="modal" x-show="editingIngredientId !== null && !inlineFillBusy" x-cloak
          @keydown.escape.window="requestCloseEditModal('ingredient', cancelEditIngredient)"
          @click.self="requestCloseEditModal('ingredient', cancelEditIngredient)">
       <div class="modal-content" @click.stop>
