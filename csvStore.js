@@ -61,7 +61,7 @@ export const STORE_FILES = ['recipes.csv', 'ingredients.csv', 'recipe_ingredient
 // state, never PARTIAL and never an error — a pre-Phase-17 repo with NO JSON
 // files MUST classify 'full', not 'partial' (D-15, SPEC acceptance #7). They are
 // probed/pulled on their OWN JSON path (app.js), never via the CSV machinery.
-export const OPTIONAL_JSON_FILES = ['meal_plan.json', 'residents_roster.json'];
+export const OPTIONAL_JSON_FILES = ['meal_plan.json', 'residents_roster.json', 'suppliers.json'];
 
 const DB_NAME = 'recipe_ingest';
 const STORE_NAME = 'csvFiles';

@@ -89,6 +89,16 @@ import {
 // scripts/roster-sync.test.mjs; the impure wiring (fetchRoster push hook,
 // putJsonFile/ghPutFile LWW, tokenless read-in) lives in this file.
 import { buildRosterSnapshot } from './roster-sync.js';
+// quick 260630-e8v — PURE suppliers helper (suppliers.json shape + search-URL
+// resolution). Node-tested in scripts/suppliers-sync.test.mjs; the impure wiring
+// (_pushSuppliers LWW push mirroring _pushRosterSnapshot, the pull-reflect into
+// this.suppliers, the suppliers CRUD) lives in this file.
+import {
+  DEFAULT_SUPPLIERS,
+  coerceSuppliers,
+  buildSearchUrl,
+  searchLabel
+} from './suppliers-sync.js';
 // merge.js — schema migration transforms + detectors + CSV convention probe.
 // (The delta/merge file-I/O helpers are removed in quick 260612-abt; only the
 // migration transforms + detectCsvConventions + isShoppingUnitValue remain.)
@@ -133,6 +143,7 @@ import {
   // Phase 17 (D-11/D-15) — the parallel JSON data-safety write + read, and the
   // optional-absent JSON file-set the shared meal plan + roster snapshot ride.
   putJsonFile,
+  getJsonFile,
   OPTIONAL_JSON_FILES
 } from './csvStore.js';
 
@@ -237,11 +248,10 @@ const MISSING_FILTER_DEFS = {
   location: { label: 'Missing location', isMissing: m => ((m && m.pantry_section) || '') === '' }
 };
 
-// quick 260630-cf9 — Morrisons grocery search base. ONE easily-changed constant
-// so the orchestrator's live-site verification can correct the path/param with a
-// one-line edit. Confirmed live: groceries.morrisons.com/search?q=<term> returns
-// real product listings (orchestrator-verified 2026-06-30).
-const MORRISONS_SEARCH_BASE = 'https://groceries.morrisons.com/search?q=';
+// quick 260630-e8v — the Morrisons grocery search base now lives in
+// suppliers-sync.js's DEFAULT_SUPPLIERS (the supermarket/Morrisons default entry),
+// which buildSearchUrl resolves through. The old standalone MORRISONS_SEARCH_BASE
+// const (cf9) is removed — DEFAULT_SUPPLIERS owns the live default + the {q} template.
 
 // Phase 12 (LOCK-01..04) — advisory-lock state-machine constants. Named, never
 // magic numbers. TTL is the lifetime baked into each lock's `expires`
@@ -369,7 +379,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'c597719 2026-06-30';
+const APP_VERSION = '09a9af6 2026-06-30';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -558,7 +568,13 @@ function deriveSessionStateFromCsvs(recipes, ingredients, recipeIngredients) {
       // load. The combined shopping list reads it to open the buy link in a new tab
       // on a name-click. NOT a v2 CSV schema / write-path change — link1 is in-memory
       // only; blank/absent loads as '' (no link → renders as plain non-clickable text).
-      link1: String(r['1st_link'] ?? '').trim()
+      link1: String(r['1st_link'] ?? '').trim(),
+      // quick 260630-e8v — master loads `supplier` (the existing v2 CSV column) as a
+      // read-only ADDITIVE in-memory projection, mirroring the link1 additive load.
+      // Read by the supplier-aware search (searchUrlForIngredient) to open the
+      // ingredient's SUPPLIER store search. NOT a v2 CSV schema / write-path change —
+      // supplier is in-memory only here; blank/absent loads as '' (→ Morrisons default).
+      supplier: (r.supplier ?? '').trim()
     });
   }
 
@@ -3134,6 +3150,21 @@ Alpine.data('app', () => ({
   // 409 it re-pulls this sha and re-PUTs (overwrite), never a hard-stop.
   _rosterSnapshotSha: undefined,
 
+  // quick 260630-e8v — the synced, in-app-managed supplier list (name + display
+  // label + search-URL template), shared across staff on the SAME OPTIONAL_JSON_FILES
+  // rails as residents_roster.json. `suppliers` is the in-memory list (seeded from
+  // DEFAULT_SUPPLIERS on boot/empty so the manager shows editable defaults + lookups
+  // resolve); `_suppliersSnapshotSha` is the cached blob sha (undefined = CREATE on the
+  // first push; present = UPDATE thereafter). The push is LWW OUTSIDE the advisory lock
+  // (a pure list with no per-cook merge), mirroring _rosterSnapshotSha / _pushRosterSnapshot.
+  suppliers: [],
+  _suppliersSnapshotSha: undefined,
+  // quick 260630-e8v — the Suppliers manager UI (an inline panel in Manage
+  // Ingredients, NOT a modal — so it never stacks over the edit modal). The hint
+  // shows a non-blocking note when a saved searchUrl lacks the {q} slot.
+  suppliersPanelOpen: false,
+  suppliersUrlHint: '',
+
   // Phase 16 (D40/D41) — the curated 4th-file (residents_allergens.csv) session
   // slice. DATA-ISOLATED like the roster: loaded NON-FATALLY (a missing 4th file
   // never blocks the recipe load — 16-RESEARCH Pitfall 3). `residentAllergenRows`
@@ -3624,6 +3655,17 @@ Alpine.data('app', () => ({
       this.rosterError = `Couldn't load the cached roster: ${(e && e.message) || 'unknown error'}.`;
     }
 
+    // quick 260630-e8v — load the synced supplier list from the IndexedDB cache
+    // (so a tokenless/offline boot still has the user's customised suppliers), then
+    // seed DEFAULT_SUPPLIERS if still empty. Non-fatal + best-effort: a failure here
+    // must NEVER block recipe load, and lookups fall back to defaults regardless.
+    try {
+      await this.loadSuppliersFromCache();
+    } catch (e) { /* best-effort: defaults below cover a read failure */ }
+    if (!Array.isArray(this.suppliers) || this.suppliers.length === 0) {
+      this.suppliers = DEFAULT_SUPPLIERS.map((s) => ({ ...s })); // editable defaults; NOT auto-pushed
+    }
+
     // Phase 16 (D40/D41) — load the curated 4th file (residents_allergens.csv) as a
     // SEPARATE, non-fatal slice. A missing/absent 4th file (first run, or an old
     // shared repo) is a VALID state and must NEVER block the recipe slice — its
@@ -3881,6 +3923,17 @@ Alpine.data('app', () => ({
         return hasRows(p.residency) && hasRows(p.onboarding);
       };
     }
+    if (name === 'suppliers.json') {
+      // quick 260630-e8v — { suppliers: [ {object}, ... ] } (top-level coarse
+      // tripwire only, like the roster branch). A garbage blob (no suppliers
+      // array, or an entry that isn't an object) trips the shapeCheck so
+      // putJsonFile auto-reverts rather than blanking the stored list.
+      return (p) => {
+        if (!p || typeof p !== 'object' || Array.isArray(p)) return false;
+        if (!Array.isArray(p.suppliers)) return false;
+        return p.suppliers.every((e) => e && typeof e === 'object' && !Array.isArray(e));
+      };
+    }
     // Defensive default: any non-null object passes (no known shape to enforce).
     return (p) => !!p && typeof p === 'object';
   },
@@ -3999,6 +4052,13 @@ Alpine.data('app', () => ({
         if (name === 'residents_roster.json') {
           this._rosterSnapshotSha = sha;
           await this._readInRosterSnapshot(parsed);
+        }
+        // quick 260630-e8v — suppliers.json pull-reflect (mirrors the roster reflect
+        // above). Land the coerced list into this.suppliers + cache the sha so a later
+        // _pushSuppliers UPDATEs (D-13 parity) rather than blindly CREATE-409ing.
+        if (name === 'suppliers.json') {
+          this.suppliers = coerceSuppliers(parsed).suppliers;
+          this._suppliersSnapshotSha = sha;
         }
       }
 
@@ -4730,6 +4790,20 @@ Alpine.data('app', () => ({
     // quick 260620-p1f — stamp the cache's last-fetch time for the once-per-day
     // staleness check (residency record always carries fetchedAt, per residents.js).
     this.rosterFetchedAt = residency.fetchedAt || null;
+  },
+
+  /**
+   * loadSuppliersFromCache — quick 260630-e8v. Read the stored suppliers.json from
+   * the IndexedDB JSON cache into this.suppliers, mirroring loadRosterFromCache's
+   * "empty cache is a valid first-run state, not an error" discipline. An absent
+   * record leaves this.suppliers untouched (the init seed then fills DEFAULT_SUPPLIERS).
+   * coerceSuppliers drops any malformed stored entries (fail-open).
+   */
+  async loadSuppliersFromCache() {
+    const rec = await getJsonFile('suppliers.json');
+    if (!rec || rec.json == null) return; // absent = first run; the init seed installs the defaults
+    this.suppliers = coerceSuppliers(rec.json).suppliers;
+    if (rec.meta && rec.meta.sha) this._suppliersSnapshotSha = rec.meta.sha;
   },
 
   /**
@@ -5606,6 +5680,92 @@ Alpine.data('app', () => ({
       // SWALLOWED — it never sets rosterError and never fails the Coda fetch. The
       // roster is fully usable locally; the next refresh re-attempts the snapshot.
     }
+  },
+
+  /**
+   * _pushSuppliers — quick 260630-e8v. Write the supplier list to the shared repo.
+   * An EXACT LWW mirror of _pushRosterSnapshot (D-08/D-09/D-13): LOCAL-first
+   * putJsonFile (its own snapshot -> verify[the suppliers.json shapeCheck] ->
+   * auto-revert) then REMOTE ghPutFile (CREATE on the first write with sha undefined;
+   * UPDATE with the cached this._suppliersSnapshotSha thereafter). Concurrency is
+   * LAST-WRITE-WINS OUTSIDE the advisory lock — the supplier list is a flat synced
+   * list with no per-entry merge, so on a stale-sha 409 it re-reads the current sha
+   * and re-PUTs (overwrite), exactly like the roster. NEVER touches the meal-plan
+   * 3-way merge. Best-effort with its OWN swallowed error channel + the same
+   * connected / token / name guards.
+   *
+   * @param {{suppliers: Array<{name:string,label:string,searchUrl:string}>}} snapshot
+   */
+  async _pushSuppliers(snapshot) {
+    // Guards — no connection / no token / no attribution = nothing to push.
+    if (!this.githubConnected || !this.githubToken) return;
+    if (!(this.userName ?? '').trim()) return; // every commit needs a name (D-07)
+    try {
+      // LOCAL-first: putJsonFile verifies (shapeCheck) + auto-reverts a malformed blob.
+      await putJsonFile('suppliers.json', snapshot, { shapeCheck: this._jsonShapeCheckFor('suppliers.json') });
+      const cfg = this.githubCfg; // fresh per call (rotated token, no reload)
+      const message = this.buildCommitMessage({ action: 'sync', objectKind: 'suppliers', title: '', groupTag: 'suppliers' });
+      const text = JSON.stringify(snapshot);
+      try {
+        // CREATE on the first write (sha undefined, D-13); UPDATE with the cached sha.
+        const { sha: newSha } = await ghPutFile(cfg, 'suppliers.json', text, this._suppliersSnapshotSha, message);
+        this._suppliersSnapshotSha = newSha;
+      } catch (e) {
+        // Stale-sha 409 → LWW: re-read the CURRENT sha and re-PUT (overwrite). A flat
+        // synced list — nothing to merge or lose (mirror the roster's 409 path, D-09).
+        if (e instanceof GhConflictError) {
+          let currentSha;
+          try { const { sha } = await ghGetFile(cfg, 'suppliers.json'); currentSha = sha; }
+          catch (_e) { currentSha = undefined; } // 404/etc → CREATE on the re-PUT
+          const { sha: newSha } = await ghPutFile(cfg, 'suppliers.json', text, currentSha, message);
+          this._suppliersSnapshotSha = newSha;
+          return;
+        }
+        throw e;
+      }
+    } catch (_e) {
+      // Own error channel: a suppliers-push failure is best-effort and SWALLOWED —
+      // the list is fully usable locally; the next save re-attempts the push.
+    }
+  },
+
+  /**
+   * addSupplier — quick 260630-e8v. Append a blank editable supplier row to the
+   * in-memory list (saved + pushed via saveSuppliers). Write-gated.
+   */
+  addSupplier() {
+    if (this.shopOrderGateDisabled) return;
+    if (!Array.isArray(this.suppliers)) this.suppliers = [];
+    this.suppliers.push({ name: '', label: '', searchUrl: '' });
+  },
+
+  /**
+   * removeSupplier — quick 260630-e8v. Drop the supplier at index i, then persist.
+   * Write-gated.
+   */
+  removeSupplier(i) {
+    if (this.shopOrderGateDisabled) return;
+    if (!Array.isArray(this.suppliers)) return;
+    this.suppliers.splice(i, 1);
+    this.saveSuppliers();
+  },
+
+  /**
+   * saveSuppliers — quick 260630-e8v. Normalise the edited rows via coerceSuppliers
+   * (drops blank-name / blank-url rows, defaults label→name), assign this.suppliers,
+   * and push suppliers.json (LWW, mirror of the roster snapshot push). Light
+   * non-blocking validation: warn (do not block) when a kept searchUrl lacks the
+   * {q} slot — the helper appends the query defensively. Write-gated.
+   */
+  async saveSuppliers() {
+    if (this.shopOrderGateDisabled) return;
+    const cleaned = coerceSuppliers({ suppliers: this.suppliers }).suppliers;
+    this.suppliers = cleaned;
+    const missingSlot = cleaned.filter((s) => !String(s.searchUrl).includes('{q}'));
+    this.suppliersUrlHint = missingSlot.length
+      ? `Heads up: ${missingSlot.map((s) => s.name).join(', ')} ${missingSlot.length === 1 ? 'has' : 'have'} no {q} slot — the search term will be appended to the end of the URL instead.`
+      : '';
+    await this._pushSuppliers({ suppliers: this.suppliers });
   },
 
   /**
@@ -9425,7 +9585,7 @@ Alpine.data('app', () => ({
     // derivedAllergens/allergensByRecipeId masterById pattern.
     const masterById = new Map(
       (Array.isArray(this.ingredientMaster) ? this.ingredientMaster : [])
-        .map(m => [m.ingredient_id, { ingredient_name: m.ingredient_name, shopping_unit: m.shopping_unit, pantry_staple: m.pantry_staple, pantry_section: m.pantry_section, pack_size: m.pack_size, pack_unit: m.pack_unit, pack_units: m.pack_units, pack_unit_label: m.pack_unit_label, regular: m.regular, regular_qty_per_person: m.regular_qty_per_person }]) // pack_units/pack_unit_label: quick 260615-kid; regular/regular_qty_per_person: phase 08 REG-05 (Plan 01 read-side deferral mirrored here)
+        .map(m => [m.ingredient_id, { ingredient_name: m.ingredient_name, shopping_unit: m.shopping_unit, pantry_staple: m.pantry_staple, pantry_section: m.pantry_section, pack_size: m.pack_size, pack_unit: m.pack_unit, pack_units: m.pack_units, pack_unit_label: m.pack_unit_label, regular: m.regular, regular_qty_per_person: m.regular_qty_per_person, supplier: m.supplier }]) // pack_units/pack_unit_label: quick 260615-kid; regular/regular_qty_per_person: phase 08 REG-05 (Plan 01 read-side deferral mirrored here); supplier: quick 260630-e8v (feeds the shopping-list supplier-aware 🔍)
     );
 
     // acc keyed by ingredient_id. Each: { ingredient_name, shopping_unit,
@@ -9585,7 +9745,7 @@ Alpine.data('app', () => ({
       // line is in recipeLineStrikes (skip-this-shop). A struck line STAYS in `lines`
       // (rendered line-through) but is dropped from the export (openShoppingExport).
       const _isRecipe = recipeContribIds.has(iid);
-      lines.push({ ingredient_id: iid, ingredient_name: a.ingredient_name, parts, caveat, pantry_section: masterById.get(iid)?.pantry_section || '', packs: this._derivePackCount(parts, caveat, masterById.get(iid)), pack_size: masterById.get(iid)?.pack_size ?? null, pack_units: masterById.get(iid)?.pack_units ?? null, pack_unit_label: masterById.get(iid)?.pack_unit_label || '', source: _isRecipe ? 'recipe' : 'manual', struck: _isRecipe && _recipeLineStrikes[String(iid)] === true }); // pack_units/pack_unit_label: quick 260615-kid; source/struck: quick 260628-v0i
+      lines.push({ ingredient_id: iid, ingredient_name: a.ingredient_name, parts, caveat, pantry_section: masterById.get(iid)?.pantry_section || '', packs: this._derivePackCount(parts, caveat, masterById.get(iid)), pack_size: masterById.get(iid)?.pack_size ?? null, pack_units: masterById.get(iid)?.pack_units ?? null, pack_unit_label: masterById.get(iid)?.pack_unit_label || '', supplier: masterById.get(iid)?.supplier || '', source: _isRecipe ? 'recipe' : 'manual', struck: _isRecipe && _recipeLineStrikes[String(iid)] === true }); // pack_units/pack_unit_label: quick 260615-kid; supplier: quick 260630-e8v (additive, feeds the shopping-list supplier-aware 🔍); source/struck: quick 260628-v0i
     }
 
     // quick 260613-aw1 — check-stock list: non-required items NOT bought as a
@@ -11347,11 +11507,27 @@ Alpine.data('app', () => ({
     return active.length === 1 ? active[0] : null;
   },
 
-  // quick 260630-cf9 — Morrisons grocery search URL for an ingredient name. Pure;
-  //   the base lives in the single MORRISONS_SEARCH_BASE constant (one-line change
-  //   point if the live param ever differs).
+  // quick 260630-e8v — SUPPLIER-AWARE search URL for an ingredient. Resolves the
+  //   ingredient's `supplier` against the synced suppliers list (DEFAULT_SUPPLIERS
+  //   when empty/unmapped → Morrisons), substituting the encoded name into the
+  //   supplier's {q} template. Generalizes the cf9 morrisonsSearchUrl: an
+  //   amazon-supplier item searches Amazon, a supermarket/blank item searches Morrisons.
+  searchUrlForIngredient(name, supplier) {
+    return buildSearchUrl(this.suppliers, supplier, name);
+  },
+
+  // quick 260630-e8v — the dynamic 'Search <label>' button label for an ingredient's
+  //   supplier (Morrisons for blank/unmapped). Drives the call-site label text.
+  searchLabelForIngredient(supplier) {
+    return searchLabel(this.suppliers, supplier);
+  },
+
+  // quick 260630-cf9 / e8v — thin alias kept for any caller that still wants the
+  //   supermarket-default search by name only (delegates through the supplier helper
+  //   with a blank supplier → DEFAULT_SUPPLIER / Morrisons). DEFAULT_SUPPLIERS owns
+  //   the live default now; lookups flow through buildSearchUrl.
   morrisonsSearchUrl(name) {
-    return MORRISONS_SEARCH_BASE + encodeURIComponent((name || '').trim());
+    return buildSearchUrl(this.suppliers, '', name);
   },
 
   // quick 260630-cf9 — inline batch-fill ONE missing field for ONE row, reusing

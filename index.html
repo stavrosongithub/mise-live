@@ -1015,6 +1015,53 @@
                 x-show="!managerAddMode"
                 @click="addFromManager()"
                 :disabled="approving || merging">Add ingredient</button>
+        <!-- quick 260630-e8v — open the synced Suppliers editor (an inline panel, NOT a
+             modal, so it can't stack over the edit modal). -->
+        <button type="button"
+                class="btn-secondary suppliers-toggle-btn"
+                x-show="!managerAddMode"
+                @click="suppliersPanelOpen = !suppliersPanelOpen"
+                :aria-expanded="suppliersPanelOpen">
+          <span x-show="!suppliersPanelOpen">Suppliers…</span>
+          <span x-show="suppliersPanelOpen" x-cloak>Close suppliers</span>
+        </button>
+      </div>
+
+      <!-- quick 260630-e8v — Suppliers manager (inline panel). Edits the synced
+           suppliers list (name + display label + search-URL template with a {q}
+           query slot). Write-gated: all controls disable when read-only or another
+           user holds the lock. Saving persists locally + pushes suppliers.json (LWW
+           mirror of the roster snapshot). -->
+      <div class="suppliers-panel" x-show="suppliersPanelOpen" x-cloak>
+        <h3>Suppliers</h3>
+        <p class="help">Each ingredient's 🔍 search opens its supplier's store. The built-in defaults (supermarket → Morrisons, amazon → Amazon, wholesale → web search) cover existing data; add your own below. Use <code>{q}</code> where the search term goes. This list is shared with everyone connected.</p>
+        <div class="suppliers-rows">
+          <template x-for="(s, i) in suppliers" :key="i">
+            <div class="supplier-row">
+              <input type="text" class="supplier-name" x-model="s.name"
+                     placeholder="name (e.g. amazon)"
+                     :disabled="shopOrderGateDisabled" />
+              <input type="text" class="supplier-label" x-model="s.label"
+                     placeholder="label (e.g. Amazon)"
+                     :disabled="shopOrderGateDisabled" />
+              <input type="text" class="supplier-url" x-model="s.searchUrl"
+                     placeholder="https://…/search?q={q}"
+                     :disabled="shopOrderGateDisabled" />
+              <button type="button" class="supplier-remove" title="Remove supplier"
+                      @click="removeSupplier(i)"
+                      :disabled="shopOrderGateDisabled">✕</button>
+            </div>
+          </template>
+        </div>
+        <p class="supplier-hint" x-show="suppliersUrlHint" x-cloak x-text="suppliersUrlHint"></p>
+        <div class="suppliers-actions">
+          <button type="button" class="btn-secondary"
+                  @click="addSupplier()"
+                  :disabled="shopOrderGateDisabled">+ Add supplier</button>
+          <button type="button" class="btn-primary"
+                  @click="saveSuppliers()"
+                  :disabled="shopOrderGateDisabled">Save suppliers</button>
+        </div>
       </div>
 
       <!-- quick 260630-cf9 — "missing data" filter chips. Data-driven from the
@@ -1170,12 +1217,13 @@
                          x-show="inlineFillKey"
                          :class="{ saved: inlineFillSaved[ing.ingredient_id] }"
                          @click.stop>
-                      <!-- Missing buy link → paste box + Morrisons search. -->
+                      <!-- Missing buy link → paste box + supplier-aware search (quick 260630-e8v). -->
                       <template x-if="inlineFillKey === 'link'">
                         <div class="inline-fill-field">
                           <a class="btn-search"
-                             :href="morrisonsSearchUrl(ing.ingredient_name)"
-                             target="_blank" rel="noopener">🔍 Search Morrisons</a>
+                             :href="searchUrlForIngredient(ing.ingredient_name, ing.supplier)"
+                             target="_blank" rel="noopener"
+                             x-text="'🔍 Search ' + searchLabelForIngredient(ing.supplier)"></a>
                           <input type="url"
                                  :placeholder="'Paste Morrisons product URL…'"
                                  :aria-label="'Buy link for ' + ing.ingredient_name"
@@ -2361,18 +2409,18 @@
                          aria-label="Open shopping link"
                          :title="'Open shopping link for ' + (line.ingredient_name || 'ingredient')">🛒</a>
                     </template>
-                    <!-- quick 260630-fix — a NO-LINK order-breaker shows a 🔍 Morrisons-search
-                         anchor in the SAME name-cell slot as the 🛒 (mutually exclusive via
+                    <!-- quick 260630-fix / e8v — a NO-LINK order-breaker shows a 🔍 SUPPLIER-aware
+                         search anchor in the SAME name-cell slot as the 🛒 (mutually exclusive via
                          hasShoppingLink), styled identically (.shopping-cart-link) so it sits
-                         beside the name — NOT at the row end. Reuses morrisonsSearchUrl (Task A);
-                         the title carries the status + the "add its link in Manage Ingredients"
-                         action. Moved here from the .meal-plan-shop-q amount cell. -->
+                         beside the name — NOT at the row end. searchUrlForIngredient resolves the
+                         line's supplier (Amazon for an amazon item, Morrisons for supermarket/blank);
+                         the title carries the status + the "add its link in Manage Ingredients" action. -->
                     <template x-if="!hasShoppingLink(line.ingredient_id)">
                       <a class="shopping-cart-link meal-plan-shop-search"
-                         :href="morrisonsSearchUrl(line.ingredient_name)"
+                         :href="searchUrlForIngredient(line.ingredient_name, line.supplier)"
                          target="_blank" rel="noopener"
-                         :aria-label="'No saved link — search Morrisons for ' + (line.ingredient_name || 'this item')"
-                         :title="'No saved buy link — it can\'t be ordered via the export. Click to search Morrisons for ' + (line.ingredient_name || 'this item') + ', then add its link in Manage Ingredients.'">🔍</a>
+                         :aria-label="'No saved link — search ' + searchLabelForIngredient(line.supplier) + ' for ' + (line.ingredient_name || 'this item')"
+                         :title="'No saved buy link — it can\'t be ordered via the export. Click to search ' + searchLabelForIngredient(line.supplier) + ' for ' + (line.ingredient_name || 'this item') + ', then add its link in Manage Ingredients.'">🔍</a>
                     </template>
                   </span>
                   <!-- byd (quick 260628-byd) — ONE baseline line: amount | icons.
@@ -4101,7 +4149,16 @@
                then the 2nd-pack pair side-by-side (.pack-grid--pair). -->
           <div class="more-fields" x-show="editMoreFieldsOpen" x-cloak>
             <label class="add-new-label">Supplier
-              <input type="text" x-model="editForm.supplier" />
+              <!-- quick 260630-e8v — datalist of the known synced suppliers (suggestions
+                   only; a free-typed new name is still accepted). The supplier drives the
+                   ingredient's supplier-aware 🔍 search. -->
+              <input type="text" list="suppliers-datalist" x-model="editForm.supplier"
+                     placeholder="e.g. supermarket, amazon, Suma…" />
+              <datalist id="suppliers-datalist">
+                <template x-for="s in suppliers" :key="s.name">
+                  <option :value="s.name"></option>
+                </template>
+              </datalist>
             </label>
             <label class="add-new-label">Shopping link 1 (URL)
               <input type="url" x-model="editForm.link1" />
