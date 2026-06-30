@@ -379,7 +379,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '82d0efe 2026-06-30';
+const APP_VERSION = '0ca6d63 2026-06-30';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -3296,6 +3296,13 @@ Alpine.data('app', () => ({
   // synced (user decision) — rides the same MEAL_PLAN_UI_KEY persist + Phase-17 push as
   // adHocExtras/regularsOverrides, and merges per-key delete-wins (SHARED_MAP_FIELDS).
   recipeLineStrikes: {},
+  // quick 260630-gzw — per-PLAN check-stock STRIKETHROUGH ("I've checked I have this"), a
+  // keyed map (String(ingredient_id), or 'name:'+name for a rare null-id row) → true. A
+  // struck check-stock line stays visible (rendered line-through) — display-only tick-off,
+  // no effect on the order. SHARED/synced (user decision) — rides the same MEAL_PLAN_UI_KEY
+  // persist + Phase-17 push as recipeLineStrikes, merges per-key delete-wins (SHARED_MAP_FIELDS).
+  // Distinct map from recipeLineStrikes, so the two lists never collide on an id.
+  checkStockStrikes: {},
   // quick 260628-v0i — TRANSIENT (NOT persisted, NOT synced): the "+ Add item" search
   // box text for the Shopping tab. Drives the shoppingAddMatches getter; cleared after
   // an add. MUST NOT enter _persistMealPlanUi/_restoreMealPlanUi.
@@ -8153,6 +8160,8 @@ Alpine.data('app', () => ({
         regularsOverrides: this.regularsOverrides,
         // quick 260628-v0i — per-plan recipe-line strikethrough (shared keyed map).
         recipeLineStrikes: this.recipeLineStrikes,
+        // quick 260630-gzw — per-plan check-stock tick-off strikethrough (shared keyed map).
+        checkStockStrikes: this.checkStockStrikes,
         adHocExtras: this.adHocExtras
       }));
     } catch (_e) {
@@ -8250,6 +8259,12 @@ Alpine.data('app', () => ({
         && !Array.isArray(parsed.recipeLineStrikes))
         ? parsed.recipeLineStrikes
         : {};
+      // quick 260630-gzw — restore checkStockStrikes with the SAME plain-non-null-object guard.
+      this.checkStockStrikes = (parsed.checkStockStrikes
+        && typeof parsed.checkStockStrikes === 'object'
+        && !Array.isArray(parsed.checkStockStrikes))
+        ? parsed.checkStockStrikes
+        : {};
       // phase 08 REG-07 — adHocExtras is an ARRAY; guard with Array.isArray, else [].
       this.adHocExtras = Array.isArray(parsed.adHocExtras) ? parsed.adHocExtras : [];
     } catch (_e) {
@@ -8264,6 +8279,7 @@ Alpine.data('app', () => ({
       // phase 08 REG-07 — fail-open: both reset to empty on any corruption.
       this.regularsOverrides = {};
       this.recipeLineStrikes = {}; // quick 260628-v0i — fail-open to empty on corruption.
+      this.checkStockStrikes = {}; // quick 260630-gzw — fail-open to empty on corruption.
       this.adHocExtras = [];
     }
   },
@@ -8296,6 +8312,7 @@ Alpine.data('app', () => ({
       prepDoneByDay: this.prepDoneByDay,
       regularsOverrides: this.regularsOverrides,
       recipeLineStrikes: this.recipeLineStrikes,
+      checkStockStrikes: this.checkStockStrikes, // quick 260630-gzw — synced check-stock tick-off.
       adHocExtras: this.adHocExtras,
       orderScopeRange: this.orderScopeRange,
       shopOrderedFor: this.shopOrderedFor // quick 260630-d81 (Task C) — synced ordered stamp.
@@ -8357,6 +8374,7 @@ Alpine.data('app', () => ({
     this.prepDoneByDay = safe.prepDoneByDay;
     this.regularsOverrides = safe.regularsOverrides;
     this.recipeLineStrikes = safe.recipeLineStrikes;
+    this.checkStockStrikes = safe.checkStockStrikes; // quick 260630-gzw — coerced to {} for pre-feature docs.
     this.adHocExtras = safe.adHocExtras;
     this.orderScopeRange = safe.orderScopeRange;
     this.shopOrderedFor = safe.shopOrderedFor; // quick 260630-d81 (Task C) — coerced to null for pre-feature docs.
@@ -9234,7 +9252,13 @@ Alpine.data('app', () => ({
     let e = (endKey == null) ? '' : String(endKey);
     if (!s || !e) return; // need both endpoints
     if (s > e) { const t = s; s = e; e = t; } // keep the range ordered
+    // quick 260630-gzw — reset shopping + check-stock strikes ONLY on an actual period
+    // change (applyOrderScope fires repeatedly while the user drags an endpoint; re-applying
+    // the same range must NOT wipe their strikes). Compare BEFORE overwriting the range.
+    const cur = this.orderScopeRange;
+    const changed = !cur || cur.startKey !== s || cur.endKey !== e;
     this.orderScopeRange = { startKey: s, endKey: e };
+    if (changed) this._resetShoppingPeriodStrikes();
     this._persistMealPlanUi();
   },
 
@@ -9242,8 +9266,21 @@ Alpine.data('app', () => ({
   // persist. Restores full whole-plan shopping + regulars output. The markup closes
   // the popover alongside this call.
   clearOrderScope() {
+    // quick 260630-gzw — reset strikes only if this is an actual change (was a range, now whole plan).
+    const changed = this.orderScopeRange != null;
     this.orderScopeRange = null;
+    if (changed) this._resetShoppingPeriodStrikes();
     this._persistMealPlanUi();
+  },
+
+  // quick 260630-gzw — clear BOTH the shopping-list (recipeLineStrikes) and check-stock
+  // (checkStockStrikes) strike maps when the meal-plan period changes (user request:
+  // strikes are inherently per-period). Plain {} assignment; the caller's
+  // _persistMealPlanUi arms the synced push (jq9 Guard-1 skips it if nothing changed),
+  // and clearing at the source propagates to other devices via the normal delete-wins merge.
+  _resetShoppingPeriodStrikes() {
+    this.recipeLineStrikes = {};
+    this.checkStockStrikes = {};
   },
 
   // quick 260621-lft — step a 'YYYY-MM-DD' key by ±1 LOCAL day (offset = +1 next,
@@ -10023,6 +10060,33 @@ Alpine.data('app', () => ({
       delete this.recipeLineStrikes[k];
     } else {
       this.recipeLineStrikes[k] = true;
+    }
+    this._persistMealPlanUi();
+  },
+
+  /**
+   * _checkStockStrikeKey / isCheckStockStruck / toggleCheckStockStrike — quick
+   * 260630-gzw. Click-to-tick-off for a "Check you have these" line. Keyed by
+   * String(ingredient_id) when present, else 'name:'+ingredient_name (check-stock
+   * has rare null-id name-only role rows). Stored in the SHARED checkStockStrikes
+   * map (synced like recipeLineStrikes). Display-only — a struck line reads
+   * line-through but is otherwise unchanged (never affects the order). Reversible;
+   * toggling persists + rides the Phase-17 push.
+   */
+  _checkStockStrikeKey(item) {
+    return (item && item.ingredient_id != null)
+      ? String(Number(item.ingredient_id))
+      : ('name:' + ((item && item.ingredient_name) || ''));
+  },
+  isCheckStockStruck(item) {
+    return this.checkStockStrikes[this._checkStockStrikeKey(item)] === true;
+  },
+  toggleCheckStockStrike(item) {
+    const k = this._checkStockStrikeKey(item);
+    if (this.checkStockStrikes[k] === true) {
+      delete this.checkStockStrikes[k];
+    } else {
+      this.checkStockStrikes[k] = true;
     }
     this._persistMealPlanUi();
   },

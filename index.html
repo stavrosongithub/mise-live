@@ -2647,9 +2647,16 @@
                  .add-shop pill. The s1g section chip + .ml-foot footer are untouched; Tray
                  untouched. -->
             <template x-for="(item, i) in grp.items" :key="item.ingredient_id ?? i">
-              <div class="check-line">
-                <!-- NAME (C1) — plain ink span, not clickable. -->
-                <span class="check-name" x-text="item.ingredient_name"></span>
+              <div class="check-line" :class="{ 'is-struck': isCheckStockStruck(item) }">
+                <!-- NAME — quick 260630-gzw: click to toggle a "I've checked this" strikethrough
+                     (SYNCED checkStockStrikes). Display-only tick-off; never affects the order.
+                     role/tabindex/keydown make it keyboard-operable; cursor:pointer in styles.css. -->
+                <span class="check-name" x-text="item.ingredient_name"
+                      role="button" tabindex="0"
+                      :title="isCheckStockStruck(item) ? 'Mark as not checked' : 'Mark as checked (strike through)'"
+                      @click="toggleCheckStockStrike(item)"
+                      @keydown.enter.prevent="toggleCheckStockStrike(item)"
+                      @keydown.space.prevent="toggleCheckStockStrike(item)"></span>
                 <!-- FLAG (C2) — OPTIONAL, RESERVED FOR EXCEPTIONS (quick 260625-tum follow-up,
                      user decision): the panel's norm is a pantry staple, so staples get NO flag
                      (their staple-ness is implicit in this panel — flagging the near-universal

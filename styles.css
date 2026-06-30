@@ -5282,6 +5282,14 @@ a.meal-plan-shop-search {
 .check-name {
   font-weight: 500;
   color: var(--color-ink);
+  /* quick 260630-gzw — clickable tick-off affordance (click toggles a checked strikethrough). */
+  cursor: pointer;
+}
+/* quick 260630-gzw — a struck (checked) check-stock line reads as done: line-through + muted
+   on the name. Mirrors the .shopping-list-item.is-struck treatment; tokens only. */
+.check-line.is-struck .check-name {
+  text-decoration: line-through;
+  color: var(--color-ink-muted);
 }
 .check-flag {
   flex: 0 0 auto;

@@ -18,6 +18,7 @@
 //     cooksByDay, dayLeftovers, prepDoneByDay,         // keyed maps (by day)
 //     regularsOverrides,                               // keyed map (by ingredient_id)
 //     recipeLineStrikes,                               // keyed map (by ingredient_id) — skip-this-shop strikethrough (quick 260628-v0i)
+//     checkStockStrikes,                               // keyed map (by ingredient_id or 'name:'+name) — "I've checked this" tick-off (quick 260630-gzw)
 //     adHocExtras,                                     // keyed map (by id) OR array — see note
 //     orderScopeRange,                                 // null | { startKey, endKey }
 //     shopOrderedFor                                   // null | { scope: (null | {startKey,endKey}), orderedAt, orderedBy } — quick 260630-d81
@@ -33,7 +34,9 @@
 // quick 260628-v0i — `recipeLineStrikes` ({ ingredient_id: true }) joins the keyed-map
 // family so the per-shop recipe-line strikethrough syncs between users by the SAME 3-way
 // per-key delete-wins rule (no bespoke merge — mergeMealPlan iterates this array).
-export const SHARED_MAP_FIELDS = ['cooksByDay', 'dayLeftovers', 'prepDoneByDay', 'regularsOverrides', 'recipeLineStrikes'];
+// quick 260630-gzw — `checkStockStrikes` ({ key: true }) is the check-stock "I've checked
+// this" tick-off; it joins the SAME family by the SAME per-key delete-wins rule.
+export const SHARED_MAP_FIELDS = ['cooksByDay', 'dayLeftovers', 'prepDoneByDay', 'regularsOverrides', 'recipeLineStrikes', 'checkStockStrikes'];
 
 // The entry fields that ride the shared doc (NO `collapsed` — that is view-state).
 export const SHARED_ENTRY_FIELDS = ['id', 'recipe_id', 'date', 'servings'];
@@ -51,6 +54,7 @@ export function emptySharedPlanDoc() {
     prepDoneByDay: {},
     regularsOverrides: {},
     recipeLineStrikes: {},
+    checkStockStrikes: {},
     adHocExtras: [],
     orderScopeRange: null,
     // quick 260630-d81 — per-shopping-period "ordered" stamp. null = not ordered,
@@ -92,6 +96,7 @@ export function projectSharedPlanDoc(state) {
     prepDoneByDay: obj(s.prepDoneByDay),
     regularsOverrides: obj(s.regularsOverrides),
     recipeLineStrikes: obj(s.recipeLineStrikes),
+    checkStockStrikes: obj(s.checkStockStrikes),
     adHocExtras: Array.isArray(s.adHocExtras) ? s.adHocExtras : [],
     orderScopeRange: (s.orderScopeRange
       && typeof s.orderScopeRange === 'object'
@@ -135,6 +140,9 @@ export function coerceSharedPlanDoc(raw) {
     prepDoneByDay: obj(raw.prepDoneByDay),
     regularsOverrides: obj(raw.regularsOverrides),
     recipeLineStrikes: obj(raw.recipeLineStrikes),
+    // quick 260630-gzw — BACKWARD-COMPAT: a pre-feature remote meal_plan.json has no
+    // checkStockStrikes; obj() defaults a missing/garbage value to {} (shapeCheck NOT extended).
+    checkStockStrikes: obj(raw.checkStockStrikes),
     adHocExtras: Array.isArray(raw.adHocExtras) ? raw.adHocExtras : [],
     orderScopeRange: (raw.orderScopeRange
       && typeof raw.orderScopeRange === 'object'
