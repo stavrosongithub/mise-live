@@ -379,7 +379,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '0ca6d63 2026-06-30';
+const APP_VERSION = '68872c0 2026-06-30';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -8468,11 +8468,23 @@ Alpine.data('app', () => ({
    */
   _persistMealPlanBase(doc) {
     const coerced = coerceSharedPlanDoc(doc);
+    // quick 260630-hjg — DEEP-CLONE the in-memory base so it NEVER shares nested object
+    // refs with live Alpine state. _pushPlanOnce/pullPlanFromRemote call this with `merged`,
+    // and applySharedPlanDoc(merged) makes this.<map> reference the SAME object as
+    // merged.<map>; coerce's obj() passthrough preserves that ref, so the base would
+    // alias live state. Then an IN-PLACE shared-map mutation (toggleCheckStockStrike /
+    // toggleRecipeLineStrike / cooks/leftovers/prep toggles, which mutate via [k]=true /
+    // delete) silently mutates the base too — and Guard-1 (_schedulePlanPush) + the
+    // _pushPlanOnce no-op guard then compare EQUAL and never push the change. (This is why
+    // a check-stock tick-off, used in isolation, didn't sync.) The JSON round-trip is the
+    // cheap, total de-alias; `coerced` is already plain JSON-safe data so it can't throw.
+    let snapshot;
+    try { snapshot = JSON.parse(JSON.stringify(coerced)); } catch (_e) { snapshot = coerced; }
     // Update the in-memory merge mirror FIRST — a localStorage quota error must not
     // leave the base stale on this front too (WR-02), which would skew later 3-way merges.
-    this._mealPlanBase = coerced;
+    this._mealPlanBase = snapshot;
     try {
-      localStorage.setItem(MEAL_PLAN_BASE_KEY, JSON.stringify(coerced));
+      localStorage.setItem(MEAL_PLAN_BASE_KEY, JSON.stringify(snapshot));
     } catch (_e) {
       /* fail-open — persistence is best-effort, never block the UI. In-memory mirror set above. */
     }
