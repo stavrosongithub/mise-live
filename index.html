@@ -1017,6 +1017,23 @@
                 :disabled="approving || merging">Add ingredient</button>
       </div>
 
+      <!-- quick 260630-cf9 — "missing data" filter chips. Data-driven from the
+           MISSING_FILTER_DEFS registry (missingFilterDefList) so adding a future
+           "missing X" is one registry entry, not a hand-copied button. Each chip
+           toggles missingFilters[key] and shows a live in-memory count. The chips
+           compose with the name search above (filteredMaster ANDs both). -->
+      <div class="missing-filter-chips" x-show="!managerAddMode">
+        <template x-for="def in missingFilterDefList" :key="def.key">
+          <button type="button"
+                  class="chip missing-filter-chip"
+                  :aria-pressed="!!missingFilters[def.key]"
+                  @click="toggleMissingFilter(def.key)">
+            <span x-text="def.label"></span>
+            <span class="count" x-text="'· ' + missingFilterCounts[def.key]"></span>
+          </button>
+        </template>
+      </div>
+
       <!-- Add-new sub-form — clones the parse-time add-new field structure
            (260607-c65) but bound to managerAddForm.* and the manager actions. -->
       <div class="manager-add-form" x-show="managerAddMode" x-cloak>
@@ -1143,6 +1160,44 @@
                       <button type="button" class="manager-edit-btn"
                               @click="startEditIngredient(ing.ingredient_id)"
                               :disabled="approving || merging">Edit</button>
+                    </div>
+                    <!-- quick 260630-cf9 — inline batch-fill. Shown only when EXACTLY
+                         one missing-filter is active (inlineFillKey). Saves through the
+                         existing startEditIngredient -> saveEditIngredient write path
+                         (snapshot/verify/revert). A saved row gets the herb-green badge
+                         + .saved fade; it drops out of the filter on the next recompute. -->
+                    <div class="inline-fill"
+                         x-show="inlineFillKey"
+                         :class="{ saved: inlineFillSaved[ing.ingredient_id] }"
+                         @click.stop>
+                      <!-- Missing buy link → paste box + Morrisons search. -->
+                      <template x-if="inlineFillKey === 'link'">
+                        <div class="inline-fill-field">
+                          <a class="btn-search"
+                             :href="morrisonsSearchUrl(ing.ingredient_name)"
+                             target="_blank" rel="noopener">🔍 Search Morrisons</a>
+                          <input type="url"
+                                 :placeholder="'Paste Morrisons product URL…'"
+                                 :aria-label="'Buy link for ' + ing.ingredient_name"
+                                 x-model="inlineFillValues[ing.ingredient_id]"
+                                 @change="saveInlineField(ing.ingredient_id)"
+                                 @keydown.enter.prevent="saveInlineField(ing.ingredient_id)"
+                                 :disabled="approving || merging" />
+                        </div>
+                      </template>
+                      <!-- Missing location → pantrySections select. -->
+                      <template x-if="inlineFillKey === 'location'">
+                        <div class="inline-fill-field">
+                          <select x-model="inlineFillValues[ing.ingredient_id]"
+                                  :aria-label="'Storage location for ' + ing.ingredient_name"
+                                  @change="saveInlineField(ing.ingredient_id)"
+                                  :disabled="approving || merging">
+                            <option value="">— pick a location —</option>
+                            <template x-for="loc in pantrySections" :key="loc"><option :value="loc" x-text="loc"></option></template>
+                          </select>
+                        </div>
+                      </template>
+                      <span class="saved-badge" x-show="inlineFillSaved[ing.ingredient_id]">✓ saved</span>
                     </div>
                   </td>
                 </template>
@@ -2269,7 +2324,7 @@
              the panel footer (.ml-foot, end of this body); only the quiet derived-note
              remains at the top. -->
         <div class="meal-plan-derived-row">
-          <p class="meal-plan-derived-note">Tap a name to edit the ingredient; tap the 🛒 to open its product page. The text export feeds the cart-filler. Order-breakers are flagged red.</p>
+          <p class="meal-plan-derived-note">Tap a name to edit the ingredient; tap the 🛒 to open its product page. The text export feeds the cart-filler. Items with no saved link show a 🔍 — search Morrisons, then add the link in Manage Ingredients.</p>
         </div>
         <p class="manager-empty-state"
            x-show="combinedShoppingList.lines.length === 0 && combinedShoppingList.unknown.length === 0"
@@ -2331,12 +2386,21 @@
                           :title="line.caveat">⚠</span>
                     <!-- RED order-breaker (specimen `.shop-problem`): a no-link line
                          can't be ordered via the export. Reuses the EXISTING
-                         hasShoppingLink gate (no invented state). Trailing ⛔ icon;
-                         detail in the title tooltip. -->
-                    <span class="meal-plan-shop-problem"
-                          x-show="!hasShoppingLink(line.ingredient_id)"
-                          x-cloak
-                          title="This ingredient has no shopping link — it can't be ordered.">⛔</span>
+                         hasShoppingLink gate (no invented state). quick 260630-d18 (Task B)
+                         — the inert ⛔ span is now a clickable 🔍 anchor opening the live
+                         Morrisons search for the ingredient name (reuses morrisonsSearchUrl,
+                         added in Task A 260630-cf9). Keeps the RED .meal-plan-shop-problem
+                         signal (still reads as a problem); the title carries BOTH the status
+                         AND the action (search → then add its link in Manage Ingredients,
+                         wiring the connector to Task A). Combined-list band only — the
+                         export/cart-filler contract (formatPackLine) is untouched. -->
+                    <a class="meal-plan-shop-problem meal-plan-shop-search"
+                       x-show="!hasShoppingLink(line.ingredient_id)"
+                       x-cloak
+                       :href="morrisonsSearchUrl(line.ingredient_name)"
+                       target="_blank" rel="noopener"
+                       :aria-label="'No saved link — search Morrisons for ' + (line.ingredient_name || 'this item')"
+                       :title="'No saved buy link — it can\'t be ordered via the export. Click to search Morrisons for ' + (line.ingredient_name || 'this item') + ', then add its link in Manage Ingredients.'">🔍</a>
                   </span>
                   <!-- quick 260628-v0i — per-line REMOVE. A MANUAL line (regulars / ad-hoc /
                        "+ Add item") is taken OFF the list (✕); a RECIPE line is struck
@@ -2403,6 +2467,24 @@
           <button type="button" class="manager-btn shopping-export-btn ml-export"
                   x-show="combinedShoppingList.lines.length > 0 || combinedShoppingList.unknown.length > 0"
                   x-cloak @click="openShoppingExport()">Open order list</button>
+          <!-- quick 260630-d81 (Task C) — per-period "Ordered ✓" status. ONE control,
+               two states: a Mark-ordered button (not ordered) OR a green status pill
+               with Undo (ordered). Gates on scope-match (shopOrderedForCurrentScope);
+               both write-gated by shopOrderGateDisabled. Inline; opens no modal. -->
+          <button type="button" class="ml-order-mark"
+                  x-show="!shopOrderedForCurrentScope"
+                  x-cloak
+                  :disabled="shopOrderGateDisabled"
+                  @click="markShopOrdered()">Mark this shop as ordered</button>
+          <span class="ml-order-done"
+                x-show="shopOrderedForCurrentScope"
+                x-cloak>
+            <span class="ml-order-tick" aria-hidden="true">✓</span>
+            <span class="ml-order-stamp" x-text="formatOrderedStamp(shopOrderedForCurrentScope)"></span>
+            <button type="button" class="ml-order-undo"
+                    :disabled="shopOrderGateDisabled"
+                    @click="undoShopOrdered()">Undo</button>
+          </span>
         </div>
       </div>
       <!-- /shopping tab body -->

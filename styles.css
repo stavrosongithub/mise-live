@@ -2836,6 +2836,121 @@ textarea {
   margin-bottom: 1rem;
 }
 
+/* quick 260630-cf9 — "missing data" filter chips + inline batch-fill. Ported
+   from the approved specimen (.planning/ui-reviews/inline-fill-specimen.html),
+   tokens only (the specimen's literal hexes ARE the token values). */
+.missing-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+.missing-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.65rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 20px;
+  background: var(--color-surface-2);
+  color: var(--color-ink-muted);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.missing-filter-chip .count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.missing-filter-chip[aria-pressed="true"] {
+  background: var(--color-accent);
+  border-color: var(--color-accent-border);
+  color: var(--color-surface-2);
+}
+.missing-filter-chip:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* inline-fill row: shown under a master row when one missing-filter is active. */
+.inline-fill {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem 0.1rem;
+  transition: opacity 0.4s ease, background 0.3s ease;
+}
+.inline-fill-field {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 0.5rem;
+  align-items: center;
+  min-width: 0;
+}
+.inline-fill input[type="url"],
+.inline-fill select {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-2);
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+.inline-fill input::placeholder {
+  color: var(--color-ink-faint);
+  font-family: var(--font-body);
+}
+.inline-fill input:focus,
+.inline-fill select:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  border-color: var(--color-accent);
+}
+.inline-fill .btn-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--color-accent-border);
+  border-radius: var(--radius-control);
+  background: var(--color-accent-tint);
+  color: var(--color-accent);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.inline-fill .btn-search:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+/* saved state — herb-green ground + fade; the field/search collapse, badge shows. */
+.inline-fill.saved {
+  background: var(--color-success-bg);
+  opacity: 0.55;
+}
+.inline-fill.saved .inline-fill-field {
+  display: none;
+}
+.saved-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--color-success);
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .inline-fill { transition: none; }
+}
+
 .manager-filter {
   flex: 1 1 auto;
   padding: 0.4rem 0.6rem;
@@ -4665,6 +4780,16 @@ textarea {
   font-size: var(--fs-sm);
   color: var(--color-danger);
 }
+/* quick 260630-d18 (Task B) — the order-breaker is now a clickable 🔍 search anchor
+   (opens the live Morrisons search for the ingredient name). It keeps the RED
+   .meal-plan-shop-problem color (inherited above); this rule only makes the emoji
+   anchor sit like the old inline span — no underline, pointer cursor, tight line.
+   Token-only; introduces no second red. */
+a.meal-plan-shop-search {
+  text-decoration: none;
+  cursor: pointer;
+  line-height: 1;
+}
 .shopping-caveat {
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
@@ -4912,6 +5037,60 @@ textarea {
   font-size: var(--fs-xs);
   color: var(--color-ink-faint);
   font-style: italic;
+}
+
+/* quick 260630-d81 (Task C) — per-period "Ordered" status in the shopping footer.
+   Two states share the footer's right cluster: a petrol Mark-ordered button, OR a
+   herb-green done pill carrying ✓ + the mono stamp + an Undo. Token-only (petrol
+   accent / herb success ground / mono date — precedent quick 260627-iy8). */
+.ml-order-mark {
+  font-family: var(--font-body);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-xs);
+  padding: 0.4286rem 0.8571rem;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-paper);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ml-order-mark:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ml-order-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4286rem;
+  padding: 0.2857rem 0.5714rem;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--color-success);
+  background: var(--color-success-bg);
+  white-space: nowrap;
+}
+.ml-order-tick {
+  color: var(--color-success);
+  font-weight: var(--fw-bold);
+}
+.ml-order-stamp {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-success);
+}
+.ml-order-undo {
+  font-family: var(--font-body);
+  font-size: var(--fs-xs);
+  padding: 0.1429rem 0.5714rem;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--color-success);
+  background: var(--color-surface);
+  color: var(--color-success);
+  cursor: pointer;
+}
+.ml-order-undo:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* quick 260625-sv2 — Regulars .reg-grid rebuild (R1–R7). Specimen-verbatim, tokens only.

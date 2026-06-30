@@ -227,6 +227,22 @@ const SCALE_STRENGTH_KEY = 'recipe_ingest_scale_strengths';
 const DEFAULT_PANTRY_SECTIONS = ['Chest Freezer', 'Standing Freezer', 'Ingredients Fridge', 'Spice Cupboard', 'Pantry', 'Shelves'];
 const PANTRY_SECTIONS_KEY = 'recipe_ingest_pantry_sections';
 
+// quick 260630-cf9 — EXTENSIBLE "missing data" filter registry for Manage
+// Ingredients. Each entry maps a stable key to { label, isMissing(masterRow) }.
+// Adding a future "missing X" filter = ONE more entry here + (the markup loops
+// the keys, so no new branch). isMissing reads the IN-MEMORY master only (no
+// file read) — both backing fields (link1 / pantry_section) are already loaded.
+const MISSING_FILTER_DEFS = {
+  link: { label: 'Missing buy link', isMissing: m => ((m && m.link1) || '') === '' },
+  location: { label: 'Missing location', isMissing: m => ((m && m.pantry_section) || '') === '' }
+};
+
+// quick 260630-cf9 — Morrisons grocery search base. ONE easily-changed constant
+// so the orchestrator's live-site verification can correct the path/param with a
+// one-line edit. Confirmed live: groceries.morrisons.com/search?q=<term> returns
+// real product listings (orchestrator-verified 2026-06-30).
+const MORRISONS_SEARCH_BASE = 'https://groceries.morrisons.com/search?q=';
+
 // Phase 12 (LOCK-01..04) — advisory-lock state-machine constants. Named, never
 // magic numbers. TTL is the lifetime baked into each lock's `expires`
 // (heartbeat + TTL); the heartbeat refreshes well inside it. LOCK_COMMIT_PREFIX
@@ -353,7 +369,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '77d0f07 2026-06-29';
+const APP_VERSION = 'c921d99 2026-06-30';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -2882,6 +2898,16 @@ Alpine.data('app', () => ({
   // fields are transient UI state — none are persisted.
   managerView: false,
   managerFilter: '',
+  // quick 260630-cf9 — "missing data" filter chips. missingFilters is a keyed
+  //   boolean SET (e.g. { link: true, location: false }); only truthy keys are
+  //   active. Composes ON TOP of managerFilter (name search). Transient UI state.
+  missingFilters: {},
+  // quick 260630-cf9 — inline batch-fill scratch state (keyed by ingredient_id).
+  //   inlineFillValues: the in-progress paste/select value; inlineFillSaved: true
+  //   once saved this session (drives the herb-green saved badge + fade). Both are
+  //   transient — the saved row drops out on the next filteredMaster recompute.
+  inlineFillValues: {},
+  inlineFillSaved: {},
   // editingIngredientId — the ingredient_id (number) of the row currently in
   //   edit mode (inline expand), or null. editForm holds the in-flight edit; its
   //   pack_size/pack_unit are read FRESH from disk on edit-open (the in-memory
@@ -3188,6 +3214,12 @@ Alpine.data('app', () => ({
   // ONLY (MEAL_PLAN_UI_KEY) — NEVER an IndexedDB/CSV write. Membership is decided by
   // the ONE shared helper isDayInOrderScope (do NOT duplicate the range logic).
   orderScopeRange: null,
+  // quick 260630-d81 (Task C) — per-shopping-period "ordered" stamp. null = not
+  // ordered, or a PLAIN object { scope: (null | {startKey,endKey}), orderedAt: <ISO>,
+  // orderedBy: <string> }. A synced SCALAR shared field (mirrors orderScopeRange at
+  // every wiring spot); the display gates on scope-match so a stamp made for one
+  // period never shows as ordered on another. localStorage UI-pref ONLY (never a CSV write).
+  shopOrderedFor: null,
   // quick 260621-lft — per-day LEFTOVERS map, keyed by group.key (the 'YYYY-MM-DD'
   // day string). CONVENTION: dayLeftovers[key] === true marks that day as a
   // "leftovers day" — its roster headcount rolls onto the IMMEDIATELY PRECEDING
@@ -7944,6 +7976,9 @@ Alpine.data('app', () => ({
         // map (D13b — no permanently-excluded per-day state); old persisted exclude
         // maps are simply ignored on restore.
         orderScopeRange: this.orderScopeRange,
+        // quick 260630-d81 (Task C) — per-period ordered stamp (null | {scope,orderedAt,orderedBy}).
+        // Synced SCALAR; persisting it here also arms the debounced push (same funnel as orderScopeRange).
+        shopOrderedFor: this.shopOrderedFor,
         // quick 260621-lft — per-day leftovers map (date key → true).
         dayLeftovers: this.dayLeftovers,
         // quick 260627-iy8 — per-day prep-done map (date key → true).
@@ -8014,6 +8049,13 @@ Alpine.data('app', () => ({
         && parsed.orderScopeRange.startKey <= parsed.orderScopeRange.endKey)
         ? { startKey: parsed.orderScopeRange.startKey, endKey: parsed.orderScopeRange.endKey }
         : null;
+      // quick 260630-d81 (Task C) — restore the ordered stamp with a plain-non-null-object
+      // guard mirroring orderScopeRange; anything else (array/null/scalar) => null (not ordered).
+      this.shopOrderedFor = (parsed.shopOrderedFor
+        && typeof parsed.shopOrderedFor === 'object'
+        && !Array.isArray(parsed.shopOrderedFor))
+        ? parsed.shopOrderedFor
+        : null;
       // quick 260621-lft — restore the per-day leftovers map with the SAME defensive
       // plain-non-null-object guard as dayCollapsedByDay; anything else => {}.
       this.dayLeftovers = (parsed.dayLeftovers
@@ -8050,6 +8092,7 @@ Alpine.data('app', () => ({
       this.cooksByDay = {};
       this.dayExcludedFromShopping = {};
       this.orderScopeRange = null; // quick 260627-i6h (D13a) — fail-open to whole plan.
+      this.shopOrderedFor = null; // quick 260630-d81 (Task C) — fail-open to not-ordered.
       this.dayLeftovers = {};
       this.prepDoneByDay = {}; // quick 260627-iy8 — fail-open to empty on corruption.
       // phase 08 REG-07 — fail-open: both reset to empty on any corruption.
@@ -8088,7 +8131,8 @@ Alpine.data('app', () => ({
       regularsOverrides: this.regularsOverrides,
       recipeLineStrikes: this.recipeLineStrikes,
       adHocExtras: this.adHocExtras,
-      orderScopeRange: this.orderScopeRange
+      orderScopeRange: this.orderScopeRange,
+      shopOrderedFor: this.shopOrderedFor // quick 260630-d81 (Task C) — synced ordered stamp.
     });
   },
 
@@ -8149,6 +8193,87 @@ Alpine.data('app', () => ({
     this.recipeLineStrikes = safe.recipeLineStrikes;
     this.adHocExtras = safe.adHocExtras;
     this.orderScopeRange = safe.orderScopeRange;
+    this.shopOrderedFor = safe.shopOrderedFor; // quick 260630-d81 (Task C) — coerced to null for pre-feature docs.
+  },
+
+  // =========================================================================
+  // quick 260630-d81 (Task C) — per-shopping-period "Ordered" status.
+  // A single coarse stamp (NOT per-item) marking the CURRENT order-scope as
+  // ordered, recording who + when, synced as the scalar shopOrderedFor field.
+  // The display gates on scope-match so a stamp for one period never shows as
+  // ordered on another. Write-gated by the same condition as editorDisabled head.
+  // =========================================================================
+
+  /**
+   * shopOrderGateDisabled — true when this device must not WRITE the ordered
+   * status (offline read-only OR another user holds the advisory lock). Mirrors
+   * the editorDisabled head (~1985-1991). Used for the button :disabled.
+   */
+  get shopOrderGateDisabled() {
+    return this.readOnlyMode || (this.presenceLock && !this._lockIsMine);
+  },
+
+  /**
+   * shopOrderedForCurrentScope — the ordered stamp IFF it exists AND its scope
+   * matches the CURRENT order-scope (else null). Gating on scope-match is
+   * load-bearing (risk 4): a stamp made for one period must NEVER render as
+   * ordered on a different period, and a concurrent period-change + mark merge
+   * cannot produce a false "ordered". Inline JSON compare — no import needed.
+   */
+  get shopOrderedForCurrentScope() {
+    const s = this.shopOrderedFor;
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return null;
+    const cur = (this.orderScopeRange
+      && typeof this.orderScopeRange === 'object'
+      && !Array.isArray(this.orderScopeRange))
+      ? { startKey: this.orderScopeRange.startKey, endKey: this.orderScopeRange.endKey }
+      : null;
+    return JSON.stringify(s.scope ?? null) === JSON.stringify(cur) ? s : null;
+  },
+
+  /**
+   * markShopOrdered — stamp the CURRENT order-scope as ordered (who + when).
+   * Sets a PLAIN OBJECT LITERAL (risk 2 — never spread from a reactive proxy, so
+   * the synced JSON round-trip via putJsonFile stays clean), then funnels through
+   * _persistMealPlanUi (persists + arms the debounced synced push). Write-gated.
+   */
+  markShopOrdered() {
+    if (this.readOnlyMode || (this.presenceLock && !this._lockIsMine)) return;
+    this.shopOrderedFor = {
+      scope: (this.orderScopeRange
+        && typeof this.orderScopeRange === 'object'
+        && !Array.isArray(this.orderScopeRange))
+        ? { startKey: this.orderScopeRange.startKey, endKey: this.orderScopeRange.endKey }
+        : null,
+      orderedAt: new Date().toISOString(),
+      orderedBy: (this.userName || '').trim()
+    };
+    this._persistMealPlanUi();
+  },
+
+  /**
+   * undoShopOrdered — clear the ordered status (and sync the clear). Same
+   * write-gate; _persistMealPlanUi arms the synced push (Undo→null is a local change).
+   */
+  undoShopOrdered() {
+    if (this.readOnlyMode || (this.presenceLock && !this._lockIsMine)) return;
+    this.shopOrderedFor = null;
+    this._persistMealPlanUi();
+  },
+
+  /**
+   * formatOrderedStamp — human label for an ordered stamp. Defensive: a bad/absent
+   * date is omitted rather than rendering "Invalid Date".
+   */
+  formatOrderedStamp(s) {
+    if (!s || typeof s !== 'object') return '';
+    const who = (s.orderedBy && String(s.orderedBy).trim()) || 'someone';
+    let when = '';
+    if (s.orderedAt) {
+      const d = new Date(s.orderedAt);
+      if (!isNaN(d.getTime())) when = ' · ' + d.toLocaleDateString();
+    }
+    return 'Ordered by ' + who + when;
   },
 
   /**
@@ -11155,8 +11280,11 @@ Alpine.data('app', () => ({
   get filteredMaster() {
     const master = Array.isArray(this.ingredientMaster) ? this.ingredientMaster : [];
     const q = (this.managerFilter || '').trim();
-    if (!q) return master;
-    if (this.fuse) {
+    // Name-search first (Fuse, else substring), full master when blank.
+    let result;
+    if (!q) {
+      result = master;
+    } else if (this.fuse) {
       const seen = new Set();
       const out = [];
       for (const hit of this.fuse.search(q)) {
@@ -11166,10 +11294,95 @@ Alpine.data('app', () => ({
           out.push(item);
         }
       }
-      return out;
+      result = out;
+    } else {
+      const lower = q.toLowerCase();
+      result = master.filter(e => (e.ingredient_name || '').toLowerCase().includes(lower));
     }
-    const lower = q.toLowerCase();
-    return master.filter(e => (e.ingredient_name || '').toLowerCase().includes(lower));
+    // quick 260630-cf9 — then narrow by the active missing-filter(s): keep only
+    // rows where EVERY active def's isMissing is true (AND). No active filter =>
+    // byte-identical to the pre-cf9 behaviour.
+    const activeKeys = this.activeMissingKeys;
+    if (activeKeys.length > 0) {
+      result = result.filter(row => activeKeys.every(key => MISSING_FILTER_DEFS[key].isMissing(row)));
+    }
+    return result;
+  },
+
+  // quick 260630-cf9 — data-driven chip list (registry keys + labels) so the
+  //   markup loops this instead of hand-copying a button per filter.
+  get missingFilterDefList() {
+    return Object.keys(MISSING_FILTER_DEFS).map(key => ({ key, label: MISSING_FILTER_DEFS[key].label }));
+  },
+
+  // quick 260630-cf9 — the registry keys whose missingFilters[key] is truthy.
+  get activeMissingKeys() {
+    return Object.keys(MISSING_FILTER_DEFS).filter(key => this.missingFilters[key]);
+  },
+
+  // quick 260630-cf9 — live count per registry key of in-memory master rows the
+  //   def flags as missing (NO file read).
+  get missingFilterCounts() {
+    const master = Array.isArray(this.ingredientMaster) ? this.ingredientMaster : [];
+    const out = {};
+    for (const key of Object.keys(MISSING_FILTER_DEFS)) {
+      const def = MISSING_FILTER_DEFS[key];
+      out[key] = master.reduce((n, row) => n + (def.isMissing(row) ? 1 : 0), 0);
+    }
+    return out;
+  },
+
+  // quick 260630-cf9 — flip a missing-filter on/off. Reassigns the whole object
+  //   so Alpine tracks the keyed-set change reactively.
+  toggleMissingFilter(key) {
+    if (!MISSING_FILTER_DEFS[key]) return;
+    this.missingFilters = { ...this.missingFilters, [key]: !this.missingFilters[key] };
+  },
+
+  // quick 260630-cf9 — the SINGLE active missing-key when exactly one filter is
+  //   active (drives which inline-fill control to show), else null. With >1 active
+  //   filter no inline editors render — the user narrows to one field to batch-fill.
+  get inlineFillKey() {
+    const active = this.activeMissingKeys;
+    return active.length === 1 ? active[0] : null;
+  },
+
+  // quick 260630-cf9 — Morrisons grocery search URL for an ingredient name. Pure;
+  //   the base lives in the single MORRISONS_SEARCH_BASE constant (one-line change
+  //   point if the live param ever differs).
+  morrisonsSearchUrl(name) {
+    return MORRISONS_SEARCH_BASE + encodeURIComponent((name || '').trim());
+  },
+
+  // quick 260630-cf9 — inline batch-fill ONE missing field for ONE row, reusing
+  //   the EXISTING per-ingredient write path (startEditIngredient -> set the one
+  //   field -> saveEditIngredient -> snapshot/verify/revert + reloadMasterFromDisk
+  //   + lock release). No new write path, no forked form.
+  async saveInlineField(ingredient_id) {
+    if (this.approving || this.merging) return;
+    const key = this.inlineFillKey;
+    if (!key) return;
+    const value = this.inlineFillValues[ingredient_id];
+    if (value == null || String(value).trim() === '') return;
+    // Open the existing per-ingredient editor (reads fresh disk, acquires lock,
+    // sets editingIngredientId + editForm). On a read/old-schema/not-found failure
+    // it sets managerError and returns WITHOUT setting editingIngredientId — bail.
+    await this.startEditIngredient(ingredient_id);
+    if (this.editingIngredientId == null || this.managerError) return;
+    // Set ONLY the one target field; every other editForm cell round-trips unchanged.
+    if (key === 'link') {
+      this.editForm.link1 = String(value).trim();
+    } else if (key === 'location') {
+      this.editForm.pantry_section = String(value).trim();
+    }
+    await this.saveEditIngredient();
+    // A clean save clears managerError and releases the lock + reloads the master.
+    if (!this.managerError) {
+      this.inlineFillSaved = { ...this.inlineFillSaved, [ingredient_id]: true };
+    }
+    const nextValues = { ...this.inlineFillValues };
+    delete nextValues[ingredient_id];
+    this.inlineFillValues = nextValues;
   },
 
   /**

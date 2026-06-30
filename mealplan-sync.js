@@ -19,7 +19,8 @@
 //     regularsOverrides,                               // keyed map (by ingredient_id)
 //     recipeLineStrikes,                               // keyed map (by ingredient_id) — skip-this-shop strikethrough (quick 260628-v0i)
 //     adHocExtras,                                     // keyed map (by id) OR array — see note
-//     orderScopeRange                                  // null | { startKey, endKey }
+//     orderScopeRange,                                 // null | { startKey, endKey }
+//     shopOrderedFor                                   // null | { scope: (null | {startKey,endKey}), orderedAt, orderedBy } — quick 260630-d81
 //   }
 // Pure view-state (`collapsed`, `pickerCollapsed`, `dayCollapsedByDay`) is
 // EXCLUDED from the shared doc and stays in localStorage (SPEC #1).
@@ -51,7 +52,11 @@ export function emptySharedPlanDoc() {
     regularsOverrides: {},
     recipeLineStrikes: {},
     adHocExtras: [],
-    orderScopeRange: null
+    orderScopeRange: null,
+    // quick 260630-d81 — per-shopping-period "ordered" stamp. null = not ordered,
+    // or { scope: (null | {startKey,endKey}), orderedAt: <ISO>, orderedBy: <string> }.
+    // A synced SCALAR (not a keyed map) — merged like orderScopeRange.
+    shopOrderedFor: null
   };
 }
 
@@ -64,7 +69,8 @@ export function emptySharedPlanDoc() {
  * that fails the shapeCheck.
  *
  * @param {object} state — { mealPlan, cooksByDay, dayLeftovers, prepDoneByDay,
- *                           regularsOverrides, adHocExtras, orderScopeRange }
+ *                           regularsOverrides, adHocExtras, orderScopeRange,
+ *                           shopOrderedFor }
  * @returns {object} the shared doc
  */
 export function projectSharedPlanDoc(state) {
@@ -91,6 +97,13 @@ export function projectSharedPlanDoc(state) {
       && typeof s.orderScopeRange === 'object'
       && !Array.isArray(s.orderScopeRange))
       ? s.orderScopeRange
+      : null,
+    // quick 260630-d81 — per-period ordered stamp; same plain-non-null-object guard
+    // as orderScopeRange (a malformed array/scalar coerces to null = not ordered).
+    shopOrderedFor: (s.shopOrderedFor
+      && typeof s.shopOrderedFor === 'object'
+      && !Array.isArray(s.shopOrderedFor))
+      ? s.shopOrderedFor
       : null
   };
 }
@@ -127,6 +140,14 @@ export function coerceSharedPlanDoc(raw) {
       && typeof raw.orderScopeRange === 'object'
       && !Array.isArray(raw.orderScopeRange))
       ? raw.orderScopeRange
+      : null,
+    // quick 260630-d81 — BACKWARD-COMPAT: an existing remote meal_plan.json predates
+    // this field, so a MISSING shopOrderedFor coerces to null (not ordered). A malformed
+    // array/scalar likewise => null. (The shapeCheck is deliberately NOT extended.)
+    shopOrderedFor: (raw.shopOrderedFor
+      && typeof raw.shopOrderedFor === 'object'
+      && !Array.isArray(raw.shopOrderedFor))
+      ? raw.shopOrderedFor
       : null
   };
 }
@@ -339,6 +360,18 @@ export function mergeMealPlan(base, local, remote) {
       if (localChanged) return L.orderScopeRange;
       if (remoteChanged) return R.orderScopeRange;
       return R.orderScopeRange;
+    })(),
+    shopOrderedFor: (() => {
+      // quick 260630-d81 — shopOrderedFor is a single scalar-ish value
+      // (null | { scope, orderedAt, orderedBy }), merged by the SAME 3-way rule as
+      // orderScopeRange: local-changed wins (a fresh stamp or an Undo→null), else
+      // remote-changed, else remote. NOT a keyed map — it stays OUT of
+      // SHARED_MAP_FIELDS / mergeKeyedMap / mergeCookListMap.
+      const localChanged = !jsonEq(L.shopOrderedFor, B.shopOrderedFor);
+      const remoteChanged = !jsonEq(R.shopOrderedFor, B.shopOrderedFor);
+      if (localChanged) return L.shopOrderedFor;
+      if (remoteChanged) return R.shopOrderedFor;
+      return R.shopOrderedFor;
     })()
   };
   for (const field of SHARED_MAP_FIELDS) {
