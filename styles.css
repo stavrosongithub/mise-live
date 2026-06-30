@@ -5197,10 +5197,12 @@ a.meal-plan-shop-search {
   padding: 0;
   text-decoration: underline;
 }
-.reg-row.skipped .reg-name,
-.reg-row.skipped .reg-buy {
-  color: var(--color-ink-faint);
-  text-decoration: line-through;
+/* quick 260630-i3d — OPT-IN regulars: an Added row reads as ACTIVE/selected
+   (accent name + slightly bolder), replacing the old opt-out dim/strike. A
+   not-added row stays neutral (no rule needed). Token-based — no bare hex. */
+.reg-row.added .reg-name {
+  color: var(--color-accent);
+  font-weight: var(--fw-semibold);
 }
 
 /* quick 260612-m6c — order-format shopping-list export. Additive, scoped. */

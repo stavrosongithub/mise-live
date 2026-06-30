@@ -2538,26 +2538,28 @@
       <!-- /shopping tab body -->
 
       <!-- ============ REGULARS SUB-VIEW ============ phase 08 REG-04 (regulars tab body).
-           Lists every `regular`-tagged ingredient with an editable suggested qty (D-02),
-           a live pack count, a skip-this-shop toggle, an "edited" marker + reset control
-           when overridden (D-03), and a "set a rate" nudge for a blank-rate regular (D-04).
+           quick 260630-i3d (OPT-IN): a SUGGESTION list — nothing is on the shopping list by
+           default. Lists every `regular`-tagged ingredient with its suggested qty preview
+           (D-02), a live pack count, a per-row Add / Added ✓ toggle (an Added row reads as
+           active/selected), an "edited" marker + reset control when overridden (D-03), and a
+           "set a rate" nudge for a blank-rate regular (D-04 — which can ALSO be Added).
            All persistence is via the Plan 02 helpers (MEAL_PLAN_UI_KEY) — NO CSV write. -->
       <div class="meal-list-tab-body" x-show="mealListTab === 'regulars'" x-cloak>
         <!-- quick 260625-s1g (X1) — big sans Regulars heading dropped; the quiet
              intro note below remains. The summary + (no) export live in the footer. -->
-        <p class="help">Things you buy every shop. The suggested quantity = your per-person rate × the upcoming person-days. Edit a quantity, skip one for this shop, or set a rate where it's missing.</p>
+        <p class="help">Things you buy every shop. Tick the ones you want to add to this shop. The suggested quantity = your per-person rate × the upcoming person-days. Edit a quantity, or set a rate where it's missing.</p>
         <p class="manager-empty-state"
            x-show="regularsRows.length === 0"
            x-cloak>No regulars yet — tick "Regular buy" on an ingredient in the Ingredient Manager.</p>
-        <!-- quick 260625-sv2 (R1–R7) — 4-column .reg-grid (Item · Qty · Buy · Skip).
+        <!-- quick 260625-sv2 (R1–R7) — 4-column .reg-grid (Item · Qty · Buy · Add).
              ONE x-for → one .reg-row{display:contents} per row so the 4 cells land
-             directly in the parent grid columns and per-row .skipped targets descendants. -->
+             directly in the parent grid columns and per-row .added targets descendants. -->
         <div class="reg-grid" x-show="regularsRows.length > 0">
           <!-- column HEADERS (R1/R2) — render once, outside the x-for -->
-          <span class="reg-head">Item</span><span class="reg-head r">Qty</span><span class="reg-head r">Buy</span><span class="reg-head r">Skip</span>
+          <span class="reg-head">Item</span><span class="reg-head r">Qty</span><span class="reg-head r">Buy</span><span class="reg-head r">Add</span>
 
           <template x-for="r in regularsRows" :key="r.ingredient_id">
-            <div class="reg-row" :class="{ skipped: regularIsSkipped(r.ingredient_id) }">
+            <div class="reg-row" :class="{ added: regularIsIncluded(r.ingredient_id) }">
               <!-- CELL 1 — NAME → edit-ingredient modal (the ONLY path to set a rate). -->
               <button type="button" class="meal-plan-ing-link reg-name"
                       @click="openEditIngredient(r.ingredient_id)"
@@ -2595,16 +2597,13 @@
                 <span class="reg-buy reg-buy-empty">—</span>
               </template>
 
-              <!-- CELL 4 — SKIP (R7: not-skipped label now just "skip"; empty cell when blank-rate) -->
-              <template x-if="!r.blankRate">
-                <button type="button" class="reg-skip"
-                        @click="toggleRegularSkip(r.ingredient_id)"
-                        :title="regularIsSkipped(r.ingredient_id) ? ('Include ' + (r.ingredient_name||'this') + ' this shop') : ('Skip ' + (r.ingredient_name||'this') + ' this shop')"
-                        x-text="regularIsSkipped(r.ingredient_id) ? 'skipped — include' : 'skip'"></button>
-              </template>
-              <template x-if="r.blankRate">
-                <span></span>
-              </template>
+              <!-- CELL 4 — ADD (quick 260630-i3d opt-in): a per-row Add / Added ✓ toggle.
+                   Renders on BOTH rated AND blank-rate rows (an Added blank-rate regular
+                   surfaces as a quantity-less buy line — decision 4). -->
+              <button type="button" class="reg-skip"
+                      @click="toggleRegularInclude(r.ingredient_id)"
+                      :title="regularIsIncluded(r.ingredient_id) ? ('Remove ' + (r.ingredient_name||'this') + ' from this shop') : ('Add ' + (r.ingredient_name||'this') + ' to this shop')"
+                      x-text="regularIsIncluded(r.ingredient_id) ? 'Added ✓' : 'Add'"></button>
             </div>
           </template>
         </div>
@@ -2612,7 +2611,7 @@
              no-export italic (regulars fold into the order list; no text export). -->
         <div class="ml-foot">
           <span class="ml-summary"
-                x-text="regularsRows.length + ' standing buys' + (regularsRows.filter(r => regularIsSkipped(r.ingredient_id)).length ? ' · ' + regularsRows.filter(r => regularIsSkipped(r.ingredient_id)).length + ' skipped' : '') + (regularsRows.filter(r => r.blankRate).length ? ' · ' + regularsRows.filter(r => r.blankRate).length + ' need a rate' : '')"></span>
+                x-text="regularsRows.length + ' standing buys' + (regularsRows.filter(r => regularIsIncluded(r.ingredient_id)).length ? ' · ' + regularsRows.filter(r => regularIsIncluded(r.ingredient_id)).length + ' added' : '') + (regularsRows.filter(r => r.blankRate).length ? ' · ' + regularsRows.filter(r => r.blankRate).length + ' need a rate' : '')"></span>
           <span class="ml-noexport">No text export — regulars fold into the order list</span>
         </div>
       </div>

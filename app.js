@@ -379,7 +379,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '68872c0 2026-06-30';
+const APP_VERSION = '138bcf8 2026-06-30';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -3278,10 +3278,14 @@ Alpine.data('app', () => ({
   // IndexedDB/CSV write.
   prepDoneByDay: {},
   // phase 08 REG-07 — per-PLAN regulars overrides, keyed by String(ingredient_id) →
-  // { qty?, skip? }. qty absent/null = use the suggested qty (rate × person-days); an
-  // explicit qty of 0 is a DELIBERATE zero-out (distinct from absent/null — see
-  // regularSuggestedQty's contract); skip === true = excluded from this shop. A MISSING
-  // key = no override (use suggested, not skipped). Persisted in MEAL_PLAN_UI_KEY
+  // { qty?, include? }. quick 260630-i3d (OPT-IN): include === true = explicitly Added to
+  // this shop (the opt-in gate; ONLY an Added regular folds into the combined list);
+  // include absent/false = NOT on the list (the default). qty absent/null = use the
+  // suggested qty (rate × person-days); an explicit qty of 0 is a DELIBERATE zero-out
+  // (distinct from absent/null — see regularSuggestedQty's contract). A MISSING key = no
+  // override (not Added). A stale {skip:true} entry from before the opt-in flip degrades
+  // silently to not-included (ignored by the include gate; wiped on next period change).
+  // Persisted in MEAL_PLAN_UI_KEY
   // alongside dayExcludedFromShopping with the SAME fail-open plain-non-null-object
   // guard. localStorage UI-prefs ONLY — NEVER an IndexedDB/CSV write.
   regularsOverrides: {},
@@ -9287,12 +9291,15 @@ Alpine.data('app', () => ({
 
   // quick 260630-gzw — clear BOTH the shopping-list (recipeLineStrikes) and check-stock
   // (checkStockStrikes) strike maps when the meal-plan period changes (user request:
-  // strikes are inherently per-period). Plain {} assignment; the caller's
-  // _persistMealPlanUi arms the synced push (jq9 Guard-1 skips it if nothing changed),
-  // and clearing at the source propagates to other devices via the normal delete-wins merge.
+  // strikes are inherently per-period). quick 260630-i3d — ALSO clear regularsOverrides
+  // (the opt-in regulars selections + qty overrides are likewise per-period; a stale
+  // {skip:true} from before the opt-in flip is wiped here too). Plain {} assignment; the
+  // caller's _persistMealPlanUi arms the synced push (jq9 Guard-1 skips it if nothing
+  // changed), and clearing at the source propagates to other devices via delete-wins merge.
   _resetShoppingPeriodStrikes() {
     this.recipeLineStrikes = {};
     this.checkStockStrikes = {};
+    this.regularsOverrides = {};
   },
 
   // quick 260621-lft — step a 'YYYY-MM-DD' key by ±1 LOCAL day (offset = +1 next,
@@ -9755,22 +9762,27 @@ Alpine.data('app', () => ({
     const _adHocExtras = this.adHocExtras;               // touch for reactivity (iterated below)
     const _recipeLineStrikes = this.recipeLineStrikes;   // quick 260628-v0i — touch so a strike toggle re-runs this getter
 
-    // 1. Regulars fold-in. For each master tagged regular AND not skipped this shop.
+    // 1. Regulars fold-in (OPT-IN — quick 260630-i3d). Regulars are a suggestion list:
+    // nothing is on the shopping list by default. A regular folds in ONLY when it has been
+    // explicitly Added this shop (include === true). Any other value-shape (e.g. a stale
+    // {skip:true} from before the opt-in flip) is ignored by this gate → not included.
     for (const [iid, m] of masterById.entries()) {
       if (m.regular !== true) continue;                                   // not a regular
-      if (_regularsOverrides[String(iid)]?.skip === true) continue;       // skipped this shop (D-02)
+      if (_regularsOverrides[String(iid)]?.include !== true) continue;    // not Added this shop (opt-in gate)
       const qty = this.regularSuggestedQty(iid);                          // override.qty ?? blank→null ?? rate×person-days
-      if (qty == null) continue;                                          // blank-rate regular → contributes nothing (D-04)
-      if (!(qty > 0)) continue;                                           // explicit 0 zero-out → contributes nothing (deliberate)
-      // Add the suggested qty as its OWN metric part in the ingredient's pack_unit (the
-      // rate is in pack_size's unit — Constraint, NO conversion). If a recipe already
-      // contributed the same unit, _accumulateRow SUMS them into one part (2 L + 3 L → 5 L);
-      // a different unit fires the EXISTING mixed-units caveat (no new code). A skipped
-      // regular is skipped here while the recipe-derived contribution stays untouched
-      // (REG-07: drops to recipe-only qty, not zero).
-      const accMaster = { ingredient_name: m.ingredient_name, shopping_unit: 'metric' };
-      const row = { scaled_quantity_metric: qty, unit_metric: (m.pack_unit || '') };
-      this._accumulateRow(this._ensureAccEntry(acc, iid, accMaster, row), accMaster, row);
+      if (qty != null && qty > 0) {
+        // Add the suggested qty as its OWN metric part in the ingredient's pack_unit (the
+        // rate is in pack_size's unit — Constraint, NO conversion). If a recipe already
+        // contributed the same unit, _accumulateRow SUMS them into one part (2 L + 3 L → 5 L);
+        // a different unit fires the EXISTING mixed-units caveat (no new code).
+        const accMaster = { ingredient_name: m.ingredient_name, shopping_unit: 'metric' };
+        const row = { scaled_quantity_metric: qty, unit_metric: (m.pack_unit || '') };
+        this._accumulateRow(this._ensureAccEntry(acc, iid, accMaster, row), accMaster, row);
+      } else {
+        // Added blank-rate regular (D-04): no qty to fold in. Mirror the ad-hoc quantity-less
+        // path — a parts.length === 0 acc entry that routes to the export "needs setup" bucket.
+        this._ensureAccEntry(acc, iid, { ingredient_name: m.ingredient_name, shopping_unit: m.shopping_unit }, {});
+      }
     }
 
     // 2. Ad-hoc extras fold-in. An "I'm out of this" add (A2 / Open Q2) carries NO
@@ -9963,12 +9975,13 @@ Alpine.data('app', () => ({
   },
 
   /**
-   * regularIsSkipped — phase 08 REG-04 / D-02. True iff the regular is skipped this
-   * shop (drives the skip-toggle label/state). Never throws.
+   * regularIsIncluded — quick 260630-i3d (opt-in). True iff the regular has been
+   * explicitly Added to this shop (include === true; drives the Add/Added ✓ toggle
+   * label/state and the active-row highlight). Never throws.
    */
-  regularIsSkipped(iid) {
+  regularIsIncluded(iid) {
     const ov = this.regularsOverrides[String(iid)];
-    return !!(ov && ov.skip === true);
+    return !!(ov && ov.include === true);
   },
 
   // phase 08 REG-07 — mutation helpers for the per-plan regulars overrides + ad-hoc
@@ -9980,7 +9993,7 @@ Alpine.data('app', () => ({
   /**
    * setRegularOverrideQty — D-02. Set an explicit override qty for a regular. An
    * explicit 0 is a VALID, deliberate zero-out — it is stored, NOT discarded as
-   * falsy. Preserves any existing skip flag on the entry.
+   * falsy. Preserves any existing include flag on the entry.
    */
   setRegularOverrideQty(iid, qty) {
     const k = String(iid);
@@ -10001,8 +10014,8 @@ Alpine.data('app', () => ({
     if (!entry || typeof entry !== 'object') { this._persistMealPlanUi(); return; }
     const next = { ...entry };
     delete next.qty;
-    if (next.skip === true) {
-      this.regularsOverrides[k] = next;              // keep a meaningful skip flag
+    if (next.include === true) {
+      this.regularsOverrides[k] = next;              // keep a still-Added include flag
     } else {
       delete this.regularsOverrides[k];              // empty entry → drop it
     }
@@ -10010,20 +10023,20 @@ Alpine.data('app', () => ({
   },
 
   /**
-   * toggleRegularSkip — D-02 skip-this-shop. Flip the skip flag for a regular,
-   * preserving any override qty. Dropping skip leaves a qty-only entry; dropping
-   * skip with no qty removes the entry entirely.
+   * toggleRegularInclude — quick 260630-i3d (opt-in). Flip the include (Added-this-shop)
+   * flag for a regular, preserving any override qty. Dropping include leaves a qty-only
+   * entry; dropping include with no qty removes the entry entirely.
    */
-  toggleRegularSkip(iid) {
+  toggleRegularInclude(iid) {
     const k = String(iid);
     const entry = (this.regularsOverrides[k] && typeof this.regularsOverrides[k] === 'object')
       ? { ...this.regularsOverrides[k] } : {};
-    if (entry.skip === true) {
-      delete entry.skip;
+    if (entry.include === true) {
+      delete entry.include;
     } else {
-      entry.skip = true;
+      entry.include = true;
     }
-    if (entry.skip === true || entry.qty != null) {
+    if (entry.include === true || entry.qty != null) {
       this.regularsOverrides[k] = entry;
     } else {
       delete this.regularsOverrides[k];              // nothing meaningful left → drop
@@ -10138,7 +10151,7 @@ Alpine.data('app', () => ({
   /**
    * removeShoppingLine — quick 260628-v0i. Provenance-aware remove from the combined
    * shopping list. A MANUALLY-added line (ad-hoc extra and/or a regular) is taken OFF
-   * the list (un-add the ad-hoc + skip the regular); a RECIPE-derived line is left on
+   * the list (un-add the ad-hoc + un-add the regular); a RECIPE-derived line is left on
    * the list but STRUCK (skip-this-shop) so it drops from the export. The line object
    * carries `source` ('recipe' | 'manual') from combinedShoppingList.
    */
@@ -10151,11 +10164,18 @@ Alpine.data('app', () => ({
     }
     // Manual line: un-add. Remove the ad-hoc extra if present...
     if (this.isAdHocExtra(iid)) this.toggleAdHocExtra(iid);
-    // ...and skip a (non-skipped) regular so it leaves the list too.
+    // ...and un-add an Added regular (clear its include flag) so it leaves the list too.
     const m = (Array.isArray(this.ingredientMaster) ? this.ingredientMaster : [])
       .find(x => x && x.ingredient_id === iid);
-    if (m && m.regular === true && this.regularsOverrides[String(iid)]?.skip !== true) {
-      this.regularsOverrides[String(iid)] = { ...(this.regularsOverrides[String(iid)] || {}), skip: true };
+    if (m && m.regular === true && this.regularsOverrides[String(iid)]?.include === true) {
+      const k = String(iid);
+      const next = { ...(this.regularsOverrides[k] || {}) };
+      delete next.include;
+      if (next.qty != null) {
+        this.regularsOverrides[k] = next;            // keep a qty-only entry
+      } else {
+        delete this.regularsOverrides[k];            // nothing meaningful left → drop
+      }
       this._persistMealPlanUi();
     }
   },
