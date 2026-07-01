@@ -2117,9 +2117,13 @@
                       :title="'Set cooks for ' + group.label"
                       @click="toggleCooksPopover(group.key)">+ add</button>
               <!-- The popover renders only when this day's popover is open, set ONLY
-                   THROUGH toggleCooksPopover — which lazy-inits cooksByDay[group.key]
-                   to an array first, so the checkbox x-model binds to an initialized
-                   array lvalue (decision 1). @click.outside closes it. UNCHANGED. -->
+                   THROUGH toggleCooksPopover. The checkbox NO LONGER x-models an
+                   initialized array lvalue — a background sync can reassign cooksByDay,
+                   dropping the open day, which made the old x-model fall into Alpine's
+                   boolean branch and render EVERY box checked (quick 260701-8qa). Instead
+                   it reads :checked through cooksForDay (always an array; .map(String)
+                   hardens against number-vs-string ids) and writes via the explicit
+                   toggleCookForDay @change handler. @click.outside closes it. -->
               <div class="meal-plan-cooks-popover"
                    x-show="cooksPopoverOpenFor === group.key" x-cloak
                    @click.outside="cooksPopoverOpenFor = ''">
@@ -2127,9 +2131,9 @@
                   <label class="meal-plan-cooks-option">
                     <input type="checkbox"
                            :value="cookIdOf(resident)"
-                           x-model="cooksByDay[group.key]"
+                           :checked="cooksForDay(group.key).map(String).includes(cookIdOf(resident))"
                            :disabled="cookDisabledFor(group.key, cookIdOf(resident))"
-                           @change="_persistMealPlanUi()">
+                           @change="toggleCookForDay(group.key, cookIdOf(resident))">
                     <span x-text="resident['Full name'] || '(unnamed)'"></span>
                   </label>
                 </template>

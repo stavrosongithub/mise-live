@@ -379,7 +379,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '138bcf8 2026-06-30';
+const APP_VERSION = '9bd0640 2026-07-01';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -8876,6 +8876,35 @@ Alpine.data('app', () => ({
       arr.splice(idx, 1);
       this._persistMealPlanUi();
     }
+  },
+
+  /**
+   * toggleCookForDay — quick 260701-8qa. THE SINGLE WRITE PATH for the popover's
+   * cook checkbox (@change), replacing the fragile `x-model="cooksByDay[group.key]"`.
+   * That x-model only did array add/remove when the bound model was ALREADY an array;
+   * a background meal-plan sync can reassign this.cooksByDay to a fresh object that
+   * drops the just-opened (empty) day, reverting the key to undefined — the next click
+   * then hit Alpine's BOOLEAN branch (cooksByDay[day] = true), rendering EVERY checkbox
+   * checked (the "checks all" bug). This method decouples the write from that race.
+   *
+   * Mirrors removeCookFromDay: reads the array via cooksForDay (ALWAYS returns an array,
+   * lazy-inits when absent), then toggles the id in place on that SAME array lvalue so
+   * cooksByDay[dateKey] stays an array of String APPIDs (decision 5). The 3-cook cap is
+   * already enforced by cookDisabledFor on the input's :disabled, so a disabled box never
+   * fires @change — no extra cap check is needed here.
+   */
+  toggleCookForDay(dateKey, id) {
+    const arr = this.cooksForDay(dateKey);
+    const sid = String(id);
+    if (arr.map(String).includes(sid)) {
+      // Remove EVERY element whose String() equals sid, in place (keep the lvalue).
+      for (let i = arr.length - 1; i >= 0; i--) {
+        if (String(arr[i]) === sid) arr.splice(i, 1);
+      }
+    } else {
+      arr.push(sid);
+    }
+    this._persistMealPlanUi();
   },
 
   /**
