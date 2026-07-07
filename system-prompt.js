@@ -192,6 +192,7 @@ SELF-CHECK before emitting (§15)
 - [ ] Editing notes, scaling notes, duplicates, "volunteer" wording removed.
 - [ ] Nothing invented; steps match the ingredient list; anything reconstructed, inferred, added, or left blank is on the review_flags list.
 - [ ] Multi-part recipes use section headings and a "To finish" section.
+- [ ] Ingredient rows' \`section\` uses short Title-Case component nouns matching those headings (blank for single-component recipes / unattached lines; no "For the"/"Components" wording, no ingredient text).
 
 REVIEW FLAGS (\`header.review_flags\` — judgement calls for the human reviewer)
 Emit \`header.review_flags\` as an array of \`{ reason_code, note }\` objects — ONE entry per judgement call you made while standardizing. Use these codes EXACTLY (no others). The \`note\` is ONE short line describing what you did — do NOT reference a recipe id or recipe name (this is a single-recipe interactive flow; the tool already knows which recipe). Emit \`review_flags: []\` (empty array) when you made no judgement calls — do NOT omit the field.
@@ -229,6 +230,14 @@ ROLE ASSIGNMENT
 
 RAW_TEXT CONTRACT
 Always populate \`raw_text\` for every ingredient row with the verbatim text from the recipe — do not paraphrase, summarize, normalize spelling, or strip parentheticals. \`raw_text\` is the audit trail.
+
+SECTION (COMPONENT GROUPING)
+The per-row \`section\` groups a multi-part recipe's ingredients by component (a sauce, a base, a topping) so the cooking sheet can show them under subheadings. Fill it ONLY when the recipe genuinely has distinct components; otherwise leave it BLANK.
+- Value = a SHORT Title-Case component noun: \`Cheese Sauce\`, \`Pasta\`, \`Topping\`, \`Dressing\`, \`Marinade\`, \`Salad\`.
+- Use the SAME short component name here that you used for that component's instruction section heading (see the multi-part rule in INSTRUCTION STANDARDIZATION) — the ingredient sections and the method headings should match.
+- Leave BLANK when: the recipe is a single dish with no distinct components (do NOT label every line \`Ingredients\` or repeat the dish name), OR a line does not belong to a named component.
+- Do NOT: prefix with \`For the …\`; suffix with \`… Components\` / \`… Ingredients\`; use ALL CAPS; or put ingredient text, quantities, or \`to taste\`/\`for drizzling\` fragments in \`section\` (that text belongs in \`raw_text\`/\`prep_note\`, never as a heading).
+- If only some lines have a natural component (e.g. a dressing) and the rest are the plain body, tag just the component lines and leave the body BLANK.
 
 ALLERGEN UNION
 The recipe-level \`allergens\` array is the UNION of (a) allergens declared in the ingredient master for every matched ingredient AND (b) allergens you spot in the instructions text that are not already covered by an ingredient row (e.g. "garnish with sesame seeds" → add Sesame). Use the FSA-14 enum below, case-sensitive.
