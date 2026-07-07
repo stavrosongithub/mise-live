@@ -124,6 +124,22 @@ export const COOK_CSS = `
     color: #0E6E66;        /* petrol — the section-label motif */
     margin: 22px 0 9px;
   }
+  /* quick-260707-nrg: component SUBHEADING inside an ingredient list ("Cheese
+     Sauce", "Pasta"). Mirrors the block-label's mono/uppercase/tracking motif but
+     is deliberately QUIET + SUBORDINATE to the petrol INGREDIENTS label — smaller,
+     muted ink, lighter weight — so it reads as a within-list divider, not a peer. */
+  .ing-section {
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: #8A958F;        /* muted ink — NOT petrol */
+    margin: 16px 0 5px;
+  }
+  /* First section eyebrow sits right under the petrol INGREDIENTS label — kill its
+     top margin so the two don't double-space. */
+  .ing-section-first { margin-top: 4px; }
   ul.ingredients { margin: 0; padding: 0; list-style: none; }
   ul.ingredients li { padding: 5px 0; border-bottom: 1px solid #E3E1D8; display: flex; gap: 10px; align-items: baseline; }
   ul.ingredients .amt {
@@ -457,6 +473,9 @@ export const COOK_CSS = `
     .prep-ahead .label { color: #1B2A28; }
     /* Eyebrow labels print in ink (petrol can read faint on cheap printers). */
     h3.block-label { color: #1B2A28; }
+    /* quick-260707-nrg: component subheading drops to ink for print, staying a
+       touch lighter than the block-label so the hierarchy survives on paper. */
+    .ing-section { color: #4A5652; }
     ul.ingredients li { border-bottom: 0.5pt solid #E3E1D8; }
     /* Two-column body retained on paper, but the ingredients card de-fills
        (no surface fill / border / sticky) so it prints as a plain column. */
@@ -506,48 +525,66 @@ export const COOK_RUNTIME = `
       var dishIdx = (typeof opts.dishIdx === 'number') ? opts.dishIdx : -1;
       var ul = document.createElement('ul');
       ul.className = 'ingredients' + (gather ? ' ingredients-gather' : '');
-      (dish.ingredients || []).forEach(function (ing, ingredientIdx) {
-        var li = document.createElement('li');
-        // Mise-en-place tick (Overview only). DISPLAY-ONLY: it never alters the
-        // frozen amount/volParen/role text (D-05) — only toggles a .gathered class.
-        if (gather) {
-          var lab = document.createElement('label');
-          lab.className = 'gather-tick';
-          var cb = document.createElement('input');
-          cb.type = 'checkbox';
-          cb.className = 'gather-cb';
-          cb.checked = isGathered(dishIdx, ingredientIdx);
-          cb.addEventListener('change', function () {
-            setGathered(dishIdx, ingredientIdx, cb.checked);
-            li.classList.toggle('gathered', cb.checked);
-          });
-          lab.appendChild(cb);
-          li.appendChild(lab);
-          if (cb.checked) { li.classList.add('gathered'); }
+      // quick-260707-nrg: render by section GROUPS. Falls back to a single
+      // null-heading group over every flat index for OLD frozen models / share
+      // links that predate ingredientGroups. Each item is rendered from its
+      // ORIGINAL flat index into dish.ingredients so mise-en-place ticks realign.
+      var groups = (dish.ingredientGroups && dish.ingredientGroups.length)
+        ? dish.ingredientGroups
+        : [{ heading: null, itemIndexes: (dish.ingredients || []).map(function (_, i) { return i; }) }];
+      groups.forEach(function (group, groupIdx) {
+        if (group.heading != null && String(group.heading) !== '') {
+          var h = document.createElement('div');
+          h.className = 'ing-section' + (groupIdx === 0 ? ' ing-section-first' : '');
+          h.textContent = group.heading;
+          ul.appendChild(h);
         }
-        if (ing.amount) {
-          var a = document.createElement('span');
-          a.className = 'amt';
-          a.textContent = ing.amount;
-          li.appendChild(a);
-        }
-        var n = document.createElement('span');
-        n.className = 'ing-name';
-        n.textContent = ing.name;
-        li.appendChild(n);
-        if (ing.volParen) {
-          var v = document.createElement('span');
-          v.className = 'vol';
-          v.textContent = ing.volParen;
-          li.appendChild(v);
-        }
-        if (ing.role && ing.role !== 'required') {
-          var r = document.createElement('span');
-          r.className = 'role';
-          r.textContent = ing.role === 'to_taste' ? 'to taste' : ing.role;
-          li.appendChild(r);
-        }
-        ul.appendChild(li);
+        (group.itemIndexes || []).forEach(function (flatIdx) {
+          var ing = (dish.ingredients || [])[flatIdx];
+          if (!ing) { return; }
+          var li = document.createElement('li');
+          // Mise-en-place tick (Overview only). DISPLAY-ONLY: it never alters the
+          // frozen amount/volParen/role text (D-05) — only toggles a .gathered class.
+          // Tick binds to the ORIGINAL flat index (flatIdx), NOT a per-group counter.
+          if (gather) {
+            var lab = document.createElement('label');
+            lab.className = 'gather-tick';
+            var cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.className = 'gather-cb';
+            cb.checked = isGathered(dishIdx, flatIdx);
+            cb.addEventListener('change', function () {
+              setGathered(dishIdx, flatIdx, cb.checked);
+              li.classList.toggle('gathered', cb.checked);
+            });
+            lab.appendChild(cb);
+            li.appendChild(lab);
+            if (cb.checked) { li.classList.add('gathered'); }
+          }
+          if (ing.amount) {
+            var a = document.createElement('span');
+            a.className = 'amt';
+            a.textContent = ing.amount;
+            li.appendChild(a);
+          }
+          var n = document.createElement('span');
+          n.className = 'ing-name';
+          n.textContent = ing.name;
+          li.appendChild(n);
+          if (ing.volParen) {
+            var v = document.createElement('span');
+            v.className = 'vol';
+            v.textContent = ing.volParen;
+            li.appendChild(v);
+          }
+          if (ing.role && ing.role !== 'required') {
+            var r = document.createElement('span');
+            r.className = 'role';
+            r.textContent = ing.role === 'to_taste' ? 'to taste' : ing.role;
+            li.appendChild(r);
+          }
+          ul.appendChild(li);
+        });
       });
       return ul;
     }

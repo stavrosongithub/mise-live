@@ -380,7 +380,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'a7fc6f8 2026-07-07';
+const APP_VERSION = '1704b84 2026-07-07';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -7990,7 +7990,12 @@ Alpine.data('app', () => ({
           : ((r.is_garnish === 'TRUE') ? 'garnish'
             : (r.is_optional === 'TRUE') ? 'optional'
             : (r.is_to_taste === 'TRUE') ? 'to_taste'
-            : 'required')
+            : 'required'),
+        // quick-260707-nrg — carry the recipe-line `section` through so the cook
+        // sheet can group ingredients by component. Additive: scaleRow's {...row}
+        // spread propagates it into scaledRowsFor → _buildCookModel (row.section).
+        // Other scaledRowsFor consumers ignore it; blank/absent → '' (renders flat).
+        section: r.section ?? ''
       });
     }
     // Sort each group by line_order (null/blank sort to 0, matching the editor).
@@ -11095,7 +11100,8 @@ Alpine.data('app', () => ({
       const name = (header.name != null && header.name !== '') ? String(header.name) : (entry.name || `Recipe ${entry.recipe_id}`);
 
       // D-12 amount strings, copied VERBATIM from index.html ~L1632-1636.
-      const ingredients = this.scaledRowsFor(entry).map(row => {
+      const scaledRows = this.scaledRowsFor(entry);
+      const ingredients = scaledRows.map(row => {
         const metricStr = (row.scaled_quantity_metric !== null && row.scaled_quantity_metric !== '')
           ? `${row.scaled_quantity_metric}${row.unit_metric || ''}` : '';
         const volStr = (row.scaled_quantity_volumetric !== null && row.scaled_quantity_volumetric !== '')
@@ -11110,6 +11116,33 @@ Alpine.data('app', () => ({
         };
       });
 
+      // quick-260707-nrg: parallel `ingredientGroups` for the cook sheet's grouped
+      // render — ADDITIVE to the frozen model (flat `ingredients` array above is
+      // UNCHANGED so mise-en-place tick indices keep lining up). Walk the rows in
+      // line_order and bucket by first-appearance of each row's trimmed `section`.
+      // Rows sharing a section value collect into that section's group even if
+      // non-contiguous (group-by-VALUE, INTENDED). A blank section → heading:null.
+      // If NO row carries a section, emit ONE null-heading group over every index
+      // (renders as today's flat list, no subheading).
+      const groupOrder = [];        // section values in first-appearance order
+      const groupByHeading = new Map();
+      let anySection = false;
+      scaledRows.forEach((row, flatIdx) => {
+        const raw = (row.section == null) ? '' : String(row.section).trim();
+        const heading = raw === '' ? null : raw;
+        if (heading !== null) { anySection = true; }
+        const key = heading === null ? ' __blank__' : heading;
+        if (!groupByHeading.has(key)) {
+          const grp = { heading, itemIndexes: [] };
+          groupByHeading.set(key, grp);
+          groupOrder.push(grp);
+        }
+        groupByHeading.get(key).itemIndexes.push(flatIdx);
+      });
+      const ingredientGroups = anySection
+        ? groupOrder
+        : [{ heading: null, itemIndexes: ingredients.map((_, i) => i) }];
+
       const instructionGroups = splitInstructionSteps(String(header.instructions_20 ?? ''));
       const stepCount = instructionGroups.reduce((n, g) => n + (Array.isArray(g.steps) ? g.steps.length : 0), 0);
 
@@ -11120,6 +11153,7 @@ Alpine.data('app', () => ({
         prepNote: String(header.prep_notes ?? '').trim(),
         serveWith: String(header.serve_with ?? '').trim(),
         ingredients, // D-12 scaled cooking amounts (frozen strings, D-05)
+        ingredientGroups, // quick-260707-nrg: parallel section grouping (flat-index refs)
         instructionGroups,
         hasSteps: stepCount > 0 // false = D-16 Overview-only (recorded for Plan 03's wizard skip)
       };
