@@ -1812,6 +1812,16 @@
         <p x-text="mealPlanNotice"></p>
       </div>
 
+      <!-- 2026-07-07 shrink-alarm notice: a push preserved dishes an unexpected merge
+           shrink would have removed. Persistent + dismissible (own field, not the transient
+           sync status). Backstop signal — should be rare when the sync is healthy. -->
+      <div class="banner banner-warning"
+           x-show="mealPlanShrinkNotice"
+           x-cloak>
+        <p x-text="mealPlanShrinkNotice"></p>
+        <button type="button" class="btn-small" @click="mealPlanShrinkNotice = ''">Dismiss</button>
+      </div>
+
       <!-- ============ UPCOMING / PAST SWITCHER ============ quick 260618-ahg.
            F2 (quick 260625-itm) — the REAL bound Upcoming/Past tabs were MOVED into
            the scopebar (below) so there is exactly ONE Upcoming/Past control, and it

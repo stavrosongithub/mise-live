@@ -429,3 +429,48 @@ export function mergeAdHocExtras(base, local, remote) {
   }
   return out;
 }
+
+/**
+ * preserveUnexpectedlyDroppedEntries — the SHRINK ALARM backstop (2026-07-07 fix,
+ * part 3 of the base-fuller-than-local hardening). The 3-way merge deletes an entry
+ * that is `inBase && !inLocal` — a correct rule ONLY when `base` is a faithful record
+ * of what this device last synced. Several impure paths can make `base` FULLER than
+ * `local` (a stale-recipe-list reconcile, a durable-snapshot desync across reload),
+ * and then a legitimate REMOTE entry silently vanishes from the pushed doc.
+ *
+ * This is the last line of defence: given the freshly-pulled remote and the merge
+ * result, any entry that exists on the REMOTE but is ABSENT from the merge — and was
+ * NOT explicitly deleted by the user on THIS device this session — is treated as an
+ * UNEXPECTED drop. Those entries are re-added to the merged result (preserving the
+ * remote's copy) so a merge miscalculation can never SHRINK the shared plan. Genuine
+ * user deletes (whose ids are in `userDeletedIds`) are whitelisted, so real deletions
+ * still propagate. Bias: never lose a dish > perfectly propagate a delete (a delete
+ * that fails to stick is a redoable annoyance; a vanished plan is the cardinal sin).
+ *
+ * PURE: returns a fresh entries array + the list of preserved ids; never mutates.
+ *
+ * @param {Array}  mergedEntries      — entries the merge produced
+ * @param {Array}  freshRemoteEntries — entries on the freshly-pulled remote
+ * @param {Set|Array} userDeletedIds  — ids the user explicitly removed this session
+ * @returns {{ entries: Array, preservedIds: Array }}
+ */
+export function preserveUnexpectedlyDroppedEntries(mergedEntries, freshRemoteEntries, userDeletedIds) {
+  const merged = Array.isArray(mergedEntries) ? mergedEntries : [];
+  const remote = Array.isArray(freshRemoteEntries) ? freshRemoteEntries : [];
+  const deleted = userDeletedIds instanceof Set
+    ? userDeletedIds
+    : new Set(Array.isArray(userDeletedIds) ? userDeletedIds : []);
+  const mergedIds = new Set(merged.filter(e => e && e.id != null).map(e => e.id));
+  const preserved = [];
+  const preservedIds = [];
+  for (const e of remote) {
+    if (!e || e.id == null) continue;
+    // Present on remote, gone from the merge, and NOT a deliberate local delete =>
+    // an unexpected shrink. Re-add the remote copy.
+    if (!mergedIds.has(e.id) && !deleted.has(e.id)) {
+      preserved.push(e);
+      preservedIds.push(e.id);
+    }
+  }
+  return { entries: preserved.length ? [...merged, ...preserved] : merged, preservedIds };
+}

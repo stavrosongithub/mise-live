@@ -82,7 +82,8 @@ import {
   projectSharedPlanDoc,
   coerceSharedPlanDoc,
   emptySharedPlanDoc,
-  mergeMealPlan
+  mergeMealPlan,
+  preserveUnexpectedlyDroppedEntries
 } from './mealplan-sync.js';
 // Phase 17 (Plan 17-03) — PURE roster-snapshot helper (residents_roster.json
 // shape, ROWS-ONLY, NO credential — T-17-08). Node-tested in
@@ -379,7 +380,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '551e69d 2026-07-01';
+const APP_VERSION = '34601d3 2026-07-07';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -3123,6 +3124,11 @@ Alpine.data('app', () => ({
   _planPushTimer: null,       // the ~10s debounce handle (D-05); null = no push pending
   _planPushPending: false,    // true while a debounced push is scheduled OR in flight
   _suppressPlanPush: false,   // set while a NON-user mutation runs (boot restore / pull-apply / open reconcile) so a pull never bounces back into a push
+  // 2026-07-07 shrink-alarm (part 3): ids the user EXPLICITLY removed via removeFromMealPlan
+  // this session. The shrink alarm whitelists these so a genuine delete still propagates while
+  // an UNEXPECTED merge-drop of a remote entry is preserved. Session-scoped (not persisted):
+  // after a reload base ⊆ durable-local (parts 1/2), so there is nothing spurious to delete.
+  _userDeletedEntryIds: new Set(),
   planSyncing: false,         // true while a push/pull is actually in flight (for the label)
   mealPlanSyncStatus: '',     // own-error-channel copy on a failed plan sync (never parseError)
   mealPlanLastSyncedAt: '',   // ISO of the last successful plan push/pull (for mealPlanSyncLabel)
@@ -3189,6 +3195,11 @@ Alpine.data('app', () => ({
   // quick 260615-dap — reconcile notice: set on openMealPlan when a persisted
   // pick is dropped because its recipe no longer exists. Cleared on a clean open.
   mealPlanNotice: '',
+  // 2026-07-07 shrink-alarm (part 3): a PERSISTENT, dismissible notice set when the push
+  // preserved dishes an unexpected merge shrink would have removed. Kept SEPARATE from the
+  // transient mealPlanSyncStatus (which pushPlanToRemote resets to '' on success, which
+  // would otherwise clobber this) so the "your plan is safe" message actually survives.
+  mealPlanShrinkNotice: '',
   mealPlanFilter: '',
   // mealPlan — the user's picked recipes. Each entry: { id:string,
   // recipe_id:number, name:string, type:string, servings:number,
@@ -7830,37 +7841,38 @@ Alpine.data('app', () => ({
     // applySharedPlanDoc suppresses the debounced push (this is a pull, not an edit).
     await this.pullPlanFromRemote();
 
-    // quick 260615-dap — RECONCILE the persisted plan against the fresh recipe
-    // list (runs AFTER recipeList is built + grouped is set AND after the pull). A
-    // pick whose recipe_id no longer exists is dropped; kept entries get their
-    // name/type refreshed from the current list (so renames show). The explicit
-    // _persistMealPlan() below is SUPPRESSED from triggering a push (this is a
-    // pull/reconcile, not a user edit). If any were dropped, surface a one-line
-    // notice; a clean open clears any stale notice.
+    // quick 260615-dap / RECONCILE — reconcile the persisted plan against the fresh
+    // recipe list (runs AFTER recipeList is built + grouped is set AND after the pull).
+    // 2026-07-07 DISPLAY-ONLY reconcile (part 1). Historically this DROPPED any entry
+    // whose recipe_id wasn't in the LOCALLY-loaded recipeList — but a device that is
+    // merely behind on recipe sync (its recipes.csv is stale, NOT that the recipe was
+    // globally deleted) would drop valid entries, and with `base = pulled` the next push
+    // then delete-wins them off the shared plan for EVERY device (the 2026-07-07 loss).
+    // So we NO LONGER DROP: every entry is KEPT in this.mealPlan (and therefore in the
+    // synced projection). Known recipes get their name/type refreshed; unknown-recipe
+    // entries are kept intact and simply HIDDEN from this device's view (the display
+    // getters filter on knownRecipeIds; scaling/shopping already no-op an unknown
+    // recipe_id via scaledRowsFor → []). The explicit _persistMealPlan() below is
+    // SUPPRESSED from triggering a push (this is a pull/reconcile, not a user edit).
     const presentIds = new Set((Array.isArray(this.recipeList) ? this.recipeList : []).map(r => r.recipe_id));
-    const kept = [];
-    let droppedCount = 0;
-    for (const entry of (Array.isArray(this.mealPlan) ? this.mealPlan : [])) {
+    let hiddenCount = 0;
+    const reconciled = (Array.isArray(this.mealPlan) ? this.mealPlan : []).map(entry => {
       if (presentIds.has(entry.recipe_id)) {
         const meta = this.recipeList.find(r => r.recipe_id === entry.recipe_id);
-        kept.push({
-          ...entry,
-          name: meta ? meta.name : entry.name,
-          type: meta ? meta.type : entry.type
-        });
-      } else {
-        droppedCount++;
+        return { ...entry, name: meta ? meta.name : entry.name, type: meta ? meta.type : entry.type };
       }
-    }
+      hiddenCount++;
+      return entry; // KEEP — never drop; the display filter hides it, sync preserves it.
+    });
     // Phase 17 (Plan 17-02, D-05) — the reconcile is NOT a user edit; suppress the
     // debounced push around the assignment + explicit persist (and the deferred
     // $watch flush) so opening the view never auto-pushes.
     this._suppressPlanPush = true;
     queueMicrotask(() => { this._suppressPlanPush = false; });
-    this.mealPlan = kept;
+    this.mealPlan = reconciled;
     this._persistMealPlan();
-    if (droppedCount > 0) {
-      this.mealPlanNotice = `${droppedCount} saved recipe${droppedCount > 1 ? 's were' : ' was'} removed because ${droppedCount > 1 ? "they're" : "it's"} no longer in your recipes.`;
+    if (hiddenCount > 0) {
+      this.mealPlanNotice = `${hiddenCount} planned dish${hiddenCount > 1 ? 'es are' : ' is'} hidden here because ${hiddenCount > 1 ? "their recipes aren't" : "its recipe isn't"} on this device yet — ${hiddenCount > 1 ? "they're" : "it's"} still synced and safe.`;
     } else {
       this.mealPlanNotice = '';
     }
@@ -8056,6 +8068,9 @@ Alpine.data('app', () => ({
   removeFromMealPlan(id) {
     const i = this.mealPlan.findIndex(e => e.id === id);
     if (i !== -1) this.mealPlan.splice(i, 1);
+    // 2026-07-07 shrink-alarm (part 3): record this as a DELIBERATE local delete so the
+    // shrink alarm in _pushPlanOnce lets it propagate (vs re-adding it as an unexpected drop).
+    this._userDeletedEntryIds.add(id);
     // quick 260615-dap — explicit persist (see addToMealPlan).
     this._persistMealPlan();
   },
@@ -8382,6 +8397,16 @@ Alpine.data('app', () => ({
     this.adHocExtras = safe.adHocExtras;
     this.orderScopeRange = safe.orderScopeRange;
     this.shopOrderedFor = safe.shopOrderedFor; // quick 260630-d81 (Task C) — coerced to null for pre-feature docs.
+    // 2026-07-07 BASE/LOCAL LOCKSTEP (part 2). Persist the applied doc to the durable
+    // local snapshots SYNCHRONOUSLY here — do NOT rely on the $watch('mealPlan') (flagged
+    // "unreliable on nested") for entries, nor on a later user mutation for the maps.
+    // pull-on-open adopts `base = pulled`; if the durable local snapshot (MEAL_PLAN_KEY +
+    // MEAL_PLAN_UI_KEY) were allowed to lag behind, a reload could load a `local` NARROWER
+    // than `base`, and delete-wins would then eat the difference (the 2026-07-07 loss).
+    // Persisting both now keeps durable-local ⊇ base at all times. Both funnels honour
+    // `_suppressPlanPush` (set true by this method), so this never arms a bounce-back push.
+    this._persistMealPlan();
+    this._persistMealPlanUi();
   },
 
   // =========================================================================
@@ -8577,6 +8602,24 @@ Alpine.data('app', () => ({
     const base = this._mealPlanBase || this._restoreMealPlanBase();
     const local = this.buildSharedPlanDoc();
     const merged = mergeMealPlan(base, local, freshRemote);
+    // 2026-07-07 SHRINK ALARM (part 3, backstop). If the merge would drop an entry that
+    // still exists on the fresh remote and the user did NOT explicitly delete it this
+    // session, that is an unexpected shrink (base outran local — the class of bug this
+    // fix targets). Re-add those remote entries so a merge miscalculation can never
+    // silently delete a dish; surface an inform-only banner. Genuine local deletes
+    // (_userDeletedEntryIds) are whitelisted so real deletions still propagate. This
+    // fires only if parts 1/2 leave a gap — never in the healthy path.
+    {
+      const guard = preserveUnexpectedlyDroppedEntries(merged.entries, freshRemote.entries, this._userDeletedEntryIds);
+      if (guard.preservedIds.length) {
+        merged.entries = guard.entries;
+        const n = guard.preservedIds.length;
+        // Dedicated PERSISTENT notice (NOT mealPlanSyncStatus, which the caller resets on
+        // success). This is a "we protected your data" message the user should actually see.
+        this.mealPlanShrinkNotice = `Kept ${n} planned dish${n > 1 ? 'es' : ''} that an unexpected sync would have removed — your plan is safe. Refresh to double-check.`;
+        try { console.warn('[mealplan shrink-alarm] preserved remote entries the merge would have dropped:', guard.preservedIds); } catch (_e) { /* ignore */ }
+      }
+    }
     // quick 260628-jq9 — NO-OP guard. If the merge produced bytes identical to the
     // current remote, there is nothing to commit; writing anyway creates a redundant
     // commit (clutters Recent changes, flips "Syncing…"). Compare via coerce so the
@@ -9400,14 +9443,26 @@ Alpine.data('app', () => ({
     return unscheduled && unscheduled.entries.length ? [...scheduled, unscheduled] : scheduled;
   },
 
+  // 2026-07-07 display-only reconcile (part 1). The set of recipe_ids this device can
+  // actually render (from the fresh recipeList built in openMealPlan). Entries whose
+  // recipe isn't in this set are HIDDEN from the view but KEPT in this.mealPlan / the
+  // synced projection (so a device behind on recipe sync never drops another device's
+  // dishes). FAIL-OPEN: an empty recipeList (not yet built / transient) => show all,
+  // so a momentary empty list never blanks the whole plan.
+  get _displayableMealPlan() {
+    const entries = Array.isArray(this.mealPlan) ? this.mealPlan : [];
+    const known = Array.isArray(this.recipeList) ? this.recipeList : [];
+    if (!known.length) return entries; // fail-open — never hide everything
+    const knownIds = new Set(known.map(r => r.recipe_id));
+    return entries.filter(e => e && knownIds.has(e.recipe_id));
+  },
+
   // quick 260618-ahg — date-split filters. Upcoming = NOT past (today/future/undated/malformed).
   get upcomingEntries() {
-    const entries = Array.isArray(this.mealPlan) ? this.mealPlan : [];
-    return entries.filter(e => !this._entryIsPast(e));
+    return this._displayableMealPlan.filter(e => !this._entryIsPast(e));
   },
   get pastEntries() {
-    const entries = Array.isArray(this.mealPlan) ? this.mealPlan : [];
-    return entries.filter(e => this._entryIsPast(e));
+    return this._displayableMealPlan.filter(e => this._entryIsPast(e));
   },
 
   // quick 260621-amm — the rolling 14-day window keys: today .. today+13 inclusive,
@@ -9475,8 +9530,10 @@ Alpine.data('app', () => ({
   },
 
   // quick 260618-ahg — mealPlanByDay now delegates to the extracted grouper.
+  // 2026-07-07 (part 1) — reads _displayableMealPlan so unknown-recipe entries are hidden
+  // here too (kept in this.mealPlan / synced; scaling already no-ops them).
   get mealPlanByDay() {
-    return this._groupEntriesByDay(Array.isArray(this.mealPlan) ? this.mealPlan : []);
+    return this._groupEntriesByDay(this._displayableMealPlan);
   },
 
   // quick 260618-ahg — what the main loop binds to: the active tab's day groups.
