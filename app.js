@@ -380,7 +380,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '34601d3 2026-07-07';
+const APP_VERSION = 'e70f5ca 2026-07-07';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -3359,6 +3359,11 @@ Alpine.data('app', () => ({
   // Holds ONLY real lower-frequency day actions (Cook this day + Exclude/Include from
   // this order). @click.outside closes it. NOT in _persistMealPlanUi/_restoreMealPlanUi.
   dayMenuOpenFor: '',
+  // quick 260707-lyk — TRANSIENT (NOT persisted; modelled on dayMenuOpenFor above):
+  // the group.key whose "Swap dishes with…" sub-list is open ('' = none). Reset by the
+  // ⋯ toggle and the @click.outside handler (guarded on group.key). MUST NOT be added
+  // to _persistMealPlanUi/_restoreMealPlanUi.
+  swapPickerOpenFor: '',
   // quick 260607-anu — transient one-time-migration result banner. Shapes:
   // { migrated, rowCount, backfillCount } | { alreadyMigrated:true }. A verify
   // failure surfaces via the informational mergeRestoreOffer (putFile auto-revert).
@@ -5292,6 +5297,32 @@ Alpine.data('app', () => ({
     const main = group.entries.find((entry) => (entry.type || '').trim().toLowerCase() === 'main');
     const pick = main || group.entries[0];
     return pick.name || '(unnamed)';
+  },
+
+  /**
+   * swapTargetsFor — quick 260707-lyk. PURE read-only helper for the "Swap dishes
+   * with…" sub-menu. Returns the OTHER upcoming days a source day can swap its dishes
+   * onto: { key, menuLabel }[]. Source = upcomingByDay minus SELF and minus the
+   * Unscheduled group (key ''). menuLabel = "<dayTickLabel> · <dish hint>", where the
+   * hint is '(empty)' for a no-entry day, else the headline recipe with ' +N' appended
+   * when the day has N extra entries. Reuses the EXISTING dayTickLabel + dayHeadlineRecipe
+   * formatters (no new date/summary formatting). No writes, no new state.
+   */
+  swapTargetsFor(fromKey) {
+    const from = String(fromKey || '');
+    return (this.upcomingByDay || [])
+      .filter((g) => g.key !== '' && g.key !== from)
+      .map((g) => {
+        const empty = !g.entries || g.entries.length === 0;
+        let hint;
+        if (empty) {
+          hint = '(empty)';
+        } else {
+          hint = this.dayHeadlineRecipe(g);
+          if (g.entries.length > 1) hint += ' +' + (g.entries.length - 1);
+        }
+        return { key: g.key, menuLabel: this.dayTickLabel(g.key) + ' · ' + hint };
+      });
   },
 
   /**
@@ -8072,6 +8103,35 @@ Alpine.data('app', () => ({
     // shrink alarm in _pushPlanOnce lets it propagate (vs re-adding it as an unexpected drop).
     this._userDeletedEntryIds.add(id);
     // quick 260615-dap — explicit persist (see addToMealPlan).
+    this._persistMealPlan();
+  },
+
+  /**
+   * Swap dishes — quick 260707-lyk. Swap the dinner DISHES between two calendar
+   * days by RE-DATING every entry: entries dated A become B and vice-versa (a full↔empty
+   * swap therefore MOVES the meal). Uses the established mutate-then-persist path
+   * (_persistMealPlan writes the local minimal projection AND arms the debounced remote push).
+   *
+   * SYNC-SAFETY (fragile meal-plan sync): re-dating keeps each entry's stable `id`, so
+   * mergeEntries (keys entries by id; SHARED_ENTRY_FIELDS includes `date`) treats the swap
+   * as an EDIT-WINS on the date field — NOT a delete+add — so no dish is lost.
+   *
+   * DELIBERATELY leaves cooksByDay / dayLeftovers / prepDoneByDay UNTOUCHED: cooks,
+   * leftovers and prep stay attached to the calendar date, only the dishes move.
+   */
+  swapMealPlanDishes(fromKey, toKey) {
+    const a = String(fromKey || '');
+    const b = String(toKey || '');
+    if (!a || !b || a === b) return; // no-op guard
+    let changed = false;
+    const next = this.mealPlan.map((e) => {
+      const d = (typeof e.date === 'string') ? e.date : '';
+      if (d === a) { changed = true; return { ...e, date: b }; }
+      if (d === b) { changed = true; return { ...e, date: a }; }
+      return e;
+    });
+    if (!changed) return; // nothing on either day — don't churn the sync
+    this.mealPlan = next;
     this._persistMealPlan();
   },
 

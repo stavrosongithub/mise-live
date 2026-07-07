@@ -5412,6 +5412,26 @@ a.meal-plan-shop-search {
   opacity: 0.5;
   cursor: default;
 }
+/* quick 260707-lyk — "Swap dishes with…" nested sub-list of other upcoming days.
+   Spacing uses literal rem (no --space-* token layer exists); colour/font/radius/border
+   ride the :root tokens. */
+.meal-plan-swap-list {
+  max-height: 14rem;
+  overflow-y: auto;
+  margin-top: 0.25rem;
+  padding-top: 0.25rem;
+  padding-left: 0.55rem;
+  border-top: 1px solid var(--color-border);
+}
+.meal-plan-swap-target {
+  font-size: var(--fs-xs);
+  color: var(--color-ink-muted);
+}
+.meal-plan-swap-empty {
+  padding: 0.4rem 0.55rem;
+  font-size: var(--fs-xs);
+  color: var(--color-ink-muted);
+}
 .meal-plan-menu-item-danger {
   color: var(--color-danger);
 }

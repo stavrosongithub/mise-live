@@ -2081,15 +2081,28 @@
                    recipes). Guarding on group.key makes a sibling's handler a no-op. -->
               <div class="meal-plan-day-menu"
                    x-show="mealPlanTab === 'upcoming' && group.entries.length > 0" x-cloak
-                   @click.outside="if (dayMenuOpenFor === group.key) dayMenuOpenFor = ''">
+                   @click.outside="if (dayMenuOpenFor === group.key) { dayMenuOpenFor = ''; swapPickerOpenFor = ''; }">
                 <button type="button" class="manager-edit-btn meal-plan-daybtn meal-plan-menu-btn"
                         :title="'More actions for ' + group.label"
-                        @click="dayMenuOpenFor = dayMenuOpenFor === group.key ? '' : group.key">⋯</button>
+                        @click="const wasOpen = dayMenuOpenFor === group.key; dayMenuOpenFor = wasOpen ? '' : group.key; swapPickerOpenFor = ''">⋯</button>
                 <div class="meal-plan-menu-pop" role="menu"
                      x-show="dayMenuOpenFor === group.key" x-cloak>
                   <button type="button" class="meal-plan-menu-item" role="menuitem"
                           :disabled="anyModalOpen"
                           @click="generateCookArtifact(group); dayMenuOpenFor = ''">Cook this day</button>
+                  <!-- quick 260707-lyk — Swap dishes with… reveals a sub-list of other
+                       upcoming days; picking one swaps the dinner DISHES (re-dates entries). -->
+                  <button type="button" class="meal-plan-menu-item" role="menuitem"
+                          :disabled="anyModalOpen"
+                          @click="swapPickerOpenFor = swapPickerOpenFor === group.key ? '' : group.key">Swap dishes with…</button>
+                  <div class="meal-plan-swap-list" role="menu"
+                       x-show="swapPickerOpenFor === group.key" x-cloak>
+                    <template x-for="target in swapTargetsFor(group.key)" :key="target.key">
+                      <button type="button" class="meal-plan-menu-item meal-plan-swap-target" role="menuitem"
+                              @click="swapMealPlanDishes(group.key, target.key); dayMenuOpenFor = ''; swapPickerOpenFor = ''" x-text="target.menuLabel"></button>
+                    </template>
+                    <div class="meal-plan-swap-empty" x-show="swapTargetsFor(group.key).length === 0">No other days</div>
+                  </div>
                 </div>
               </div>
               </div>
