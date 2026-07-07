@@ -380,7 +380,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'e70f5ca 2026-07-07';
+const APP_VERSION = 'a7fc6f8 2026-07-07';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -9804,6 +9804,14 @@ Alpine.data('app', () => ({
     // below), so each emitted line can be tagged source:'recipe' vs source:'manual'
     // (regulars/ad-hoc only). Drives the provenance-aware remove + the strikethrough gate.
     const recipeContribIds = new Set();
+    // quick 260707-mvi — capture the contributing recipe name(s) per aggregated
+    // ingredient (display-only, modelled on recipeContribIds). namesByIid keys `acc`/
+    // `lines` (matched rows); namesByName keys the `unknown` Map. Set per key de-dupes
+    // an ingredient used by the same recipe across multiple days / lines. NOT persisted,
+    // NOT synced — only threaded into the ⚠/🔍/unknown tooltips.
+    const namesByIid = new Map();
+    const namesByName = new Map();
+    const addName = (map, key, nm) => { if (!nm) return; if (!map.has(key)) map.set(key, new Set()); map.get(key).add(nm); };
 
     // quick 260613-aw1 — role split. acc/lines/unknown aggregate ONLY required
     // rows; non-required (optional/garnish/to_taste) rows go to a separate
@@ -9844,6 +9852,7 @@ Alpine.data('app', () => ({
       // day (incl. '' Unscheduled) → whole-plan output, identical to before. Tray lists
       // (trayForDay) use a separate path and are deliberately untouched.
       if (!this.isDayInOrderScope(this._dayKeyForEntry(entry))) continue;
+      const entryName = entry.name || '(unnamed)'; // quick 260707-mvi — resolved once per entry (mirrors app.js 5231 / index.html fallback)
       const rows = this.scaledRowsFor(entry);
       for (const row of rows) {
         const iid = row.ingredient_id;
@@ -9891,10 +9900,12 @@ Alpine.data('app', () => ({
         if (iid == null || !master) {
           const nm = row.ingredient_name || '(unnamed ingredient)';
           unknown.set(nm, true);
+          addName(namesByName, nm, entryName); // quick 260707-mvi — recipe provenance for the unknown bucket tooltip
           continue;
         }
         this._accumulateRow(this._ensureAccEntry(acc, iid, master, row), master, row);
         recipeContribIds.add(iid); // quick 260628-v0i — provenance: this line is recipe-derived.
+        addName(namesByIid, iid, entryName); // quick 260707-mvi — recipe provenance for the line tooltip
       }
     }
 
@@ -9958,7 +9969,7 @@ Alpine.data('app', () => ({
       // line is in recipeLineStrikes (skip-this-shop). A struck line STAYS in `lines`
       // (rendered line-through) but is dropped from the export (openShoppingExport).
       const _isRecipe = recipeContribIds.has(iid);
-      lines.push({ ingredient_id: iid, ingredient_name: a.ingredient_name, parts, caveat, pantry_section: masterById.get(iid)?.pantry_section || '', packs: this._derivePackCount(parts, caveat, masterById.get(iid)), pack_size: masterById.get(iid)?.pack_size ?? null, pack_units: masterById.get(iid)?.pack_units ?? null, pack_unit_label: masterById.get(iid)?.pack_unit_label || '', supplier: masterById.get(iid)?.supplier || '', source: _isRecipe ? 'recipe' : 'manual', struck: _isRecipe && _recipeLineStrikes[String(iid)] === true }); // pack_units/pack_unit_label: quick 260615-kid; supplier: quick 260630-e8v (additive, feeds the shopping-list supplier-aware 🔍); source/struck: quick 260628-v0i
+      lines.push({ ingredient_id: iid, ingredient_name: a.ingredient_name, parts, caveat, pantry_section: masterById.get(iid)?.pantry_section || '', packs: this._derivePackCount(parts, caveat, masterById.get(iid)), pack_size: masterById.get(iid)?.pack_size ?? null, pack_units: masterById.get(iid)?.pack_units ?? null, pack_unit_label: masterById.get(iid)?.pack_unit_label || '', supplier: masterById.get(iid)?.supplier || '', source: _isRecipe ? 'recipe' : 'manual', struck: _isRecipe && _recipeLineStrikes[String(iid)] === true, recipeNames: namesByIid.has(iid) ? [...namesByIid.get(iid)] : [] }); // pack_units/pack_unit_label: quick 260615-kid; supplier: quick 260630-e8v (additive, feeds the shopping-list supplier-aware 🔍); source/struck: quick 260628-v0i; recipeNames: quick 260707-mvi (display-only provenance for the ⚠/🔍 tooltips)
     }
 
     // quick 260613-aw1 — check-stock list: non-required items NOT bought as a
@@ -9991,7 +10002,7 @@ Alpine.data('app', () => ({
 
     return {
       lines,
-      unknown: [...unknown.keys()].map(nm => ({ ingredient_name: nm })),
+      unknown: [...unknown.keys()].map(nm => ({ ingredient_name: nm, recipeNames: namesByName.has(nm) ? [...namesByName.get(nm)] : [] })), // recipeNames: quick 260707-mvi
       checkStock
     };
   },

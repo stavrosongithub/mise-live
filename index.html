@@ -2447,7 +2447,7 @@
                          :href="searchUrlForIngredient(line.ingredient_name, line.supplier)"
                          target="_blank" rel="noopener"
                          :aria-label="'No saved link — search ' + searchLabelForIngredient(line.supplier) + ' for ' + (line.ingredient_name || 'this item')"
-                         :title="'No saved buy link — it can\'t be ordered via the export. Click to search ' + searchLabelForIngredient(line.supplier) + ' for ' + (line.ingredient_name || 'this item') + ', then add its link in Manage Ingredients.'">🔍</a>
+                         :title="'No saved buy link — it can\'t be ordered via the export. Click to search ' + searchLabelForIngredient(line.supplier) + ' for ' + (line.ingredient_name || 'this item') + ', then add its link in Manage Ingredients.' + (line.recipeNames && line.recipeNames.length ? ' — From: ' + line.recipeNames.join(', ') : '')">🔍</a>
                     </template>
                   </span>
                   <!-- byd (quick 260628-byd) — ONE baseline line: amount | icons.
@@ -2471,7 +2471,7 @@
                     <span class="shopping-caveat"
                           x-show="line.caveat"
                           x-cloak
-                          :title="line.caveat">⚠</span>
+                          :title="line.caveat ? line.caveat + (line.recipeNames && line.recipeNames.length ? ' — From: ' + line.recipeNames.join(', ') : '') : ''">⚠</span>
                     <!-- quick 260630-fix — the no-link order-breaker indicator moved OUT of
                          this amount cell into the name cell, beside the 🛒 slot (see
                          .shopping-name-cell above). The amount cell now carries only the
@@ -2507,7 +2507,7 @@
           <ul class="shopping-list-items">
             <template x-for="(u, i) in combinedShoppingList.unknown" :key="i">
               <li class="shopping-list-item">
-                <span class="shopping-name" x-text="u.ingredient_name"></span>
+                <span class="shopping-name" x-text="u.ingredient_name" :title="u.recipeNames && u.recipeNames.length ? 'From: ' + u.recipeNames.join(', ') : ''"></span>
               </li>
             </template>
           </ul>
