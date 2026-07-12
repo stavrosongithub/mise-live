@@ -83,6 +83,47 @@ export const COOK_CSS = `
     color: #8A958F;        /* faint */
     margin-top: 10px;
   }
+  /* quick 260712-at6 — PROMINENT day-note callout at the top of the sheet (under the
+     header, above the first dish). LITERAL hex (D-01, no design tokens). Only rendered
+     by COOK_RUNTIME when DATA.dayNote is a non-empty string. */
+  .cook-daynote {
+    background: #E1EEEB;    /* accent-tint wash */
+    border: 1px solid #BFD9D4;
+    border-left: 6px solid #0E6E66;   /* petrol accent */
+    border-radius: 8px;
+    padding: 13px 16px;
+    margin: 0 0 22px;
+  }
+  .cook-daynote .label {
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    font-weight: 600;
+    display: block;
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: #0E6E66;        /* petrol */
+    margin-bottom: 5px;
+  }
+  .cook-daynote .body { font-size: 18px; color: #1B2A28; white-space: pre-wrap; }
+  /* quick 260712-at6 — quieter per-dish note callout (inside a dish card). LITERAL hex. */
+  .cook-dishnote {
+    background: #EEF6F4;    /* lighter accent ground */
+    border-left: 4px solid #0E6E66;   /* petrol accent */
+    border-radius: 5px;
+    padding: 8px 12px;
+    margin: 0 0 14px;
+  }
+  .cook-dishnote .label {
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    font-weight: 600;
+    display: block;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.13em;
+    color: #0E6E66;        /* petrol */
+    margin-bottom: 3px;
+  }
+  .cook-dishnote .body { font-size: 16px; color: #1B2A28; white-space: pre-wrap; }
   .dish {
     margin: 0 0 36px;
     padding: 20px 22px;
@@ -610,6 +651,23 @@ export const COOK_RUNTIME = `
     var when = DATA.generatedAt ? new Date(DATA.generatedAt) : null;
     gen.textContent = 'Generated ' + (when && !isNaN(when) ? when.toLocaleString() : (DATA.generatedAt || ''));
 
+    // quick 260712-at6 — whole-day note callout. DISPLAY-ONLY, textContent (XSS-safe).
+    // Rendered ONLY when DATA.dayNote is a non-empty string; an old frozen model / share
+    // link without the field (DATA.dayNote undefined) is treated as empty → no callout.
+    var dayNoteEl = document.getElementById('cook-daynote');
+    var dayNoteStr = (typeof DATA.dayNote === 'string') ? DATA.dayNote.trim() : '';
+    if (dayNoteEl && dayNoteStr) {
+      var dnLabel = document.createElement('span');
+      dnLabel.className = 'label';
+      dnLabel.textContent = '📌 Notes for today';
+      var dnBody = document.createElement('span');
+      dnBody.className = 'body';
+      dnBody.textContent = dayNoteStr;
+      dayNoteEl.appendChild(dnLabel);
+      dayNoteEl.appendChild(dnBody);
+      dayNoteEl.style.display = 'block';
+    }
+
     var host = document.getElementById('dishes');
     DATA.dishes.forEach(function (d, dishIdx) {
       var sec = document.createElement('section');
@@ -637,6 +695,24 @@ export const COOK_RUNTIME = `
         pn.textContent = d.prepNote;
         pa.appendChild(pn);
         sec.appendChild(pa);
+      }
+
+      // quick 260712-at6 — per-dish note callout (quieter sibling of the day note).
+      // DISPLAY-ONLY, textContent (XSS-safe). Rendered ONLY when d.note is a non-empty
+      // string; an old frozen model without the field (d.note undefined) → skipped.
+      var dishNoteStr = (typeof d.note === 'string') ? d.note.trim() : '';
+      if (dishNoteStr) {
+        var dn = document.createElement('div');
+        dn.className = 'cook-dishnote';
+        var dnl = document.createElement('span');
+        dnl.className = 'label';
+        dnl.textContent = 'Note';
+        dn.appendChild(dnl);
+        var dnb = document.createElement('span');
+        dnb.className = 'body';
+        dnb.textContent = dishNoteStr;
+        dn.appendChild(dnb);
+        sec.appendChild(dn);
       }
 
       // Two-column body (Overview): METHOD column (left) + INGREDIENTS column
@@ -1194,6 +1270,10 @@ ${dataIsland}
     <ul class="dish-index" id="dish-index"></ul>
     <p class="generated-at" id="generated-at"></p>
   </header>
+  <!-- quick 260712-at6 — day-note callout placeholder. Sits at the top of the sheet,
+       under the header, above the mode toggle + first dish. COOK_RUNTIME fills it ONLY
+       when DATA.dayNote is a non-empty string (empty/absent => stays empty, no callout). -->
+  <div class="cook-daynote" id="cook-daynote" style="display:none"></div>
   <!-- Mode toggle (D-08): Overview default (D-09); flips body.mode-wizard. -->
   <div class="mode-toggle screen-only" id="mode-toggle">
     <button type="button" id="mode-overview" aria-pressed="true">Overview</button>

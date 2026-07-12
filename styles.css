@@ -5645,6 +5645,127 @@ a.meal-plan-shop-search {
   color: var(--color-accent);
 }
 
+/* quick 260712-at6 — DAY NOTE authoring (Option A) + PER-DISH NOTE (Option B).
+   Ported from the approved mockup to the house DESIGN TOKENS (no bare hex): petrol
+   accent, accent-tint wash, mono uppercase eyebrow. The note is always visible on the
+   day so guidance is never hidden. */
+.meal-plan-day-note { margin: 0.75rem 0 0.25rem; }
+/* State 1 — dashed full-width add-bar; brightens to accent on hover. */
+.meal-plan-day-note-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: var(--fs-base);
+  cursor: pointer;
+  background: none;
+  border: 1px dashed var(--color-border-strong);
+  color: var(--color-ink-muted);
+  border-radius: var(--radius-card);
+  padding: 0.4375rem 0.6875rem;
+}
+.meal-plan-day-note-add:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: var(--color-accent-tint);
+}
+/* State 2 — the editor: accent-bordered textarea with a petrol focus ring + a hint/Save row. */
+.meal-plan-day-note-editor { display: block; }
+.meal-plan-day-note-textarea {
+  width: 100%;
+  font: inherit;
+  font-size: var(--fs-base);
+  color: var(--color-ink);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-card);
+  padding: 0.5625rem 0.6875rem;
+  resize: vertical;
+  min-height: 3.875rem;
+  box-shadow: 0 0 0 3px rgba(14, 110, 102, 0.12);
+}
+.meal-plan-day-note-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.625rem;
+  margin-top: 0.4375rem;
+}
+.meal-plan-day-note-hint {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-ink-faint);
+  letter-spacing: 0.03em;
+}
+.meal-plan-day-note-save {
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  background: var(--color-accent);
+  color: #fff;
+  border: 1px solid var(--color-accent-border);
+  border-radius: var(--radius-control);
+  padding: 0.3125rem 0.8125rem;
+}
+/* State 3 — at-rest petrol chip (click-to-edit): accent-tint ground + petrol left border,
+   mono uppercase "NOTE" eyebrow + the note text. */
+.meal-plan-day-note-chip {
+  display: flex;
+  gap: 0.5625rem;
+  align-items: flex-start;
+  background: var(--color-accent-tint);
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-accent);
+  border-radius: var(--radius-control);
+  padding: 0.5625rem 0.6875rem;
+  cursor: text;
+}
+.meal-plan-day-note-chip-k {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  flex: 0 0 auto;
+  margin-top: 0.125rem;
+}
+.meal-plan-day-note-chip-v {
+  font-size: var(--fs-base);
+  color: var(--color-ink);
+  white-space: pre-wrap;
+}
+
+/* PER-DISH NOTE (Option B) — a small petrol underlined link inline in the dish head;
+   bold when a note is set. Its input wraps to its own line so the head row never breaks. */
+.meal-plan-dish-note { display: inline-flex; align-items: baseline; gap: 0.375rem; flex-wrap: wrap; }
+.meal-plan-dish-note-btn {
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  background: none;
+  border: none;
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  padding: 0;
+}
+.meal-plan-dish-note-btn.has { font-weight: var(--fw-semibold); }
+.meal-plan-dish-note-editor { display: block; flex-basis: 100%; margin-top: 0.4375rem; }
+.meal-plan-dish-note-input {
+  width: 100%;
+  font: inherit;
+  font-size: var(--fs-base);
+  color: var(--color-ink);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-control);
+  padding: 0.375rem 0.5625rem;
+  box-shadow: 0 0 0 3px rgba(14, 110, 102, 0.10);
+}
+
 /* Phase 16 follow-up — Residents present-list at-a-glance allergen/review status.
    RAW-TEXT-FREE (T-07-07): only curated FSA-14 tags + a status label render here;
    raw allergy text stays modal-only. Tokens only — danger family for the allergen

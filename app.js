@@ -380,7 +380,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '40670a2 2026-07-07';
+const APP_VERSION = 'b7b77e3 2026-07-12';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -3280,6 +3280,14 @@ Alpine.data('app', () => ({
   // _leftoverBonusInto re-checks emptiness so a stale flag on a day that later gained
   // recipes contributes nothing. Persisted in MEAL_PLAN_UI_KEY alongside cooksByDay.
   dayLeftovers: {},
+  // quick 260712-at6 — per-day + per-dish NOTES map. Keyed by the day string
+  // ('YYYY-MM-DD', '' for Unscheduled) for the WHOLE-DAY note, and by
+  // `dayKey + '::' + recipeId` for a PER-DISH note. Value = a trimmed non-empty
+  // string; an empty/whitespace note DELETES its key (so delete-wins syncs the
+  // removal away and it never renders). SYNCED — rides SHARED_MAP_FIELDS via the
+  // generic mergeKeyedMap (plain strings, not special-cased). Authored inline on
+  // the meal-plan day; shown as petrol callouts on the Cook This Day sheet.
+  dayNotes: {},
   // quick 260627-iy8 — per-day PREP-DONE map, keyed by group.key (the 'YYYY-MM-DD'
   // day string, '' for Unscheduled). CONVENTION: prepDoneByDay[key] === true marks
   // that day's advance-prep as DONE — its Prep day-button flips amber→green but STAYS
@@ -3359,6 +3367,12 @@ Alpine.data('app', () => ({
   // Holds ONLY real lower-frequency day actions (Cook this day + Exclude/Include from
   // this order). @click.outside closes it. NOT in _persistMealPlanUi/_restoreMealPlanUi.
   dayMenuOpenFor: '',
+  // quick 260712-at6 — TRANSIENT (NOT persisted; modelled on dayMenuOpenFor above): the
+  // group.key whose day-note EDITOR (textarea) is open ('' = none, one at a time). Toggled
+  // by the add-bar / at-rest chip; cleared on save. The note VALUE lives in the synced
+  // dayNotes map — this only tracks which day's editor is currently expanded. MUST NOT be
+  // added to _persistMealPlanUi/_restoreMealPlanUi.
+  dayNoteEditorFor: '',
   // quick 260707-lyk — TRANSIENT (NOT persisted; modelled on dayMenuOpenFor above):
   // the group.key whose "Swap dishes with…" sub-list is open ('' = none). Reset by the
   // ⋯ toggle and the @click.outside handler (guarded on group.key). MUST NOT be added
@@ -8246,6 +8260,8 @@ Alpine.data('app', () => ({
         recipeLineStrikes: this.recipeLineStrikes,
         // quick 260630-gzw — per-plan check-stock tick-off strikethrough (shared keyed map).
         checkStockStrikes: this.checkStockStrikes,
+        // quick 260712-at6 — per-day + per-dish notes (shared keyed map of strings).
+        dayNotes: this.dayNotes,
         adHocExtras: this.adHocExtras
       }));
     } catch (_e) {
@@ -8349,6 +8365,12 @@ Alpine.data('app', () => ({
         && !Array.isArray(parsed.checkStockStrikes))
         ? parsed.checkStockStrikes
         : {};
+      // quick 260712-at6 — restore dayNotes with the SAME plain-non-null-object guard.
+      this.dayNotes = (parsed.dayNotes
+        && typeof parsed.dayNotes === 'object'
+        && !Array.isArray(parsed.dayNotes))
+        ? parsed.dayNotes
+        : {};
       // phase 08 REG-07 — adHocExtras is an ARRAY; guard with Array.isArray, else [].
       this.adHocExtras = Array.isArray(parsed.adHocExtras) ? parsed.adHocExtras : [];
     } catch (_e) {
@@ -8364,6 +8386,7 @@ Alpine.data('app', () => ({
       this.regularsOverrides = {};
       this.recipeLineStrikes = {}; // quick 260628-v0i — fail-open to empty on corruption.
       this.checkStockStrikes = {}; // quick 260630-gzw — fail-open to empty on corruption.
+      this.dayNotes = {}; // quick 260712-at6 — fail-open to empty on corruption.
       this.adHocExtras = [];
     }
   },
@@ -8397,6 +8420,7 @@ Alpine.data('app', () => ({
       regularsOverrides: this.regularsOverrides,
       recipeLineStrikes: this.recipeLineStrikes,
       checkStockStrikes: this.checkStockStrikes, // quick 260630-gzw — synced check-stock tick-off.
+      dayNotes: this.dayNotes, // quick 260712-at6 — synced per-day + per-dish notes.
       adHocExtras: this.adHocExtras,
       orderScopeRange: this.orderScopeRange,
       shopOrderedFor: this.shopOrderedFor // quick 260630-d81 (Task C) — synced ordered stamp.
@@ -8459,6 +8483,7 @@ Alpine.data('app', () => ({
     this.regularsOverrides = safe.regularsOverrides;
     this.recipeLineStrikes = safe.recipeLineStrikes;
     this.checkStockStrikes = safe.checkStockStrikes; // quick 260630-gzw — coerced to {} for pre-feature docs.
+    this.dayNotes = safe.dayNotes; // quick 260712-at6 — coerced to {} for pre-feature docs (old remote has no dayNotes).
     this.adHocExtras = safe.adHocExtras;
     this.orderScopeRange = safe.orderScopeRange;
     this.shopOrderedFor = safe.shopOrderedFor; // quick 260630-d81 (Task C) — coerced to null for pre-feature docs.
@@ -9040,6 +9065,29 @@ Alpine.data('app', () => ({
    */
   togglePrepDone(dateKey) {
     this.prepDoneByDay[dateKey] = this.prepDoneByDay[dateKey] === true ? false : true;
+    this._persistMealPlanUi();
+  },
+
+  /**
+   * setDayNote / setDishNote — quick 260712-at6. Write a per-day / per-dish note into
+   * the reactive dayNotes map and persist (the persist funnel arms the debounced sync
+   * push — do NOT invent a new sync trigger). Mirrors the togglePrepDone inline
+   * key-write idiom. A trimmed non-empty string SETS the key; an empty/whitespace note
+   * DELETES the key (so delete-wins syncs the removal away and it never renders). Using
+   * `delete` makes the key genuinely absent for the merge's per-key delete-wins rule
+   * (Alpine proxies handle a key delete on a reactive object).
+   */
+  setDayNote(dayKey, text) {
+    const trimmed = (text == null ? '' : String(text)).trim();
+    if (trimmed) { this.dayNotes[dayKey] = trimmed; }
+    else { delete this.dayNotes[dayKey]; }
+    this._persistMealPlanUi();
+  },
+  setDishNote(dayKey, recipeId, text) {
+    const key = dayKey + '::' + recipeId;
+    const trimmed = (text == null ? '' : String(text)).trim();
+    if (trimmed) { this.dayNotes[key] = trimmed; }
+    else { delete this.dayNotes[key]; }
     this._persistMealPlanUi();
   },
 
@@ -11155,7 +11203,10 @@ Alpine.data('app', () => ({
         ingredients, // D-12 scaled cooking amounts (frozen strings, D-05)
         ingredientGroups, // quick-260707-nrg: parallel section grouping (flat-index refs)
         instructionGroups,
-        hasSteps: stepCount > 0 // false = D-16 Overview-only (recorded for Plan 03's wizard skip)
+        hasSteps: stepCount > 0, // false = D-16 Overview-only (recorded for Plan 03's wizard skip)
+        // quick 260712-at6 — per-dish note read from the synced dayNotes map at BUILD time
+        // (D-05 frozen). Composite key group.key + '::' + recipeId; empty string when absent.
+        note: String(this.dayNotes[group.key + '::' + entry.recipe_id] || '')
       };
     });
 
@@ -11163,6 +11214,9 @@ Alpine.data('app', () => ({
       dayLabel: group.label,
       dayKey: group.key, // verbatim — 'YYYY-MM-DD' or '' (D-14); do NOT normalize
       generatedAt: new Date().toISOString(),
+      // quick 260712-at6 — whole-day note read from the synced dayNotes map at BUILD time
+      // (D-05 frozen); keyed by the day string; empty string when absent.
+      dayNote: String(this.dayNotes[group.key] || ''),
       dishes
     };
   },

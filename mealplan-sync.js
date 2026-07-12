@@ -19,6 +19,7 @@
 //     regularsOverrides,                               // keyed map (by ingredient_id)
 //     recipeLineStrikes,                               // keyed map (by ingredient_id) — skip-this-shop strikethrough (quick 260628-v0i)
 //     checkStockStrikes,                               // keyed map (by ingredient_id or 'name:'+name) — "I've checked this" tick-off (quick 260630-gzw)
+//     dayNotes,                                        // keyed map (by dayKey 'YYYY-MM-DD'/'' for the day note, or dayKey+'::'+recipeId for a per-dish note) — free-text kitchen notes (quick 260712-at6)
 //     adHocExtras,                                     // keyed map (by id) OR array — see note
 //     orderScopeRange,                                 // null | { startKey, endKey }
 //     shopOrderedFor                                   // null | { scope: (null | {startKey,endKey}), orderedAt, orderedBy } — quick 260630-d81
@@ -36,7 +37,11 @@
 // per-key delete-wins rule (no bespoke merge — mergeMealPlan iterates this array).
 // quick 260630-gzw — `checkStockStrikes` ({ key: true }) is the check-stock "I've checked
 // this" tick-off; it joins the SAME family by the SAME per-key delete-wins rule.
-export const SHARED_MAP_FIELDS = ['cooksByDay', 'dayLeftovers', 'prepDoneByDay', 'regularsOverrides', 'recipeLineStrikes', 'checkStockStrikes'];
+// quick 260712-at6 — `dayNotes` ({ key: 'note text' }) is free-text kitchen notes; keys are the
+// dayKey ('YYYY-MM-DD'/'') for the whole-day note or `dayKey+'::'+recipeId` for a per-dish note.
+// Values are plain strings (NOT lists, NOT booleans), so it merges via the generic mergeKeyedMap
+// (NOT special-cased like cooksByDay) by the SAME per-key delete-wins rule (emptied note => key gone).
+export const SHARED_MAP_FIELDS = ['cooksByDay', 'dayLeftovers', 'prepDoneByDay', 'regularsOverrides', 'recipeLineStrikes', 'checkStockStrikes', 'dayNotes'];
 
 // The entry fields that ride the shared doc (NO `collapsed` — that is view-state).
 export const SHARED_ENTRY_FIELDS = ['id', 'recipe_id', 'date', 'servings'];
@@ -55,6 +60,7 @@ export function emptySharedPlanDoc() {
     regularsOverrides: {},
     recipeLineStrikes: {},
     checkStockStrikes: {},
+    dayNotes: {},
     adHocExtras: [],
     orderScopeRange: null,
     // quick 260630-d81 — per-shopping-period "ordered" stamp. null = not ordered,
@@ -97,6 +103,7 @@ export function projectSharedPlanDoc(state) {
     regularsOverrides: obj(s.regularsOverrides),
     recipeLineStrikes: obj(s.recipeLineStrikes),
     checkStockStrikes: obj(s.checkStockStrikes),
+    dayNotes: obj(s.dayNotes),
     adHocExtras: Array.isArray(s.adHocExtras) ? s.adHocExtras : [],
     orderScopeRange: (s.orderScopeRange
       && typeof s.orderScopeRange === 'object'
@@ -143,6 +150,11 @@ export function coerceSharedPlanDoc(raw) {
     // quick 260630-gzw — BACKWARD-COMPAT: a pre-feature remote meal_plan.json has no
     // checkStockStrikes; obj() defaults a missing/garbage value to {} (shapeCheck NOT extended).
     checkStockStrikes: obj(raw.checkStockStrikes),
+    // quick 260712-at6 — BACKWARD-COMPAT: a pre-feature remote meal_plan.json has no dayNotes;
+    // obj() defaults a missing/garbage value to {}. The shapeCheck (_jsonShapeCheckFor MAP_KEYS)
+    // is DELIBERATELY NOT extended with dayNotes — an old remote doc omits the key and must still
+    // sync (the known multiplayer trap, memory adding-synced-meal-plan-field).
+    dayNotes: obj(raw.dayNotes),
     adHocExtras: Array.isArray(raw.adHocExtras) ? raw.adHocExtras : [],
     orderScopeRange: (raw.orderScopeRange
       && typeof raw.orderScopeRange === 'object'

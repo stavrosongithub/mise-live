@@ -2166,6 +2166,44 @@
                 <p class="help">Up to 3 cooks.</p>
               </div>
             </div>
+            <!-- quick 260712-at6 — DAY NOTE authoring (Option A, no modal). Always visible on
+                 the day (OUTSIDE the collapse template) so a note can never hide. Three states:
+                 add-bar (no note + editor closed) → editor (textarea + Save) → at-rest petrol
+                 chip (note set + editor closed, click-to-edit). The note VALUE lives in the
+                 synced dayNotes[group.key]; `dayNoteEditorFor` tracks which day's editor is open;
+                 `draft` (a per-day Alpine local) is the scratch textarea value seeded on open. All
+                 note text is rendered via x-text / bound value only (never as raw HTML), so a note
+                 can never inject markup. Gated to Upcoming (authoring affordance). -->
+            <div class="meal-plan-day-note" x-data="{ draft: '' }"
+                 x-show="mealPlanTab === 'upcoming' && group.key !== ''" x-cloak>
+              <!-- State 1: no note + editor closed → dashed add-bar -->
+              <button type="button" class="meal-plan-day-note-add"
+                      x-show="!dayNotes[group.key] && dayNoteEditorFor !== group.key"
+                      @click="draft = dayNotes[group.key] || ''; dayNoteEditorFor = group.key; $nextTick(() => $refs.dayNoteInput && $refs.dayNoteInput.focus())">📝&nbsp; Add a note for this day</button>
+              <!-- State 2: editor open → textarea + hint + Save. x-ref is scoped to this
+                   day's x-data local, so a static name resolves per-day. -->
+              <div class="meal-plan-day-note-editor" x-show="dayNoteEditorFor === group.key" x-cloak>
+                <textarea class="meal-plan-day-note-textarea"
+                          x-model="draft"
+                          x-ref="dayNoteInput"
+                          placeholder="e.g. Two extra guests at lunch — stretch the mains. Barbara is off dairy today."
+                          @keydown.meta.enter.prevent="setDayNote(group.key, draft); dayNoteEditorFor = ''"
+                          @keydown.ctrl.enter.prevent="setDayNote(group.key, draft); dayNoteEditorFor = ''"></textarea>
+                <div class="meal-plan-day-note-row">
+                  <span class="meal-plan-day-note-hint">Shows on the chefs' Cook sheet · ⌘↵ to save</span>
+                  <button type="button" class="meal-plan-day-note-save"
+                          @click="setDayNote(group.key, draft); dayNoteEditorFor = ''">Save note</button>
+                </div>
+              </div>
+              <!-- State 3: note set + editor closed → at-rest petrol chip (click-to-edit) -->
+              <div class="meal-plan-day-note-chip"
+                   x-show="dayNotes[group.key] && dayNoteEditorFor !== group.key" x-cloak
+                   @click="draft = dayNotes[group.key] || ''; dayNoteEditorFor = group.key; $nextTick(() => $refs.dayNoteInput && $refs.dayNoteInput.focus())"
+                   :title="'Edit note for ' + group.label">
+                <span class="meal-plan-day-note-chip-k">Note</span>
+                <span class="meal-plan-day-note-chip-v" x-text="dayNotes[group.key]"></span>
+              </div>
+            </div>
             <!-- quick 260620-gi4 — at-a-glance day subtitle: per-day headcount (from
                  the cached Coda roster) + recipes grouped by type. ALWAYS visible
                  (outside the collapse template); shown in both Upcoming and Past.
@@ -2203,6 +2241,28 @@
                    (specimen `.entry-name`): no underline, truncates rather than wraps.
                    Still a clickable button (openEditRecipe unchanged) — just restyled. -->
               <button type="button" class="meal-plan-recipe-link" @click="openEditRecipe(entry.recipe_id)" :title="'Edit ' + (entry.name || 'recipe')" x-text="entry.name || '(unnamed)'"></button>
+              <!-- quick 260712-at6 — PER-DISH NOTE (Option B). A small underlined "note" link
+                   that turns bold "✎ note" when a note is set; clicking toggles an inline input.
+                   The note VALUE rides the SAME synced dayNotes map under the composite key
+                   `group.key + '::' + entry.recipe_id`. `open`/`draft` are a per-entry Alpine local
+                   (transient). Enter/blur commits via setDishNote; text via bound value only (never raw HTML).
+                   The input wraps to its own line (flex-basis:100%) so it never breaks the head row. -->
+              <span class="meal-plan-dish-note" x-data="{ open: false, draft: '' }"
+                    x-show="mealPlanTab === 'upcoming'" x-cloak>
+                <button type="button"
+                        class="meal-plan-dish-note-btn"
+                        :class="{ 'has': !!dayNotes[group.key + '::' + entry.recipe_id] }"
+                        @click="open = !open; if (open) { draft = dayNotes[group.key + '::' + entry.recipe_id] || ''; $nextTick(() => $refs.dishNoteInput && $refs.dishNoteInput.focus()) }"
+                        x-text="dayNotes[group.key + '::' + entry.recipe_id] ? '✎ note' : 'note'"></button>
+                <span class="meal-plan-dish-note-editor" x-show="open" x-cloak>
+                  <input type="text" class="meal-plan-dish-note-input"
+                         x-ref="dishNoteInput"
+                         x-model="draft"
+                         placeholder="Tweak for this dish…"
+                         @keydown.enter.prevent="setDishNote(group.key, entry.recipe_id, draft); open = false"
+                         @blur="setDishNote(group.key, entry.recipe_id, draft); open = false">
+                </span>
+              </span>
               <!-- F8/F9 (quick 260625-itm) — the servings control is now INLINE (specimen
                    `.serving-control`): a mono `serves` lbl + the number input + the
                    suggest-sub, all on one line. The "Servings" stacked label is replaced
