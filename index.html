@@ -2175,7 +2175,7 @@
                  note text is rendered via x-text / bound value only (never as raw HTML), so a note
                  can never inject markup. Gated to Upcoming (authoring affordance). -->
             <div class="meal-plan-day-note" x-data="{ draft: '' }"
-                 x-show="mealPlanTab === 'upcoming' && group.key !== ''" x-cloak>
+                 x-show="mealPlanTab === 'upcoming' && group.key !== '' && dayCollapsedByDay[group.key] === false" x-cloak>
               <!-- State 1: no note + editor closed → dashed add-bar -->
               <button type="button" class="meal-plan-day-note-add"
                       x-show="!dayNotes[group.key] && dayNoteEditorFor !== group.key"
