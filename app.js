@@ -380,7 +380,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'ed6bbe4 2026-07-12';
+const APP_VERSION = '24f4282 2026-07-12';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -8143,7 +8143,7 @@ Alpine.data('app', () => ({
   addToMealPlanForDate(recipe_id, date) {
     const rid = Number(recipe_id);
     const meta = this.recipeList.find(r => r.recipe_id === rid);
-    this.mealPlan.push({
+    const entry = {
       // quick 260615-lzq — per-entry unique id (replaces recipe_id-based keying),
       // so two entries for the same recipe are distinct rows under distinct days.
       id: crypto.randomUUID(),
@@ -8157,7 +8157,15 @@ Alpine.data('app', () => ({
       // quick 260615-lzq — 'YYYY-MM-DD' from the per-entry date input, '' = unscheduled.
       // quick 260621-amm — now seeded from the day-targeted add (defaults to '').
       date: (typeof date === 'string') ? date : ''
-    });
+    };
+    // quick 260712-f06 — auto-seed servings to the advisory suggested amount
+    // (headcount × per-type multiplier) instead of the fixed 4, reusing the SAME
+    // computation as the card note / click-to-apply. suggestedServingsFor returns
+    // null for Unscheduled (date ''), roster-not-loaded, or non-Main/Side/Salad —
+    // in which case the entry keeps servings: 4.
+    const suggestion = this.suggestedServingsFor(entry, { key: entry.date });
+    if (suggestion) entry.servings = suggestion.servings;
+    this.mealPlan.push(entry);
     // quick 260615-dap — explicit persist (plan-check WARNING: Alpine $watch is
     // unreliable on nested array-element mutations, so we persist directly on
     // every mutation; the $watch in init() is belt-and-braces only).
