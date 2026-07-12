@@ -380,7 +380,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'fa939df 2026-07-12';
+const APP_VERSION = '54e4cd4 2026-07-12';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -3412,13 +3412,13 @@ Alpine.data('app', () => ({
   // These PARALLEL the recipeManager* filters but are PICKER-LOCAL and TRANSIENT:
   // separate fields (never reuse recipeManager*), and NOT persisted (reset per
   // session, same as mealPlanTab). Consumed only by filteredMealPlanPickList.
-  //   mealPlanTypeFilter      []          selected types (lowercase: main/side/salad)
+  //   mealPlanTypeFilter      ['main']    selected type — SINGLE-select radio (lowercase: main/side/salad); [] = All (quick 260712-bts)
   //   mealPlanAllergenFilter  []          FSA14 allergens to AVOID (hide containing)
   //   mealPlanSort            'default'   default | least-recent | max-servings-desc | easiest
   //   mealPlanMinServings     ''          number → keep max_servings >= N; '' = off
   //   mealPlanMaxDifficulty   ''          1..5 → keep difficulty <= N; '' = off
   //   mealPlanHidePlanned     false       hide recipe_ids already in upcomingEntries
-  mealPlanTypeFilter: [],
+  mealPlanTypeFilter: ['main'], // quick 260712-bts — default to Main (single-select)
   mealPlanAllergenFilter: [],
   mealPlanSort: 'default',
   mealPlanMinServings: '',
@@ -9175,7 +9175,7 @@ Alpine.data('app', () => ({
    */
   clearMealPlanFilters() {
     this.mealPlanFilter = '';
-    this.mealPlanTypeFilter = [];
+    this.mealPlanTypeFilter = ['main']; // quick 260712-bts — default to Main (single-select)
     this.mealPlanAllergenFilter = [];
     this.mealPlanMinServings = '';
     this.mealPlanMaxDifficulty = '';

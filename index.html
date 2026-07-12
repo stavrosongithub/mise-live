@@ -3187,15 +3187,16 @@
             <button type="button" class="meal-plan-chip"
                     :class="{ active: mealPlanTypeFilter.length === 0 }"
                     @click="mealPlanTypeFilter = []">All</button>
+            <!-- quick 260712-bts — single-select (radio-style): click SETS the sole type -->
             <button type="button" class="meal-plan-chip"
                     :class="{ active: mealPlanTypeFilter.includes('main') }"
-                    @click="mealPlanTypeFilter.includes('main') ? mealPlanTypeFilter = mealPlanTypeFilter.filter(t => t !== 'main') : mealPlanTypeFilter.push('main')">Main</button>
+                    @click="mealPlanTypeFilter = ['main']">Main</button>
             <button type="button" class="meal-plan-chip"
                     :class="{ active: mealPlanTypeFilter.includes('side') }"
-                    @click="mealPlanTypeFilter.includes('side') ? mealPlanTypeFilter = mealPlanTypeFilter.filter(t => t !== 'side') : mealPlanTypeFilter.push('side')">Side</button>
+                    @click="mealPlanTypeFilter = ['side']">Side</button>
             <button type="button" class="meal-plan-chip"
                     :class="{ active: mealPlanTypeFilter.includes('salad') }"
-                    @click="mealPlanTypeFilter.includes('salad') ? mealPlanTypeFilter = mealPlanTypeFilter.filter(t => t !== 'salad') : mealPlanTypeFilter.push('salad')">Salad</button>
+                    @click="mealPlanTypeFilter = ['salad']">Salad</button>
             <label class="inline meal-plan-picker-num meal-plan-picker-sort">
               <span>Sort by</span>
               <select x-model="mealPlanSort">
