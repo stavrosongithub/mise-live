@@ -61,7 +61,13 @@ export const STORE_FILES = ['recipes.csv', 'ingredients.csv', 'recipe_ingredient
 // state, never PARTIAL and never an error — a pre-Phase-17 repo with NO JSON
 // files MUST classify 'full', not 'partial' (D-15, SPEC acceptance #7). They are
 // probed/pulled on their OWN JSON path (app.js), never via the CSV machinery.
-export const OPTIONAL_JSON_FILES = ['meal_plan.json', 'residents_roster.json', 'suppliers.json'];
+//
+// quick 260712-i1y adds settings.json as the 4th safe-rail optional JSON artifact
+// (synced kitchen-global settings on the PER-KEY LWW rail). Same discipline: absent
+// = seed empty/local (defaults), never PARTIAL and never an error. It is EXPLICITLY
+// NOT the fragile meal_plan.json 3-way merge — it rides the whole-file LWW transport
+// like suppliers.json / residents_roster.json, just with a per-key merge inside.
+export const OPTIONAL_JSON_FILES = ['meal_plan.json', 'residents_roster.json', 'suppliers.json', 'settings.json'];
 
 const DB_NAME = 'recipe_ingest';
 const STORE_NAME = 'csvFiles';

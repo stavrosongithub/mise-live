@@ -100,6 +100,18 @@ import {
   buildSearchUrl,
   searchLabel
 } from './suppliers-sync.js';
+// quick 260712-i1y — PURE settings helpers (settings.json shape + per-key LWW
+// arithmetic). Node-tested in scripts/settings-sync.test.mjs; the impure wiring
+// (_pushSettings LWW push mirroring _pushSuppliers with a per-key 409 MERGE, the
+// stampSetting clock, _applySettingsWinners pull-reflect) lives in this file. The
+// whitelist (SYNCED_SETTING_KEYS) is the secret-exclusion boundary — no secret key.
+import {
+  SYNCED_SETTING_KEYS,
+  coerceSettingsDoc,
+  mergeSettingsDoc,
+  buildSettingsDoc,
+  settingsToApply
+} from './settings-sync.js';
 // merge.js — schema migration transforms + detectors + CSV convention probe.
 // (The delta/merge file-I/O helpers are removed in quick 260612-abt; only the
 // migration transforms + detectCsvConventions + isShoppingUnitValue remain.)
@@ -314,6 +326,32 @@ function loadScaleStrengths() {
   return out;
 }
 
+// quick 260712-i1y — the settings.json PER-KEY LWW clock lives in its OWN device-
+// local localStorage slot (a { settingKey: msEpoch } map) so a returning device
+// remembers when it last stamped each synced key, independent of the value slots.
+const SETTINGS_EDITED_AT_KEY = 'mise_settings_edited_at';
+
+// loadSettingsEditedAt() — seed the in-memory per-key clock from its localStorage
+// slot, defensively (JSON-parse in try/catch; anything not a plain object -> {}).
+// A first boot with no slot yields {}, which buildSettingsDoc seeds to editedAt=0
+// (the low sentinel) so an un-stamped local default never beats a real remote edit.
+function loadSettingsEditedAt() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_EDITED_AT_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    // keep only numeric-valued entries (a corrupt slot can't poison the clock).
+    const out = {};
+    for (const k of Object.keys(parsed)) {
+      if (typeof parsed[k] === 'number' && Number.isFinite(parsed[k])) out[k] = parsed[k];
+    }
+    return out;
+  } catch (_e) {
+    return {};
+  }
+}
+
 // max_tokens=16k from day one per RESEARCH §Pitfall B / API-03. Default 1024
 // or 4096 silently truncates 30-row recipes; we surface stop_reason explicitly.
 const MAX_TOKENS = 16000;
@@ -380,7 +418,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '24f4282 2026-07-12';
+const APP_VERSION = 'bdee467 2026-07-12';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -3171,6 +3209,17 @@ Alpine.data('app', () => ({
   // (a pure list with no per-cook merge), mirroring _rosterSnapshotSha / _pushRosterSnapshot.
   suppliers: [],
   _suppliersSnapshotSha: undefined,
+
+  // quick 260712-i1y — synced kitchen-global settings (settings.json) on the SAME
+  // safe OPTIONAL_JSON_FILES LWW rail as suppliers.json / residents_roster.json,
+  // but merged PER-KEY (each of the 14 whitelisted keys carries its own editedAt).
+  // `_settingsSnapshotSha` is the cached blob sha (undefined = CREATE on the first
+  // push; present = UPDATE thereafter, mirroring _suppliersSnapshotSha). NEVER the
+  // fragile meal-plan 3-way merge. `settingsEditedAt` is the device-local per-key
+  // clock, seeded defensively from its own localStorage slot (first boot -> {},
+  // which buildSettingsDoc treats as editedAt=0 so a real remote edit always wins).
+  _settingsSnapshotSha: undefined,
+  settingsEditedAt: loadSettingsEditedAt(),
   // quick 260630-e8v — the Suppliers manager UI (an inline panel in Manage
   // Ingredients, NOT a modal — so it never stacks over the edit modal). The hint
   // shows a non-blocking note when a saved searchUrl lacks the {q} slot.
@@ -3726,6 +3775,14 @@ Alpine.data('app', () => ({
       this.suppliers = DEFAULT_SUPPLIERS.map((s) => ({ ...s })); // editable defaults; NOT auto-pushed
     }
 
+    // quick 260712-i1y — load the synced settings from the IndexedDB cache (so a
+    // tokenless/offline boot reflects the shared kitchen-global settings). Non-fatal
+    // + best-effort: a failure here must NEVER block recipe load; the local defaults
+    // (already seeded from their own localStorage slots) stand if the cache is absent.
+    try {
+      await this.loadSettingsFromCache();
+    } catch (e) { /* best-effort: local defaults cover a read failure */ }
+
     // Phase 16 (D40/D41) — load the curated 4th file (residents_allergens.csv) as a
     // SEPARATE, non-fatal slice. A missing/absent 4th file (first run, or an old
     // shared repo) is a VALID state and must NEVER block the recipe slice — its
@@ -3994,6 +4051,23 @@ Alpine.data('app', () => ({
         return p.suppliers.every((e) => e && typeof e === 'object' && !Array.isArray(e));
       };
     }
+    if (name === 'settings.json') {
+      // quick 260712-i1y — a per-key doc { settingKey: {value, editedAt} }. Coarse
+      // top-level tripwire only (like the roster/suppliers branches): a plain
+      // non-null object (reject arrays), and EVERY present entry must itself be a
+      // plain object carrying a NUMERIC editedAt (reject arrays / garbage /
+      // editedAt-less). A structurally-wrong blob trips this so putJsonFile
+      // auto-reverts rather than blanking the stored settings (T-i1y-02).
+      return (p) => {
+        if (!p || typeof p !== 'object' || Array.isArray(p)) return false;
+        for (const k of Object.keys(p)) {
+          const e = p[k];
+          if (!e || typeof e !== 'object' || Array.isArray(e)) return false;
+          if (typeof e.editedAt !== 'number' || !Number.isFinite(e.editedAt)) return false;
+        }
+        return true;
+      };
+    }
     // Defensive default: any non-null object passes (no known shape to enforce).
     return (p) => !!p && typeof p === 'object';
   },
@@ -4119,6 +4193,15 @@ Alpine.data('app', () => ({
         if (name === 'suppliers.json') {
           this.suppliers = coerceSuppliers(parsed).suppliers;
           this._suppliersSnapshotSha = sha;
+        }
+        // quick 260712-i1y — settings.json pull-reflect (remote-wins). Apply only the
+        // keys where remote STRICTLY wins (settingsToApply, inside _applySettingsWinners)
+        // into state+localStorage+clock, and cache the sha so a later _pushSettings
+        // UPDATEs rather than blindly CREATE-409ing. Per-key coercion guards a
+        // malformed remote value (T-i1y-03); it never touches the meal-plan.
+        if (name === 'settings.json') {
+          this._applySettingsWinners(coerceSettingsDoc(parsed));
+          this._settingsSnapshotSha = sha;
         }
       }
 
@@ -4864,6 +4947,242 @@ Alpine.data('app', () => ({
     if (!rec || rec.json == null) return; // absent = first run; the init seed installs the defaults
     this.suppliers = coerceSuppliers(rec.json).suppliers;
     if (rec.meta && rec.meta.sha) this._suppliersSnapshotSha = rec.meta.sha;
+  },
+
+  // =========================================================================
+  // quick 260712-i1y — settings.json PER-KEY LWW sync (impure wiring)
+  // =========================================================================
+  // The pure arithmetic (coerce/merge/build/apply + the whitelist) lives in
+  // settings-sync.js; this section holds the app-side transport + clock + reflect,
+  // an EXACT mirror of the suppliers wiring above with ONE deviation: the 409
+  // recovery MERGES per-key (mergeSettingsDoc) instead of blindly overwriting, so a
+  // concurrent DIFFERENT-key edit from the other device is preserved. It NEVER
+  // touches mealplan-sync.js / meal_plan.json.
+
+  /**
+   * _buildSettingsDoc — gather the CURRENT values of the 14 whitelisted synced keys
+   * from the live Alpine fields into a values-by-key object, then hand it to the pure
+   * buildSettingsDoc alongside this.settingsEditedAt (the per-key clock). The values
+   * map is assembled key-by-key from named fields — there is deliberately NO secret
+   * field here, and buildSettingsDoc iterates the whitelist regardless, so no secret
+   * can enter the payload (T-i1y-01). scaleStrengths / pantrySections are serialised
+   * to the SAME string form their localStorage slot holds so a round-trip is stable.
+   * @returns {Object<string,{value:*,editedAt:number}>}
+   */
+  _buildSettingsDoc() {
+    const valuesByKey = {
+      servingsPerResidentMain: this.servingsPerResidentMain,
+      servingsPerResidentSide: this.servingsPerResidentSide,
+      servingsPerResidentSalad: this.servingsPerResidentSalad,
+      scaleStrengths: JSON.stringify(this.scaleStrengths),
+      pantrySections: JSON.stringify(this.pantrySections),
+      systemPromptOverride: this.systemPromptOverride ?? '',
+      conversionsJsonOverride: this.conversionsJsonOverride ?? '',
+      allergenKeywordsOverride: this.allergenKeywordsOverride ?? '',
+      weatherLocation: this.weatherLocation ?? '',
+      weatherLat: this.weatherLat ?? '',
+      weatherLon: this.weatherLon ?? '',
+      codaExportDocId: this.codaExportDocId ?? '',
+      codaResidencyTableId: this.codaResidencyTableId ?? '',
+      codaOnboardingTableId: this.codaOnboardingTableId ?? ''
+      // NEVER: apiKey, codaApiToken, githubToken/Owner/Repo/Branch, userName, selectedModel.
+    };
+    return buildSettingsDoc(valuesByKey, this.settingsEditedAt);
+  },
+
+  /**
+   * stampSetting — record that `key`'s value changed locally NOW: bump its per-key
+   * clock to Date.now(), persist the whole clock map, and fire a best-effort push.
+   * Called by every synced Save/reset path AFTER a successful local persist so the
+   * change propagates and a returning device knows this device is the freshest for
+   * that key. The push is fire-and-forget (swallowed) — the value is fully usable
+   * locally regardless. NEVER call this for a secret field.
+   * @param {string} key — a whitelisted SYNCED_SETTING_KEYS member
+   */
+  stampSetting(key) {
+    if (!SYNCED_SETTING_KEYS.includes(key)) return; // defensive: whitelist-only
+    if (!this.settingsEditedAt || typeof this.settingsEditedAt !== 'object') this.settingsEditedAt = {};
+    this.settingsEditedAt[key] = Date.now();
+    try { localStorage.setItem(SETTINGS_EDITED_AT_KEY, JSON.stringify(this.settingsEditedAt)); } catch (_e) { /* best-effort */ }
+    this._pushSettings(); // fire-and-forget; guarded + swallowed inside
+  },
+
+  /**
+   * _applySettingsWinners — reflect the keys where a doc STRICTLY wins over the local
+   * doc into Alpine state + localStorage + the local clock. Called from the pull path
+   * (remote-wins) and from loadSettingsFromCache. For each winner the incoming value
+   * is coerced DEFENSIVELY per its type (a malformed remote value cannot corrupt
+   * scaling / shopping state, T-i1y-03) then assigned + persisted, and the local clock
+   * for that key is set to the winner's editedAt so the device stops re-pushing a
+   * stale value. A winning override value is TRUSTED as already-validated by the
+   * origin device — we do NOT re-run the save-path validators (which would surface a
+   * parseError banner on a value the user never typed here).
+   * @param {Object<string,{value:*,editedAt:number}>} remoteDoc — a coerced doc
+   */
+  _applySettingsWinners(remoteDoc) {
+    const winners = settingsToApply(this._buildSettingsDoc(), remoteDoc);
+    if (!this.settingsEditedAt || typeof this.settingsEditedAt !== 'object') this.settingsEditedAt = {};
+    let clockDirty = false;
+    for (const { key, value, editedAt } of winners) {
+      let applied = true;
+      switch (key) {
+        case 'servingsPerResidentMain':
+        case 'servingsPerResidentSide':
+        case 'servingsPerResidentSalad': {
+          const n = Number(value);
+          if (Number.isFinite(n) && n >= 0) {
+            this[key] = n;
+            localStorage.setItem(
+              key === 'servingsPerResidentMain' ? 'servings_per_resident_main'
+                : key === 'servingsPerResidentSide' ? 'servings_per_resident_side'
+                  : 'servings_per_resident_salad',
+              String(n)
+            );
+          } else { applied = false; } // never store NaN — skip this key
+          break;
+        }
+        case 'scaleStrengths': {
+          // value may arrive as a JSON string (our own serialisation) or an object.
+          let raw = value;
+          if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch (_e) { raw = null; } }
+          if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { applied = false; break; }
+          const clamped = {};
+          for (const k of Object.keys(DEFAULT_SCALE_STRENGTHS)) {
+            const n = Number(raw[k]);
+            clamped[k] = Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : DEFAULT_SCALE_STRENGTHS[k];
+          }
+          this.scaleStrengths = clamped;
+          localStorage.setItem(SCALE_STRENGTH_KEY, JSON.stringify(clamped));
+          break;
+        }
+        case 'pantrySections': {
+          let raw = value;
+          if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch (_e) { raw = null; } }
+          if (!Array.isArray(raw)) { applied = false; break; }
+          const cleaned = [];
+          const seen = new Set();
+          for (const x of raw) {
+            const s = String(x ?? '').trim();
+            if (s === '' || seen.has(s)) continue;
+            seen.add(s); cleaned.push(s);
+          }
+          if (cleaned.length === 0) { applied = false; break; } // must be a non-empty list
+          this.pantrySections = cleaned;
+          localStorage.setItem(PANTRY_SECTIONS_KEY, JSON.stringify(cleaned));
+          break;
+        }
+        case 'systemPromptOverride':
+          this.systemPromptOverride = String(value ?? '');
+          localStorage.setItem('recipe_ingest_system_prompt_override', this.systemPromptOverride);
+          break;
+        case 'conversionsJsonOverride':
+          this.conversionsJsonOverride = String(value ?? '');
+          localStorage.setItem('recipe_ingest_conversions_json_override', this.conversionsJsonOverride);
+          break;
+        case 'allergenKeywordsOverride':
+          this.allergenKeywordsOverride = String(value ?? '');
+          localStorage.setItem('recipe_ingest_allergen_keywords_override', this.allergenKeywordsOverride);
+          break;
+        case 'weatherLocation':
+          this.weatherLocation = String(value ?? '');
+          localStorage.setItem('mise_weather_location', this.weatherLocation);
+          break;
+        case 'weatherLat':
+          this.weatherLat = String(value ?? '');
+          localStorage.setItem('mise_weather_lat', this.weatherLat);
+          break;
+        case 'weatherLon':
+          this.weatherLon = String(value ?? '');
+          localStorage.setItem('mise_weather_lon', this.weatherLon);
+          break;
+        case 'codaExportDocId':
+          this.codaExportDocId = String(value ?? '');
+          localStorage.setItem('coda_export_doc_id', this.codaExportDocId);
+          break;
+        case 'codaResidencyTableId':
+          this.codaResidencyTableId = String(value ?? '');
+          localStorage.setItem('coda_residency_table_id', this.codaResidencyTableId);
+          break;
+        case 'codaOnboardingTableId':
+          this.codaOnboardingTableId = String(value ?? '');
+          localStorage.setItem('coda_onboarding_table_id', this.codaOnboardingTableId);
+          break;
+        default:
+          applied = false; // unknown key — never assign
+      }
+      if (applied) {
+        this.settingsEditedAt[key] = editedAt; // stop re-pushing a now-stale value
+        clockDirty = true;
+      }
+    }
+    if (clockDirty) {
+      try { localStorage.setItem(SETTINGS_EDITED_AT_KEY, JSON.stringify(this.settingsEditedAt)); } catch (_e) { /* best-effort */ }
+    }
+  },
+
+  /**
+   * loadSettingsFromCache — read the stored settings.json from the IndexedDB JSON
+   * cache and reflect its winners locally (so a tokenless/offline boot still has the
+   * synced settings), mirroring loadSuppliersFromCache. An absent record is a valid
+   * first-run state and leaves the defaults in place. coerceSettingsDoc strips any
+   * malformed / non-whitelisted stored entries (fail-open).
+   */
+  async loadSettingsFromCache() {
+    const rec = await getJsonFile('settings.json');
+    if (!rec || rec.json == null) return; // absent = first run; defaults stand
+    this._applySettingsWinners(coerceSettingsDoc(rec.json));
+    if (rec.meta && rec.meta.sha) this._settingsSnapshotSha = rec.meta.sha;
+  },
+
+  /**
+   * _pushSettings — the CANONICAL per-key LWW push (an exact mirror of _pushSuppliers
+   * with the ONE deviation noted below). Best-effort + fully guarded + swallowed. The
+   * doc is rebuilt fresh per call from the live fields (never a secret). On a stale-sha
+   * 409 it re-reads the CURRENT remote doc and MERGES per-key (mergeSettingsDoc) before
+   * re-PUTting — so a concurrent edit to a DIFFERENT key on the other device is
+   * PRESERVED (T-i1y-05). This per-key merge on 409 is the whole reason settings.json
+   * merges per-key rather than whole-file like suppliers.json.
+   */
+  async _pushSettings() {
+    // Guards — no connection / no token / no attribution = nothing to push.
+    if (!this.githubConnected || !this.githubToken) return;
+    if (!(this.userName ?? '').trim()) return; // every commit needs a name (D-07)
+    try {
+      const doc = this._buildSettingsDoc();
+      // LOCAL-first: putJsonFile verifies (shapeCheck) + auto-reverts a malformed blob.
+      await putJsonFile('settings.json', doc, { shapeCheck: this._jsonShapeCheckFor('settings.json') });
+      const cfg = this.githubCfg; // fresh per call (rotated token, no reload)
+      const message = this.buildCommitMessage({ action: 'sync', objectKind: 'settings', title: '', groupTag: 'settings' });
+      const text = JSON.stringify(doc);
+      try {
+        // CREATE on the first write (sha undefined); UPDATE with the cached sha.
+        const { sha: newSha } = await ghPutFile(cfg, 'settings.json', text, this._settingsSnapshotSha, message);
+        this._settingsSnapshotSha = newSha;
+      } catch (e) {
+        // Stale-sha 409 → PER-KEY LWW: re-read the CURRENT remote doc and merge our
+        // fresh local doc onto it (mergeSettingsDoc), then re-PUT the MERGED result
+        // with the fresh sha. This is NOT a blind overwrite — a concurrent
+        // different-key edit from the other device survives (the point of per-key).
+        if (e instanceof GhConflictError) {
+          let remoteText = '{}';
+          let currentSha;
+          try { const { text: rt, sha } = await ghGetFile(cfg, 'settings.json'); remoteText = rt; currentSha = sha; }
+          catch (_e) { remoteText = '{}'; currentSha = undefined; } // 404/etc → CREATE on the re-PUT
+          let remoteDoc = {};
+          try { remoteDoc = coerceSettingsDoc(JSON.parse(remoteText)); } catch (_e) { remoteDoc = {}; }
+          const merged = mergeSettingsDoc(this._buildSettingsDoc(), remoteDoc);
+          // LOCAL-first again so the merged doc is shape-verified before the re-PUT.
+          await putJsonFile('settings.json', merged, { shapeCheck: this._jsonShapeCheckFor('settings.json') });
+          const { sha: newSha } = await ghPutFile(cfg, 'settings.json', JSON.stringify(merged), currentSha, message);
+          this._settingsSnapshotSha = newSha;
+          return;
+        }
+        throw e;
+      }
+    } catch (_e) {
+      // Own error channel: a settings-push failure is best-effort and SWALLOWED —
+      // settings are fully usable locally; the next stamp re-attempts the push.
+    }
   },
 
   /**
@@ -6102,6 +6421,11 @@ Alpine.data('app', () => ({
     localStorage.setItem('coda_export_doc_id', this.codaExportDocId);
     localStorage.setItem('coda_residency_table_id', this.codaResidencyTableId);
     localStorage.setItem('coda_onboarding_table_id', this.codaOnboardingTableId);
+    // quick 260712-i1y — synced: stamp the 3 non-secret Coda IDs ONLY. The
+    // codaApiToken is a SECRET and is NEVER stamped or pushed (T-i1y-01).
+    this.stampSetting('codaExportDocId');
+    this.stampSetting('codaResidencyTableId');
+    this.stampSetting('codaOnboardingTableId');
     this.settingsOpen = false;
   },
 
@@ -6126,6 +6450,10 @@ Alpine.data('app', () => ({
       this.weatherByDate = {};
       this._weatherCoordsKey = '';
       this._weatherFetchedAt = 0;
+      // quick 260712-i1y — synced: stamp the cleared trio so a clear propagates too.
+      this.stampSetting('weatherLocation');
+      this.stampSetting('weatherLat');
+      this.stampSetting('weatherLon');
       this.settingsOpen = false;
       return;
     }
@@ -6168,6 +6496,10 @@ Alpine.data('app', () => ({
       this.weatherByDate = {};
       this._weatherCoordsKey = '';
       this._weatherFetchedAt = 0;
+      // quick 260712-i1y — synced: stamp the resolved location + coords trio.
+      this.stampSetting('weatherLocation');
+      this.stampSetting('weatherLat');
+      this.stampSetting('weatherLon');
       this.settingsOpen = false;
     } catch (_e) {
       this.weatherLocationStatus = "Couldn't reach the weather service — check your connection.";
@@ -6536,16 +6868,19 @@ Alpine.data('app', () => ({
   // These keys are display prefs, NOT PII, so they stay OUT of clearCodaConfig.
   // Per RM6-01. Closes the modal on save (settingsOpen = false).
   saveServingsConfig() {
-    const apply = (draft, field, key) => {
+    // quick 260712-i1y — stamp+push ONLY an accepted draft (never a rejected one).
+    // syncedKey maps the field to its SYNCED_SETTING_KEYS member for the clock stamp.
+    const apply = (draft, field, key, syncedKey) => {
       const v = parseFloat(draft);
       if (Number.isFinite(v) && v >= 0) {
         this[field] = v;
         localStorage.setItem(key, String(v));
+        this.stampSetting(syncedKey); // synced: bump clock + push (best-effort)
       }
     };
-    apply(this.servingsPerResidentMainDraft, 'servingsPerResidentMain', 'servings_per_resident_main');
-    apply(this.servingsPerResidentSideDraft, 'servingsPerResidentSide', 'servings_per_resident_side');
-    apply(this.servingsPerResidentSaladDraft, 'servingsPerResidentSalad', 'servings_per_resident_salad');
+    apply(this.servingsPerResidentMainDraft, 'servingsPerResidentMain', 'servings_per_resident_main', 'servingsPerResidentMain');
+    apply(this.servingsPerResidentSideDraft, 'servingsPerResidentSide', 'servings_per_resident_side', 'servingsPerResidentSide');
+    apply(this.servingsPerResidentSaladDraft, 'servingsPerResidentSalad', 'servings_per_resident_salad', 'servingsPerResidentSalad');
     this.settingsOpen = false;
   },
 
@@ -6560,6 +6895,7 @@ Alpine.data('app', () => ({
       this.scaleStrengths[key] = Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : DEFAULT_SCALE_STRENGTHS[key];
     }
     localStorage.setItem(SCALE_STRENGTH_KEY, JSON.stringify(this.scaleStrengths));
+    this.stampSetting('scaleStrengths'); // quick 260712-i1y — synced
   },
 
   // resetScaleStrengths — restore the 5 category defaults (fresh copy) + persist.
@@ -6568,6 +6904,7 @@ Alpine.data('app', () => ({
   resetScaleStrengths() {
     this.scaleStrengths = { ...DEFAULT_SCALE_STRENGTHS };
     localStorage.setItem(SCALE_STRENGTH_KEY, JSON.stringify(this.scaleStrengths));
+    this.stampSetting('scaleStrengths'); // quick 260712-i1y — synced
   },
 
   // ----- Settings: storage locations (quick 260615-e1n) -----
@@ -6578,6 +6915,9 @@ Alpine.data('app', () => ({
   // a mutation re-groups the on-screen lists live.
   savePantrySections() {
     localStorage.setItem(PANTRY_SECTIONS_KEY, JSON.stringify(this.pantrySections));
+    // quick 260712-i1y — this single funnel is called by add/rename/remove/move/reset,
+    // so ONE stamp here covers every pantry-sections mutation.
+    this.stampSetting('pantrySections');
   },
 
   // resetPantrySections — restore the 6 seed locations (fresh copy) + persist.
@@ -6662,12 +7002,14 @@ Alpine.data('app', () => ({
     }
     localStorage.setItem('recipe_ingest_system_prompt_override', v);
     this.parseError = '';
+    this.stampSetting('systemPromptOverride'); // quick 260712-i1y — synced (success only)
   },
 
   resetSystemPromptOverride() {
     this.systemPromptOverride = '';
     localStorage.removeItem('recipe_ingest_system_prompt_override');
     this.parseError = '';
+    this.stampSetting('systemPromptOverride'); // quick 260712-i1y — synced (reset -> empty)
   },
 
   // saveConversionsOverride — JSON.parse must succeed AND yield a plain object
@@ -6707,12 +7049,14 @@ Alpine.data('app', () => ({
     }
     localStorage.setItem('recipe_ingest_conversions_json_override', v);
     this.parseError = '';
+    this.stampSetting('conversionsJsonOverride'); // quick 260712-i1y — synced (success only)
   },
 
   resetConversionsOverride() {
     this.conversionsJsonOverride = '';
     localStorage.removeItem('recipe_ingest_conversions_json_override');
     this.parseError = '';
+    this.stampSetting('conversionsJsonOverride'); // quick 260712-i1y — synced (reset -> empty)
   },
 
   // Phase 4 / Plan 04-05 / D-56 — save the allergen-keywords.json override.
@@ -6777,12 +7121,14 @@ Alpine.data('app', () => ({
     localStorage.setItem('recipe_ingest_allergen_keywords_override', v);
     this.allergenKeywordsOverride = localStorage.getItem('recipe_ingest_allergen_keywords_override') ?? '';
     this.parseError = '';
+    this.stampSetting('allergenKeywordsOverride'); // quick 260712-i1y — synced (success only)
   },
 
   resetAllergenKeywordsOverride() {
     this.allergenKeywordsOverride = '';
     localStorage.removeItem('recipe_ingest_allergen_keywords_override');
     this.parseError = '';
+    this.stampSetting('allergenKeywordsOverride'); // quick 260712-i1y — synced (reset -> empty)
   },
 
   // resetAllToDefault — D-21 explicitly preserves the API key and the model
