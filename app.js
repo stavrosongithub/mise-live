@@ -380,7 +380,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '54e4cd4 2026-07-12';
+const APP_VERSION = 'c1a6c17 2026-07-12';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -3435,6 +3435,19 @@ Alpine.data('app', () => ({
   // is the 'YYYY-MM-DD' day a pick lands on ('' = Unscheduled). Set via openPickerForDate.
   mealPlanPickerOpen: false,
   mealPlanPickerTargetDate: '',
+  // --- Weather (quick 260712-c44) — device-local, NOT synced ---
+  // Shows a Met Office (Open-Meteo ukmo_seamless) forecast high in the Add-Recipe
+  // picker modal for the day being planned. Everything here is device-local
+  // presentation only — nothing is ever written to the synced meal-plan doc.
+  weatherLocation: localStorage.getItem('mise_weather_location') ?? '',
+  weatherLat: localStorage.getItem('mise_weather_lat') ?? '',
+  weatherLon: localStorage.getItem('mise_weather_lon') ?? '',
+  weatherLocationDraft: '',      // Settings input draft (seeded on Settings open)
+  weatherLocationStatus: '',     // transient Settings feedback ("✓ Liverpool — 53.41, -2.98" / error)
+  weatherByDate: {},             // { 'YYYY-MM-DD': { tmax:Number, code:Number } } for the picker
+  weatherError: '',              // last forecast-fetch error (kept for possible future surfacing)
+  _weatherCoordsKey: '',         // coords the current weatherByDate cache was fetched for
+  _weatherFetchedAt: 0,          // ms epoch of last successful forecast fetch (via Date.now())
   checkStockExportOpen: false,
   checkStockExportText: '',
   checkStockExportCopied: false,
@@ -6092,6 +6105,76 @@ Alpine.data('app', () => ({
     this.settingsOpen = false;
   },
 
+  // ----- Settings: Weather location (quick 260712-c44) — device-local, NOT synced -----
+  // saveWeatherLocation — geocode the place-name draft to lat/long via Open-Meteo's
+  // free keyless geocoding API and cache the coords in localStorage. Mirrors the other
+  // savers' ergonomics but is ASYNC (network geocode) and only closes Settings on a
+  // successful resolve — a not-found / network error keeps Settings open so the user
+  // sees weatherLocationStatus. Invalidates the forecast cache so the next picker open
+  // refetches for the new coords.
+  async saveWeatherLocation() {
+    const q = (this.weatherLocationDraft ?? '').trim();
+    if (!q) {
+      // Empty draft — clear the location and its caches entirely.
+      this.weatherLocation = '';
+      this.weatherLat = '';
+      this.weatherLon = '';
+      localStorage.removeItem('mise_weather_location');
+      localStorage.removeItem('mise_weather_lat');
+      localStorage.removeItem('mise_weather_lon');
+      this.weatherLocationStatus = '';
+      this.weatherByDate = {};
+      this._weatherCoordsKey = '';
+      this._weatherFetchedAt = 0;
+      this.settingsOpen = false;
+      return;
+    }
+    // Open-Meteo's geocoder matches the literal name, so "Liverpool, UK" returns
+    // nothing. Try the full string first, then fall back to the part before the
+    // first comma so a natural "Town, Country" entry still resolves.
+    const candidates = [q];
+    if (q.includes(',')) {
+      const head = q.split(',')[0].trim();
+      if (head && head !== q) candidates.push(head);
+    }
+    const geocode = async (name) => {
+      const url = 'https://geocoding-api.open-meteo.com/v1/search?name=' +
+        encodeURIComponent(name) + '&count=1&language=en&format=json';
+      const resp = await fetch(url, { cache: 'no-store' });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      return (data.results && data.results[0]) || null;
+    };
+    try {
+      let hit = null;
+      for (const name of candidates) {
+        hit = await geocode(name);
+        if (hit) break;
+      }
+      if (!hit) {
+        this.weatherLocationStatus = "Couldn't find that place — check the spelling or try a nearby town.";
+        return; // keep Settings open so the message is seen
+      }
+      this.weatherLocation = q; // keep the user's own text as the label
+      this.weatherLat = String(hit.latitude);
+      this.weatherLon = String(hit.longitude);
+      localStorage.setItem('mise_weather_location', this.weatherLocation);
+      localStorage.setItem('mise_weather_lat', this.weatherLat);
+      localStorage.setItem('mise_weather_lon', this.weatherLon);
+      this.weatherLocationStatus = '✓ ' + hit.name +
+        (hit.country ? ', ' + hit.country : '') + ' — ' +
+        Number(hit.latitude).toFixed(2) + ', ' + Number(hit.longitude).toFixed(2);
+      // invalidate the forecast cache — coords changed
+      this.weatherByDate = {};
+      this._weatherCoordsKey = '';
+      this._weatherFetchedAt = 0;
+      this.settingsOpen = false;
+    } catch (_e) {
+      this.weatherLocationStatus = "Couldn't reach the weather service — check your connection.";
+      // keep Settings open so the message is seen
+    }
+  },
+
   // clearCodaConfig — the PII "clear creds" affordance (RESEARCH Security V9;
   // T-07-04 removeItem path). Wipes all four fields + drafts and removes all four
   // LOCKED keys (mirror clearApiKey).
@@ -7259,6 +7342,12 @@ Alpine.data('app', () => ({
       this.servingsPerResidentMainDraft = String(this.servingsPerResidentMain);
       this.servingsPerResidentSideDraft = String(this.servingsPerResidentSide);
       this.servingsPerResidentSaladDraft = String(this.servingsPerResidentSalad);
+      // quick 260712-c44 — seed the weather-location draft (LOAD-BEARING, same
+      // reason as the coda/github drafts: persistence is on @blur, so without
+      // re-seeding reopening Settings would show a stale blank). The status line
+      // shows a light confirmation of the saved place without re-geocoding.
+      this.weatherLocationDraft = this.weatherLocation;
+      this.weatherLocationStatus = this.weatherLocation ? ('✓ ' + this.weatherLocation) : '';
       this.settingsOpen = true;
     }
   },
@@ -8084,6 +8173,47 @@ Alpine.data('app', () => ({
   openPickerForDate(date) {
     this.mealPlanPickerTargetDate = (typeof date === 'string') ? date : '';
     this.mealPlanPickerOpen = true;
+    // quick 260712-c44 — fire-and-forget the weather load so the modal opens
+    // instantly; the forecast line appears reactively when data lands.
+    this.loadWeatherForPicker();
+  },
+  /**
+   * loadWeatherForPicker — quick 260712-c44. Fetch the daily forecast from
+   * Open-Meteo's UK Met Office model (keyless, CORS-ok) and build weatherByDate
+   * keyed by local ISO 'YYYY-MM-DD' (timezone=auto returns those strings directly —
+   * NO toISOString, which would UTC-shift). Device-local presentation only; nothing
+   * is synced. Async, fire-and-forget: fails silently (the line just doesn't render).
+   */
+  async loadWeatherForPicker() {
+    if (!this.weatherLat || !this.weatherLon) return; // no location — line stays hidden
+    const coordsKey = this.weatherLat + ',' + this.weatherLon;
+    // Cache guard: skip the refetch if we already have fresh (<1h) data for these coords.
+    if (this._weatherCoordsKey === coordsKey &&
+        Date.now() - this._weatherFetchedAt < 3600000 &&
+        Object.keys(this.weatherByDate).length) return;
+    const url = 'https://api.open-meteo.com/v1/forecast?latitude=' +
+      encodeURIComponent(this.weatherLat) + '&longitude=' + encodeURIComponent(this.weatherLon) +
+      '&daily=temperature_2m_max,weather_code&models=ukmo_seamless&timezone=auto&forecast_days=16';
+    try {
+      const resp = await fetch(url, { cache: 'no-store' });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      const d = data.daily || {};
+      const times = d.time || [];
+      const tmax = d.temperature_2m_max || [];
+      const codes = d.weather_code || [];
+      const map = {};
+      for (let i = 0; i < times.length; i++) {
+        if (tmax[i] == null) continue;
+        map[times[i]] = { tmax: Math.round(tmax[i]), code: Number(codes[i]) };
+      }
+      this.weatherByDate = map;
+      this._weatherCoordsKey = coordsKey;
+      this._weatherFetchedAt = Date.now();
+      this.weatherError = '';
+    } catch (_e) {
+      this.weatherError = 'weather unavailable'; // silent in the UI — the line simply doesn't render
+    }
   },
   closeMealPlanPicker() {
     this.mealPlanPickerOpen = false;
@@ -8108,6 +8238,17 @@ Alpine.data('app', () => ({
   get mealPlanPickerTargetLabel() {
     if (!this.mealPlanPickerTargetDate) return '';
     return this._dayLabel(this.mealPlanPickerTargetDate) || '';
+  },
+  // quick 260712-c44 — the Add-Recipe modal's single weather read. Returns null
+  // (line hidden) when there's no target day, no location, the fetch failed, or the
+  // target day is beyond the ~16-day forecast horizon. Reads weatherByDate by the
+  // local-ISO target key directly (Open-Meteo timezone=auto keys match _dayLabel's).
+  get pickerWeather() {
+    const key = this.mealPlanPickerTargetDate;
+    if (!key) return null;                       // Unscheduled / no day
+    const w = this.weatherByDate[key];
+    if (!w) return null;                          // no location, fetch failed, or beyond forecast range
+    return { tmax: w.tmax, icon: this._weatherEmoji(w.code) };
   },
 
   /**
@@ -9348,6 +9489,23 @@ Alpine.data('app', () => ({
     const dd = String(d).padStart(2, '0');
     const mm = String(m).padStart(2, '0');
     return `${weekday}, ${dd}/${mm}`;
+  },
+
+  // quick 260712-c44 — WMO weather-code → emoji for the Add-Recipe modal line.
+  // Pure display helper; unknown codes fall back to a thermometer.
+  _weatherEmoji(code) {
+    const c = Number(code);
+    if (c === 0) return '☀️';
+    if (c === 1 || c === 2) return '🌤️';
+    if (c === 3) return '☁️';
+    if (c === 45 || c === 48) return '🌫️';
+    if (c === 51 || c === 53 || c === 55 || c === 56 || c === 57) return '🌦️';
+    if (c === 61 || c === 63 || c === 65 || c === 66 || c === 67) return '🌧️';
+    if (c === 71 || c === 73 || c === 75 || c === 77) return '🌨️';
+    if (c === 80 || c === 81 || c === 82) return '🌦️';
+    if (c === 85 || c === 86) return '🌨️';
+    if (c === 95 || c === 96 || c === 99) return '⛈️';
+    return '🌡️';
   },
 
   // F5 (quick 260625-itm) — SEPARATE chip-label helper for the day-header date tick

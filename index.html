@@ -3169,6 +3169,13 @@
          @click.self="closeMealPlanPicker()">
       <div class="modal-content modal-content-wide" @click.stop>
         <h2 x-text="mealPlanPickerTargetLabel ? ('Add recipe → ' + mealPlanPickerTargetLabel) : 'Add recipe'"></h2>
+        <!-- quick 260712-c44 — Met Office forecast high for the day being planned.
+             Hidden when no location is set, the fetch failed, or the day is beyond
+             the ~16-day forecast horizon (pickerWeather returns null). -->
+        <p class="picker-weather" x-show="pickerWeather" x-cloak>
+          <span class="picker-weather-icon" x-text="pickerWeather ? pickerWeather.icon : ''"></span>
+          <span>High of <span x-text="pickerWeather ? pickerWeather.tmax : ''"></span>&deg;C</span>
+        </p>
         <!-- ============ RECIPE PICKER (the single shared copy) ============ -->
         <!-- quick 260620-fn6 — Option A: search-first + Filters disclosure.
              SEARCH (full width) · PRIMARY row (Type chips left / Sort right) ·
@@ -3714,6 +3721,24 @@
                   </span>
                 </label>
                 <button type="button" @click="resetPantrySections()">Reset locations to defaults</button>
+              </fieldset>
+
+              <!-- quick 260712-c44 — Weather location for the Add-Recipe modal line.
+                   Place name is geocoded to lat/long on @blur (saveWeatherLocation),
+                   coords cached in localStorage. Device-local only — never synced. -->
+              <fieldset class="scaling-settings">
+                <legend>Weather</legend>
+                <label>
+                  <span class="settings-field-head">Location
+                    <span class="settings-saved" x-show="savedTick === 'weather'" x-cloak>Saved ✓</span>
+                  </span>
+                  <input type="text"
+                         x-model="weatherLocationDraft"
+                         placeholder="e.g. Liverpool, UK"
+                         autocomplete="off"
+                         @blur="saveWeatherLocation().then(() => { if (weatherLat) { settingsOpen = true; tick('weather'); } })" />
+                </label>
+                <p class="help" x-text="weatherLocationStatus || 'Shows the Met Office forecast high in the Add-Recipe modal. Data via Open-Meteo (UK Met Office model).'"></p>
               </fieldset>
             </section>
 

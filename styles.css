@@ -917,6 +917,21 @@ label select {
   font-weight: 500;
 }
 
+/* quick 260712-c44 — quiet Met Office forecast line under the Add-Recipe modal
+   heading. Tokens: --color-ink-muted (secondary ink) + --fs-sm (small size). */
+.picker-weather {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.75rem 0;
+  color: var(--color-ink-muted);
+  font-size: var(--fs-sm);
+}
+.picker-weather-icon {
+  font-size: 1.15em;
+  line-height: 1;
+}
+
 .modal-content .modal-buttons {
   display: flex;
   gap: 0.5rem;
