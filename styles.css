@@ -5518,6 +5518,34 @@ a.meal-plan-shop-search {
   background: var(--color-danger-bg);
   color: var(--color-danger);
 }
+/* quick 260712-mog — "🗑️ Bin today" glance-reference section inside the ⋯ popover.
+   QUIET by design (a reference, not an alarm): no red block, muted ink throughout.
+   The divider mirrors .meal-plan-swap-list; all colour/font/border ride :root tokens. */
+.meal-plan-bin {
+  margin-top: 0.25rem;
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--color-border);
+}
+.meal-plan-bin-label {
+  padding: 0.25rem 0.55rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-ink-faint);
+}
+.meal-plan-bin-item {
+  padding: 0.15rem 0.55rem 0.3rem;
+}
+.meal-plan-bin-name {
+  font-size: var(--fs-sm);
+  color: var(--color-ink);
+}
+.meal-plan-bin-meta {
+  font-size: var(--fs-xs);
+  color: var(--color-ink-muted);
+}
 /* quick 260621-amm — per-day "+ Add recipe" affordance on the day header row.
    Re-skinned onto the .manager-edit-btn base (shares padding/radius/height with
    the Tray/Cooks/Cook controls) with the accent treatment so it reads as the day's

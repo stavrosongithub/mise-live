@@ -2079,30 +2079,59 @@
                    outside-handlers, which reset the shared dayMenuOpenFor and slammed it
                    shut instantly (looked like the ⋯ menu "didn't work" whenever >1 day had
                    recipes). Guarding on group.key makes a sibling's handler a no-op. -->
+              <!-- quick 260712-mog — gate WIDENED additively: the ⋯ menu now also opens
+                   on a day that has NO upcoming entries but DOES have expiring dinners to
+                   bin (binToBinFor), so the "🗑️ Bin today" reference is reachable there.
+                   Behavior-preserving for existing items — they stay gated by the day's
+                   own content inside the popover. -->
               <div class="meal-plan-day-menu"
-                   x-show="mealPlanTab === 'upcoming' && group.entries.length > 0" x-cloak
+                   x-show="mealPlanTab === 'upcoming' && (group.entries.length > 0 || binToBinFor(group).length > 0)" x-cloak
                    @click.outside="if (dayMenuOpenFor === group.key) { dayMenuOpenFor = ''; swapPickerOpenFor = ''; }">
                 <button type="button" class="manager-edit-btn meal-plan-daybtn meal-plan-menu-btn"
                         :title="'More actions for ' + group.label"
                         @click="const wasOpen = dayMenuOpenFor === group.key; dayMenuOpenFor = wasOpen ? '' : group.key; swapPickerOpenFor = ''">⋯</button>
                 <div class="meal-plan-menu-pop" role="menu"
                      x-show="dayMenuOpenFor === group.key" x-cloak>
-                  <button type="button" class="meal-plan-menu-item" role="menuitem"
-                          :disabled="anyModalOpen"
-                          @click="generateCookArtifact(group); dayMenuOpenFor = ''">Cook this day</button>
-                  <!-- quick 260707-lyk — Swap dishes with… reveals a sub-list of other
-                       upcoming days; picking one swaps the dinner DISHES (re-dates entries). -->
-                  <button type="button" class="meal-plan-menu-item" role="menuitem"
-                          :disabled="anyModalOpen"
-                          @click="swapPickerOpenFor = swapPickerOpenFor === group.key ? '' : group.key">Swap dishes with…</button>
-                  <div class="meal-plan-swap-list" role="menu"
-                       x-show="swapPickerOpenFor === group.key" x-cloak>
-                    <template x-for="target in swapTargetsFor(group.key)" :key="target.key">
-                      <button type="button" class="meal-plan-menu-item meal-plan-swap-target" role="menuitem"
-                              @click="swapMealPlanDishes(group.key, target.key); dayMenuOpenFor = ''; swapPickerOpenFor = ''" x-text="target.menuLabel"></button>
-                    </template>
-                    <div class="meal-plan-swap-empty" x-show="swapTargetsFor(group.key).length === 0">No other days</div>
-                  </div>
+                  <!-- quick 260712-mog — existing items stay gated on the day's OWN
+                       entries so a bin-only (no-entry) day shows ONLY the bin reference,
+                       not the entry-dependent Cook/Swap actions. Their own markup is
+                       unchanged (just wrapped in the entries gate). -->
+                  <template x-if="group.entries.length > 0">
+                    <div class="meal-plan-menu-actions">
+                      <button type="button" class="meal-plan-menu-item" role="menuitem"
+                              :disabled="anyModalOpen"
+                              @click="generateCookArtifact(group); dayMenuOpenFor = ''">Cook this day</button>
+                      <!-- quick 260707-lyk — Swap dishes with… reveals a sub-list of other
+                           upcoming days; picking one swaps the dinner DISHES (re-dates entries). -->
+                      <button type="button" class="meal-plan-menu-item" role="menuitem"
+                              :disabled="anyModalOpen"
+                              @click="swapPickerOpenFor = swapPickerOpenFor === group.key ? '' : group.key">Swap dishes with…</button>
+                      <div class="meal-plan-swap-list" role="menu"
+                           x-show="swapPickerOpenFor === group.key" x-cloak>
+                        <template x-for="target in swapTargetsFor(group.key)" :key="target.key">
+                          <button type="button" class="meal-plan-menu-item meal-plan-swap-target" role="menuitem"
+                                  @click="swapMealPlanDishes(group.key, target.key); dayMenuOpenFor = ''; swapPickerOpenFor = ''" x-text="target.menuLabel"></button>
+                        </template>
+                        <div class="meal-plan-swap-empty" x-show="swapTargetsFor(group.key).length === 0">No other days</div>
+                      </div>
+                    </div>
+                  </template>
+                  <!-- quick 260712-mog — "🗑️ Bin today" glance-reference. Renders ONLY on
+                       days with ≥1 expiring dinner (binToBinFor). Display-only text (NOT
+                       buttons/menuitems) — a reference, not an action list. No indicator
+                       dot on ⋯, no per-item × dismiss (locked decision 6). -->
+                  <template x-if="binToBinFor(group).length > 0">
+                    <div class="meal-plan-bin">
+                      <div class="meal-plan-bin-label">🗑️ Bin today</div>
+                      <template x-for="item in binToBinFor(group)" :key="item.cookedDateKey + item.name">
+                        <div class="meal-plan-bin-item">
+                          <div class="meal-plan-bin-name" x-text="item.name"></div>
+                          <div class="meal-plan-bin-meta"
+                               x-text="'cooked ' + item.cookedLabel + ' · ' + (item.daysOver === 0 ? 'due today' : item.daysOver + 'd over')"></div>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
                 </div>
               </div>
               </div>

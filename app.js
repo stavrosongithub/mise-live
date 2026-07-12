@@ -418,7 +418,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'bdee467 2026-07-12';
+const APP_VERSION = '53939d9 2026-07-12';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -429,6 +429,15 @@ const MEAL_PLAN_UI_KEY = 'recipe_ingest_meal_plan_ui';
 // (no whole-doc clobber, no 409 hard-stop). It MUST survive reloads (D-14) or the
 // merge degrades to last-write-wins; restored on boot alongside _restoreMealPlan.
 const MEAL_PLAN_BASE_KEY = 'recipe_ingest_meal_plan_base';
+
+// quick 260712-mog — "🗑️ Bin today" glance-reference window. FRIDGE_LIFE_DAYS =
+// how many days a cooked dinner keeps in the fridge (bin-date = cooked + 3).
+// BIN_VISIBLE_DAYS = how many EXTRA days past the bin-date a dinner keeps showing
+// in the ⋯ menu before it drops off (bounded trailing window, no ancient pile-up).
+// Both are SENSIBLE DEFAULTS, configurable later — do NOT build config UI now
+// (locked decision 3). Purely presentational: no data model, no persistence.
+const FRIDGE_LIFE_DAYS = 3;
+const BIN_VISIBLE_DAYS = 3;
 
 // Hardcoded short recipe shown when the user clicks the dev-only Load Example
 // button. Already framed as scaled-to-20-servings (D-07). Trivial to remove.
@@ -5669,6 +5678,59 @@ Alpine.data('app', () => ({
         }
         return { key: g.key, menuLabel: this.dayTickLabel(g.key) + ' · ' + hint };
       });
+  },
+
+  /**
+   * binToBinFor — quick 260712-mog. PURE read-only glance-reference. For a given
+   * meal-plan day D (the passed group; group.key is a 'YYYY-MM-DD'), returns the
+   * cooked dinners whose ~3-day fridge life has expired ON or BEFORE D, within a
+   * BOUNDED trailing window so old items drop off rather than piling up forever.
+   *
+   * A "dinner cooked on day X" = a PAST entry (strictly before today, valid date)
+   * whose type is STRICTLY 'main' (same classification as dayHeadlineRecipe/
+   * dayTypeSummary). Its bin-date = cooked + FRIDGE_LIFE_DAYS. The dinner shows on
+   * day D only when D is in the CLOSED window [binDate, binDate + BIN_VISIBLE_DAYS]
+   * — i.e. from its bin-date and for BIN_VISIBLE_DAYS days after, then it disappears.
+   *
+   * Returns { name, cookedDateKey, cookedLabel, daysOver }[] where daysOver ∈
+   * 0..BIN_VISIBLE_DAYS (0 = "due today", N = "Nd over"). daysOver is whole days
+   * from binDate to dayKey via the SAME LOCAL-midnight parse the rest of the file
+   * uses (NEVER toISOString/UTC). blank/'' /malformed group.key (incl. the
+   * Unscheduled group, key '') → []. PURE: no writes, no new state, no persistence,
+   * no console.warn — must not add a 4th console-baseline error.
+   */
+  binToBinFor(group) {
+    const dayKey = group && typeof group.key === 'string' ? group.key : '';
+    if (!dayKey) return []; // '' (Unscheduled) / no key → nothing to bin.
+    // Whole days between two 'YYYY-MM-DD' via LOCAL midnight (matches _stepDayKey/
+    // _dayLabel — no toISOString). Returns null on malformed either side.
+    const dayDiff = (fromKey, toKey) => {
+      const fp = String(fromKey).split('-');
+      const tp = String(toKey).split('-');
+      if (fp.length !== 3 || tp.length !== 3) return null;
+      const fy = Number(fp[0]), fm = Number(fp[1]), fd = Number(fp[2]);
+      const ty = Number(tp[0]), tm = Number(tp[1]), td = Number(tp[2]);
+      if (![fy, fm, fd, ty, tm, td].every(Number.isFinite)) return null;
+      const from = new Date(fy, fm - 1, fd); // LOCAL midnight
+      const to = new Date(ty, tm - 1, td);
+      return Math.round((to - from) / 86400000); // whole days (DST-safe via round)
+    };
+    const out = [];
+    for (const entry of this.pastEntries) {
+      if ((entry.type || '').trim().toLowerCase() !== 'main') continue; // strict dinner only
+      const binDate = this._stepDayKey(entry.date, FRIDGE_LIFE_DAYS);
+      if (binDate === '') continue; // malformed cooked date → skip
+      const daysOver = dayDiff(binDate, dayKey);
+      if (daysOver === null) continue;
+      if (daysOver < 0 || daysOver > BIN_VISIBLE_DAYS) continue; // outside [binDate, binDate+N]
+      out.push({
+        name: entry.name || '(unnamed)',
+        cookedDateKey: entry.date,
+        cookedLabel: this._dayLabel(entry.date),
+        daysOver,
+      });
+    }
+    return out;
   },
 
   /**
