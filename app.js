@@ -380,7 +380,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'c1a6c17 2026-07-12';
+const APP_VERSION = 'ca366a9 2026-07-12';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -8249,6 +8249,98 @@ Alpine.data('app', () => ({
     const w = this.weatherByDate[key];
     if (!w) return null;                          // no location, fetch failed, or beyond forecast range
     return { tmax: w.tmax, icon: this._weatherEmoji(w.code) };
+  },
+
+  /**
+   * pickerResidentAllergens — quick 260712-cqr. The Add-Recipe modal's proactive
+   * "avoid these" callout: the KNOWN ALLERGENS of the residents present on the day
+   * being planned (mealPlanPickerTargetDate). This is NOT a conflict against
+   * already-scheduled recipes (that's dayAllergenStatus / the day-card banner) — it
+   * is the residents' OWN allergen profile so the cook picks around it while browsing.
+   *
+   * Reuses the SAME safety-critical resolution as dayAllergenStatus (present-on-date →
+   * curated-reviewed-wins → keyword fallback via the PURE classifyResidentAllergens),
+   * but UNIONS each resident's own FSA-14 tag set instead of intersecting against the
+   * day's recipes. The trick: pass the FULL FSA14 set as the classifier's dayAllergens
+   * arg, so every resident tag "hits" and contribution.allergens returns that resident's
+   * complete tag set. This NARROWS no safety rule — reviewed-empty still reads clear,
+   * allergiesKnown===false still surfaces as unknown, unmatchable free-text still
+   * surfaces as unmatched. Every displayed field is a PRE-JOINED STRING (allergensText /
+   * unknownText / unmatchedText, '' when N/A) so the markup never dereferences an array
+   * under x-show. Device-local read only — touches NO sync surface.
+   *
+   * States (priority): none (no day / nobody present → hide) · cant-check (roster not
+   * loaded → muted, never implies safe) · has (allergens present) · caution (no known
+   * allergens but a present resident is unknown/unmatched — never "clear") · clear
+   * (residents present, all checked, none allergic).
+   */
+  get pickerResidentAllergens() {
+    const empty = { state: 'none', allergensText: '', unknownText: '', unmatchedText: '' };
+    const key = this.mealPlanPickerTargetDate;
+    if (!key) return empty;                                       // Unscheduled / no day → hide
+    if (!this.rosterLoaded) return { ...empty, state: 'cant-check' }; // never imply safe
+
+    // Oxford-comma join (local, pure) — matches dayAllergenStatus's display convention.
+    const oxford = (arr) => {
+      const a = (arr || []).filter(Boolean);
+      if (a.length === 0) return '';
+      if (a.length === 1) return a[0];
+      if (a.length === 2) return a[0] + ' and ' + a[1];
+      return a.slice(0, -1).join(', ') + ', and ' + a[a.length - 1];
+    };
+
+    const { present } = residentsPresentOnDate(this.joinedRoster || [], key);
+    if (present.length === 0) return empty;                      // nobody present → hide (not a claim)
+
+    // Treat the FULL FSA-14 set as "the day's allergens" so the pure classifier returns
+    // each resident's OWN full tag set (every tag hits) — reuse without widening a rule.
+    const allFsa = new Set(this.FSA14);
+
+    const nameField = CODA_FIELDS.residency.fullName;
+    const allergyField = CODA_FIELDS.onboarding.allergies;
+    const displayName = (row) => {
+      const n = row && row[nameField];
+      const s = (typeof n === 'string' ? n : '').trim();
+      return s || 'a resident';                                  // NEVER surface raw allergy text or email.
+    };
+
+    const curatedByAppid = this._residentAllergenByAppid;
+    const allergenSet = new Set();
+    const unknownNames = [];
+    const unmatchedNames = [];
+    for (const row of present) {
+      const rawAppid = row && row['APPID'];
+      const appid = String(Array.isArray(rawAppid) ? (rawAppid.length ? rawAppid[0] : '') : (rawAppid != null ? rawAppid : '')).trim();
+      const curated = curatedByAppid.get(appid) || null;
+      const isReviewed = !!(curated && curated.reviewed === true);
+      if (row && row.allergiesKnown === false && !isReviewed) {
+        unknownNames.push(displayName(row));                     // allergies not recorded (reviewed can override)
+        continue;
+      }
+      const rawText = ((row && row.onboarding && row.onboarding[allergyField]) || '').toString().trim();
+      const keywordTags = [...findKeywordHits(rawText, this.currentAllergenKeywords).keys()];
+      const contribution = classifyResidentAllergens(curated, keywordTags, allFsa, !!rawText);
+      if (contribution.kind === 'conflict') {
+        for (const a of contribution.allergens) allergenSet.add(a);
+      } else if (contribution.kind === 'unmatched') {
+        unmatchedNames.push(displayName(row));                   // free-text the matcher couldn't classify
+      }
+      // 'clear' → contributes nothing (reviewed-empty, blank text, or non-matching set).
+    }
+
+    const allergens = this.FSA14.filter(a => allergenSet.has(a)); // canonical FSA-14 order
+    const allergensText = oxford(allergens);
+    const unknownText = oxford(unknownNames);
+    const unmatchedText = oxford(unmatchedNames);
+
+    if (allergens.length > 0) {
+      return { state: 'has', allergens, allergensText, unknownText, unmatchedText };
+    }
+    if (unknownNames.length > 0 || unmatchedNames.length > 0) {
+      // No known allergens, but a present resident's data is incomplete → NEVER "clear".
+      return { state: 'caution', allergensText: '', unknownText, unmatchedText };
+    }
+    return { state: 'clear', allergensText: '', unknownText: '', unmatchedText: '' };
   },
 
   /**

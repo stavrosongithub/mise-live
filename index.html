@@ -3168,14 +3168,63 @@
          @keydown.escape.window="closeMealPlanPicker()"
          @click.self="closeMealPlanPicker()">
       <div class="modal-content modal-content-wide" @click.stop>
-        <h2 x-text="mealPlanPickerTargetLabel ? ('Add recipe → ' + mealPlanPickerTargetLabel) : 'Add recipe'"></h2>
-        <!-- quick 260712-c44 — Met Office forecast high for the day being planned.
-             Hidden when no location is set, the fetch failed, or the day is beyond
-             the ~16-day forecast horizon (pickerWeather returns null). -->
-        <p class="picker-weather" x-show="pickerWeather" x-cloak>
-          <span class="picker-weather-icon" x-text="pickerWeather ? pickerWeather.icon : ''"></span>
-          <span>High of <span x-text="pickerWeather ? pickerWeather.tmax : ''"></span>&deg;C</span>
-        </p>
+        <!-- quick 260712-cqr — header row: day label + weather share one line to
+             conserve vertical space (the allergen callout below adds a row). -->
+        <div class="picker-header">
+          <h2 x-text="mealPlanPickerTargetLabel ? ('Add recipe → ' + mealPlanPickerTargetLabel) : 'Add recipe'"></h2>
+          <!-- quick 260712-c44 — Met Office forecast high for the day being planned.
+               Hidden when no location is set, the fetch failed, or the day is beyond
+               the ~16-day forecast horizon (pickerWeather returns null). -->
+          <p class="picker-weather" x-show="pickerWeather" x-cloak>
+            <span class="picker-weather-icon" x-text="pickerWeather ? pickerWeather.icon : ''"></span>
+            <span>High of <span x-text="pickerWeather ? pickerWeather.tmax : ''"></span>&deg;C</span>
+          </p>
+        </div>
+        <!-- quick 260712-cqr — proactive allergen callout: the KNOWN ALLERGENS of the
+             residents present on the day being planned (pickerResidentAllergens), so the
+             cook picks around them. NOT a conflict against already-scheduled recipes (that
+             is the day-card banner). Hidden on state 'none'. All copy reads pre-joined
+             strings — never dereferences an array under x-show. SENSITIVE: never implies
+             "clear" when a present resident's allergy data is unknown/unmatched. -->
+        <div class="picker-allergens" x-show="pickerResidentAllergens.state !== 'none'" x-cloak
+             :class="{
+               'picker-allergens-has': pickerResidentAllergens.state === 'has',
+               'picker-allergens-caution': pickerResidentAllergens.state === 'caution',
+               'picker-allergens-clear': pickerResidentAllergens.state === 'clear',
+               'picker-allergens-muted': pickerResidentAllergens.state === 'cant-check'
+             }">
+          <span class="picker-allergens-mark"
+                x-text="pickerResidentAllergens.state === 'clear' ? '✓' : (pickerResidentAllergens.state === 'cant-check' ? 'ⓘ' : '⚠︎')"></span>
+          <div class="picker-allergens-body">
+            <!-- has: allergens present -->
+            <p class="picker-allergens-head" x-show="pickerResidentAllergens.state === 'has'">
+              Residents this day avoid <strong x-text="pickerResidentAllergens.allergensText"></strong>.
+            </p>
+            <!-- caution: no known allergens, but incomplete data present -->
+            <p class="picker-allergens-head" x-show="pickerResidentAllergens.state === 'caution'">
+              No known allergens for residents this day — but some allergy info is incomplete.
+            </p>
+            <!-- clear: all present residents checked, none allergic -->
+            <p class="picker-allergens-head" x-show="pickerResidentAllergens.state === 'clear'">
+              No known allergens for residents this day.
+            </p>
+            <!-- cant-check: roster not loaded -->
+            <p class="picker-allergens-head" x-show="pickerResidentAllergens.state === 'cant-check'">
+              Allergen check unavailable — resident roster not loaded.
+            </p>
+            <!-- caveats ride along on has/caution (never behind a "clear") -->
+            <p class="picker-allergens-caveat"
+               x-show="(pickerResidentAllergens.state === 'has' || pickerResidentAllergens.state === 'caution') && pickerResidentAllergens.unknownText"
+               x-cloak>
+              Allergies not recorded for <span x-text="pickerResidentAllergens.unknownText"></span> — check directly.
+            </p>
+            <p class="picker-allergens-caveat"
+               x-show="(pickerResidentAllergens.state === 'has' || pickerResidentAllergens.state === 'caution') && pickerResidentAllergens.unmatchedText"
+               x-cloak>
+              Couldn't read the allergy note for <span x-text="pickerResidentAllergens.unmatchedText"></span> — check manually.
+            </p>
+          </div>
+        </div>
         <!-- ============ RECIPE PICKER (the single shared copy) ============ -->
         <!-- quick 260620-fn6 — Option A: search-first + Filters disclosure.
              SEARCH (full width) · PRIMARY row (Type chips left / Sort right) ·
