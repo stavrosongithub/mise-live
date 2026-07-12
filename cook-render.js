@@ -1153,7 +1153,11 @@ export const COOK_RUNTIME = `
     // a cook.html#<lz-string> link. LZString is provided GLOBALLY by the
     // LZSTRING_MIN <script> renderCookDocument injects BEFORE this runtime, so a
     // kitchen tablet can build a link fully OFFLINE (no CDN fetch).
-    // Nothing is uploaded; no GitHub write — the data lives only in the link.
+    // The compressed payload IS sent to TinyURL (https://tinyurl.com/api-create.php)
+    // when the auto-shorten fetch succeeds, so the button can copy a short url.
+    // On ANY shorten failure (offline/CORS/non-2xx/malformed) it falls back to
+    // copying the LONG url instead — that fallback path uploads nothing; the data
+    // then lives only in the link (no GitHub write in either case).
     // ====================================================================
     var SHARE_URL_WARN = 8000;  // named/tunable: above this, warn (chat apps may truncate; a normal day ≈ 4.3k stays silent — SMS is the only sub-8k-limited channel)
     var shareBtn = document.getElementById('share-link-btn');
@@ -1181,8 +1185,49 @@ export const COOK_RUNTIME = `
           );
           if (!go) { return; }
         }
-        copyShareUrl(url);
+        shortenThenCopy(url);
       });
+    }
+
+    // Auto-shorten via TinyURL's keyless legacy endpoint, then copy. On ANY
+    // failure fall back to copying the long url — NEVER block, NEVER truncate,
+    // NEVER show a scary error. (api-create.php is undocumented/legacy; the
+    // long-url fallback is the mitigation if it ever changes — acceptable for
+    // this personal single-user tool.)
+    function shortenThenCopy(longUrl) {
+      var original = shareBtn ? shareBtn.textContent : '';
+      if (shareBtn) {
+        shareBtn.textContent = 'Shortening…';
+        shareBtn.disabled = true;
+      }
+      fetch('https://tinyurl.com/api-create.php?url=' + encodeURIComponent(longUrl))
+        .then(function (resp) {
+          if (!resp.ok) { throw new Error('bad status'); }
+          return resp.text();
+        })
+        .then(function (text) {
+          var short = (text || '').trim();
+          // Do NOT trust the body blindly — accept only a real tinyurl link.
+          if (short.indexOf('https://tinyurl.com/') === 0) {
+            finishCopy(short, original);
+          } else {
+            finishCopy(longUrl, original);
+          }
+        })
+        .catch(function () {
+          finishCopy(longUrl, original);
+        });
+    }
+
+    // Clear the in-flight text/disabled state, then hand off to the EXISTING
+    // copy chain. Restore the real label BEFORE copyShareUrl so flashCopied's
+    // 2s-restore (which reads shareBtn.textContent) lands on the right label.
+    function finishCopy(urlToCopy, original) {
+      if (shareBtn) {
+        shareBtn.disabled = false;
+        shareBtn.textContent = original;
+      }
+      copyShareUrl(urlToCopy);
     }
 
     function flashCopied() {
