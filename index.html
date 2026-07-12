@@ -3273,8 +3273,8 @@
                   x-show="mealPlanHiddenFilterCount > 0"
                   x-text="mealPlanHiddenFilterCount" x-cloak></span>
             <label class="inline">
-              <input type="checkbox" x-model="mealPlanHidePlanned" />
-              <span>Hide already-planned</span>
+              <input type="checkbox" x-model="mealPlanHideRecent" />
+              <span>Hide planned in last 7 days</span>
             </label>
             <span class="manager-result-count"
                   x-text="filteredMealPlanPickList.length + (filteredMealPlanPickList.length === 1 ? ' recipe' : ' recipes')"></span>

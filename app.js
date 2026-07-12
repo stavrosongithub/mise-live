@@ -380,7 +380,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'b5d3dfd 2026-07-12';
+const APP_VERSION = 'ed6bbe4 2026-07-12';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -3417,13 +3417,13 @@ Alpine.data('app', () => ({
   //   mealPlanSort            'default'   default | least-recent | max-servings-desc | easiest
   //   mealPlanMinServings     ''          number → keep max_servings >= N; '' = off
   //   mealPlanMaxDifficulty   ''          1..5 → keep difficulty <= N; '' = off
-  //   mealPlanHidePlanned     false       hide recipe_ids already in upcomingEntries
+  //   mealPlanHideRecent      true        hide recipe_ids with a meal-plan entry in the last 7 days
   mealPlanTypeFilter: ['main'], // quick 260712-bts — default to Main (single-select)
   mealPlanAllergenFilter: [],
   mealPlanSort: 'default',
   mealPlanMinServings: '',
   mealPlanMaxDifficulty: '',
-  mealPlanHidePlanned: false,
+  mealPlanHideRecent: true,
   // quick 260620-fn6 — advanced-filters disclosure. TRANSIENT: deliberately NOT
   // persisted (advanced filters default hidden each session, like mealPlanTab).
   // MUST NOT be added to _persistMealPlanUi()/_restoreMealPlanUi().
@@ -9412,7 +9412,7 @@ Alpine.data('app', () => ({
     this.mealPlanAllergenFilter = [];
     this.mealPlanMinServings = '';
     this.mealPlanMaxDifficulty = '';
-    this.mealPlanHidePlanned = false;
+    this.mealPlanHideRecent = true;
     this.mealPlanSort = 'default';
   },
 
@@ -9430,7 +9430,7 @@ Alpine.data('app', () => ({
    *      max_servings == null (blank ALWAYS shown) OR >= N; only KNOWN values < N hidden.
    *   5. MAX-DIFFICULTY ≤ N — when mealPlanMaxDifficulty parses to finite 1..5, keep
    *      difficulty != null && <= N (null/unknown hidden while active).
-   *   6. HIDE-PLANNED — when mealPlanHidePlanned, drop recipe_ids in upcomingEntries.
+   *   6. HIDE-RECENT — when mealPlanHideRecent, drop recipe_ids planned in the last 7 days (strictly before today).
    * SORT (final, STABLE via decorate-with-original-index tie-break):
    *   'default'           → recipeList order (no reorder).
    *   'least-recent'      → never-made ('' last_made) FIRST, then dated ASC (YYYY-MM-DD).
@@ -9476,10 +9476,18 @@ Alpine.data('app', () => ({
       result = result.filter(r => r.difficulty != null && r.difficulty <= maxDiff);
     }
 
-    // Stage 6 — HIDE-PLANNED (drop recipe_ids already in the upcoming plan).
-    if (this.mealPlanHidePlanned) {
-      const plannedIds = new Set((this.upcomingEntries || []).map(e => e.recipe_id));
-      result = result.filter(r => !plannedIds.has(r.recipe_id));
+    // Stage 6 — HIDE-RECENT (drop recipe_ids planned in the last 7 days).
+    if (this.mealPlanHideRecent) {
+      const windowStart = this._stepDayKey(this.todayStr, -7);
+      if (windowStart) { // fail-open: if _stepDayKey returns '' (malformed), skip → show all
+        const today = this.todayStr;
+        const recentIds = new Set(
+          (this._displayableMealPlan || [])
+            .filter(e => e && e.date >= windowStart && e.date < today)
+            .map(e => e.recipe_id)
+        );
+        result = result.filter(r => !recentIds.has(r.recipe_id));
+      }
     }
 
     // FINAL SORT — stable via decorate-sort-undecorate (original index tie-break).
