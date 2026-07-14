@@ -418,7 +418,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '830dff8 2026-07-14';
+const APP_VERSION = 'b26354c 2026-07-14';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -1714,6 +1714,13 @@ Alpine.data('app', () => ({
   // single top-level nav surface (Meal Planner / Ingredient Manager / Recipe
   // Manager / Settings) replacing the old .toolbar button strip.
   drawerOpen: false,
+
+  // Phase 21 (v2.1 Mobile Kitchen) — mobile-only "＋ N more days" collapser. When
+  // false (default), the empty upcoming days beyond the first 3 are hidden AT PHONE
+  // WIDTH ONLY (the .mp-empty-collapsed class maps to display:none only inside the
+  // ≤640px media query — desktop shows all days, unchanged). Transient local view
+  // state (like drawerOpen); NOT synced, NOT persisted.
+  emptyDaysExpanded: false,
 
   // quick 260614-sht — modal-stack guard (UI-REVIEW BLOCKER, Phase-4 "no modal
   // stacks"). Read-only derived getter: true when ANY OTHER modal is open,
@@ -10326,6 +10333,25 @@ Alpine.data('app', () => ({
   // quick 260618-ahg — what the main loop binds to: the active tab's day groups.
   get visiblePlanByDay() {
     return this.mealPlanTab === 'past' ? this.pastByDay : this.upcomingByDay;
+  },
+
+  // Phase 21 (v2.1 Mobile Kitchen) — the set of EMPTY upcoming dated-day keys
+  // beyond the first 3 (the "far future" empty days). Drives the mobile-only
+  // "＋ N more days" collapser: at ≤640px these days are hidden until the operator
+  // taps the toggle (emptyDaysExpanded). Desktop is unaffected — the class this
+  // feeds only maps to display:none inside the phone media query. Unscheduled
+  // (blank key) is never collapsed. Pure read; no writes, no sync.
+  get _collapsibleEmptyDayKeys() {
+    const KEEP = 3;
+    const keys = new Set();
+    let seen = 0;
+    for (const g of (this.visiblePlanByDay || [])) {
+      if (g && g.key && Array.isArray(g.entries) && g.entries.length === 0) {
+        seen++;
+        if (seen > KEEP) keys.add(g.key);
+      }
+    }
+    return keys;
   },
 
   /**

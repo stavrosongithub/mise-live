@@ -6078,4 +6078,42 @@ a.meal-plan-shop-search {
     min-height: 2.5rem;
     padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
   }
+
+  /* ---- Phase 21 — "＋ N more days" empty-day collapser (MOBILE ONLY) ----
+     The far-future empty days (class applied by app.js beyond the first 3) are
+     hidden here. This display:none lives ONLY inside this media query, so desktop
+     shows every day, unchanged (MSAFE-01). */
+  .mp-empty-collapsed {
+    display: none;
+  }
+  /* reveal the collapser toggle (base-hidden below) at phone width, only when
+     app.js flags it has collapsible days */
+  .meal-plan-more-days.has-collapsible {
+    display: block;
+  }
+}
+
+/* Phase 21 — the "＋ N more days" collapser toggle. BASE scope = display:none, so
+   it NEVER shows on desktop (desktop renders every day, unchanged); it is revealed
+   only inside the ≤640px block above. Token-styled dashed ghost row, echoing
+   .meal-plan-day-note-add. */
+.meal-plan-more-days {
+  display: none;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 2.5rem;
+  margin: 0.5rem 0 0.25rem;
+  padding: 0.6rem 0.85rem;
+  font-family: var(--font-body);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-sm);
+  color: var(--color-accent);
+  background: transparent;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+.meal-plan-more-days:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-tint);
 }

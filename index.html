@@ -1959,7 +1959,7 @@
                petrol header band: the .meal-plan-day-empty class drives the header-only
                CSS (no body whitespace, no caret) + tight :has() stacking. Populated days
                never get the class, so they are untouched. -->
-          <div class="meal-plan-day-group" :class="{ 'meal-plan-day-empty': group.entries.length === 0 }">
+          <div class="meal-plan-day-group" :class="{ 'meal-plan-day-empty': group.entries.length === 0, 'mp-empty-collapsed': !emptyDaysExpanded && _collapsibleEmptyDayKeys.has(group.key) }">
             <!-- quick 260620-esf — collapsible day HEADER ROW (locked decision 2):
                  day-collapse caret · label · Tray/Prep modal openers · day-tools, all
                  on one flex row. The caret uses the missing===collapsed / ===false===
@@ -2423,6 +2423,15 @@
                  below (outside this x-for), resolved via trayModalGroup / prepModalGroup. -->
           </div>
         </template>
+        <!-- Phase 21 (v2.1 Mobile Kitchen) — mobile-only "＋ N more days" collapser.
+             Hidden on desktop (base display:none; revealed only ≤640px when it carries
+             .has-collapsible). Toggles emptyDaysExpanded, which flips whether the empty
+             upcoming days beyond the first 3 are shown. No x-show (would inline-override
+             the desktop hide); visibility is CSS-media-gated. Local view state only. -->
+        <button type="button" class="meal-plan-more-days"
+                :class="{ 'has-collapsible': _collapsibleEmptyDayKeys.size > 0 }"
+                @click="emptyDaysExpanded = !emptyDaysExpanded"
+                x-text="emptyDaysExpanded ? 'Show fewer days' : ('＋ ' + _collapsibleEmptyDayKeys.size + ' more days')"></button>
         <!-- Phase 06 (WR-01) — cook-artifact feedback. generateCookArtifact sets
              these three flags but they had no UI: a blocked popup / read failure /
              file:// notice was silent. Reuse the meal-plan warning-banner pattern
