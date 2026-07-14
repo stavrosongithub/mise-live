@@ -5958,3 +5958,124 @@ a.meal-plan-shop-search {
   display: flex;
   gap: 0.5rem;
 }
+
+/* ============================================================================
+   PHASE 20 — MOBILE PATTERN KIT  (milestone v2.1 Mobile Kitchen)
+   ----------------------------------------------------------------------------
+   Reusable phone-breakpoint conventions, applied ONCE so the kitchen views
+   (meal plan / shopping / cook) read consistently on a phone. EVERY rule below
+   is scoped to `@media (max-width: 640px)` — desktop rendering is untouched
+   (MSAFE-01). CSS-only; the meal-plan sync layer is never touched (MSAFE-02).
+   The 17.5px rem scale dial is WRAPPED here, NOT re-architected.
+
+   Conventions this kit establishes (placed per-view in Phases 21–23):
+     • Single-column stacks — wide multi-column rows collapse to one column.
+     • Card-from-row — dense table rows become stacked cards.
+     • Full-screen sheets — modals fill the viewport at phone width.
+     • ≥44px touch targets — curated hit-area growth (NOT a blanket button{}).
+     • Safe-area insets — edge chrome respects env(safe-area-inset-*).
+     • Thumb-zone — `.mobile-bottom-action` anchors a primary action in reach.
+   ============================================================================ */
+@media (max-width: 640px) {
+
+  /* ---- Kill the page's horizontal scroll (Phase 19 audit, re-diagnosed) ----
+     Two independent causes, both fixed by letting a no-wrap flex row wrap:
+     (1) `.ml-foot` (item count + "Open order list" + "Mark this shop as
+         ordered", all nowrap) is the TRUE page-width driver (~432px floor).
+     (2) `.meal-list-tabs-bar` (4 tabs, flex 0 0 auto) scroll-clips internally,
+         hiding "Tray lists" behind a swipe — wrapping keeps all tabs visible.
+     Wrapping both removes sideways scroll on the whole Meal-Planner page and
+     restores tab discoverability. One shared class each → covers both bars. */
+  .ml-foot {
+    flex-wrap: wrap;
+  }
+  .meal-list-tabs-bar {
+    flex-wrap: wrap;
+  }
+
+  /* ---- ≥44px touch targets — curated (per the audit's measured offenders) ----
+     Grow the HIT AREA, not the glyph. The worst offenders are the shopping
+     per-item 🛒 / ✕ (measured 17×14) — they get a full ~44×44 target; the
+     tighter day-header cluster reaches ≥44px in the vertical dimension. */
+  .shopping-cart-link,
+  .shopping-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.5rem;   /* ≈44px at the 17.5px dial */
+    min-height: 2.5rem;
+    padding: 0;
+  }
+  /* the name + 🛒 row centres (not baseline) so the 44px cart target aligns */
+  .shopping-name-cell {
+    align-items: center;
+    gap: 0.5rem;
+  }
+  /* the shared shopping/meal row grid pins the name column at minmax(11rem,1fr);
+     that 11rem floor can't absorb the now-44px ✕ on a narrow phone (360px → 9px
+     overflow). Relax the floor to 0 so the name column shrinks (it wraps rather
+     than pushing the page) — the amount + ✕ columns keep their size. */
+  .shopping-list-item {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  /* dish / ingredient name links → ≥44px-tall tap rows */
+  .meal-plan-ing-link,
+  .meal-plan-recipe-link {
+    min-height: 2.5rem;
+    padding-top: 0.35rem;
+    padding-bottom: 0.35rem;
+  }
+
+  /* day-header + row action buttons (base is doubled-class 0,2,0 — match it so
+     this override wins; source-order-last also breaks the tie in our favour) */
+  .meal-plan-day-tools .meal-plan-daybtn,
+  .meal-plan-daybtn.meal-plan-daybtn {
+    min-height: 2.5rem;
+    padding-top: 0.35rem;
+    padding-bottom: 0.35rem;
+  }
+  .meal-plan-day-caret {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+  }
+  .meal-plan-dish-note-btn,
+  .meal-plan-cook-add {
+    min-height: 2.5rem;
+    padding-top: 0.35rem;
+    padding-bottom: 0.35rem;
+  }
+  .meal-plan-day-note-add {
+    min-height: 2.5rem;
+  }
+  /* the meal-plan-row servings number field */
+  .meal-plan-servings input {
+    min-height: 2.5rem;
+  }
+
+  /* ---- Safe-area insets on fixed / edge chrome ----
+     max() keeps the existing padding where an inset is 0 (no notch). */
+  .topbar {
+    padding-top: max(0.75rem, env(safe-area-inset-top));
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+  }
+  .drawer {
+    padding-top: max(1.25rem, env(safe-area-inset-top));
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+  }
+
+  /* ---- Reusable thumb-zone utility (MKIT-04) ----
+     A view applies this to anchor its primary action within thumb reach at
+     phone width. Defined here; PLACED per-view in Phases 21–23. */
+  .mobile-bottom-action {
+    display: block;
+    width: 100%;
+    min-height: 2.5rem;
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+}
