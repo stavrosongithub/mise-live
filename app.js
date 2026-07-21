@@ -418,7 +418,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'bfa4e4b 2026-07-14';
+const APP_VERSION = '5c35c9d 2026-07-21';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -8767,6 +8767,45 @@ Alpine.data('app', () => ({
   },
 
   /**
+   * pickerServingNeed — quick 260721-roz. READ-ONLY advisory for the Add-Recipe
+   * picker header: how many the target day feeds, so the user picks an
+   * appropriately-sized recipe. PURE read — NO writes, NO _persistMealPlan, NO
+   * detectChainedOverlap, NO shared-state mutation. REUSES the existing
+   * headcountForDate / _leftoverBonusInto / suggestedServingsFor helpers rather
+   * than re-deriving the ceil/mult/bonus math.
+   *
+   * Returns null on unknown headcount — Unscheduled day OR roster not loaded
+   * (headcountForDate === null) — so the template hides the line entirely (graceful
+   * empty state, never NaN/0). Otherwise returns an object whose PRE-COMPOSED .label
+   * string carries the meaning ("Feeding N", + "(a + b leftovers)" breakdown when a
+   * leftovers day rolls in, + "· ~M <type> servings" when exactly one Type chip is
+   * active) so the markup x-text reads a plain scalar and never dereferences null/array
+   * under x-show (protects the 3-error console baseline).
+   */
+  get pickerServingNeed() {
+    const date = this.mealPlanPickerTargetDate;
+    const base = this.headcountForDate(date);
+    if (base === null) return null;              // Unscheduled / roster unloaded → hide the line
+    const bonus = this._leftoverBonusInto(date);
+    const headcount = base + bonus;
+
+    // Per-type suggestion ONLY when exactly one Type chip is active (Main/Side/Salad).
+    let suggested = null;
+    let typeLabel = '';
+    const sel = Array.isArray(this.mealPlanTypeFilter) ? this.mealPlanTypeFilter : [];
+    if (sel.length === 1 && (sel[0] === 'main' || sel[0] === 'side' || sel[0] === 'salad')) {
+      const s = this.suggestedServingsFor({ type: sel[0] }, { key: date });
+      if (s) { suggested = s.servings; typeLabel = sel[0]; }
+    }
+
+    let label = `Feeding ${headcount}`;
+    if (bonus > 0) label += ` (${base} + ${bonus} leftovers)`;   // matches daySubtitleSegments convention
+    if (suggested !== null) label += ` · ~${suggested} ${typeLabel} servings`;
+
+    return { label, headcount, base, bonus, suggested, type: typeLabel };
+  },
+
+  /**
    * removeFromMealPlan — quick 260615-lzq: remove ONLY the entry whose unique id
    * matches (recipe_id is no longer a unique key — repeats share a recipe_id).
    * Persist the change.
@@ -9853,7 +9892,9 @@ Alpine.data('app', () => ({
    *      max_servings == null (blank ALWAYS shown) OR >= N; only KNOWN values < N hidden.
    *   5. MAX-DIFFICULTY ≤ N — when mealPlanMaxDifficulty parses to finite 1..5, keep
    *      difficulty != null && <= N (null/unknown hidden while active).
-   *   6. HIDE-RECENT — when mealPlanHideRecent, drop recipe_ids planned in the last 7 days (strictly before today).
+   *   6. HIDE-RECENT — when mealPlanHideRecent, drop MAIN-type recipe_ids planned in the last 7 days
+   *      (strictly before today). MAINS-ONLY (quick 260721-rya): sides & salads are re-used freely
+   *      and are NEVER hidden by recency.
    * SORT (final, STABLE via decorate-with-original-index tie-break):
    *   'default'           → recipeList order (no reorder).
    *   'least-recent'      → never-made ('' last_made) FIRST, then dated ASC (YYYY-MM-DD).
@@ -9899,7 +9940,11 @@ Alpine.data('app', () => ({
       result = result.filter(r => r.difficulty != null && r.difficulty <= maxDiff);
     }
 
-    // Stage 6 — HIDE-RECENT (drop recipe_ids planned in the last 7 days).
+    // Stage 6 — HIDE-RECENT (drop MAIN-type recipe_ids planned in the last 7 days).
+    // MAINS-ONLY (quick 260721-rya): a recipe is dropped only when it is BOTH a main
+    // AND recently planned. Sides & salads are re-used freely, so a recently-planned
+    // side/salad still appears in the picker. Same exact-match, trimmed, lower-cased
+    // type test used by Stage 2 / dayTypeSummary.
     if (this.mealPlanHideRecent) {
       const windowStart = this._stepDayKey(this.todayStr, -7);
       if (windowStart) { // fail-open: if _stepDayKey returns '' (malformed), skip → show all
@@ -9909,7 +9954,9 @@ Alpine.data('app', () => ({
             .filter(e => e && e.date >= windowStart && e.date < today)
             .map(e => e.recipe_id)
         );
-        result = result.filter(r => !recentIds.has(r.recipe_id));
+        result = result.filter(r =>
+          !((r.type || '').trim().toLowerCase() === 'main' && recentIds.has(r.recipe_id))
+        );
       }
     }
 

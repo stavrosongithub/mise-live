@@ -3218,6 +3218,16 @@
             <span>High of <span x-text="pickerWeather ? pickerWeather.tmax : ''"></span>&deg;C</span>
           </p>
         </div>
+        <!-- quick 260721-roz — read-only day serving-need advisory: how many the
+             target day feeds (effective headcount + leftover bonus), + the per-type
+             suggested servings when exactly one Type chip is active. Hidden entirely
+             on the Unscheduled/no-roster empty state (pickerServingNeed === null). The
+             .label string carries the meaning, so the icon is aria-hidden and the
+             x-text is null-guarded (never dereferences under x-show). -->
+        <p class="picker-serving" x-show="pickerServingNeed" x-cloak>
+          <span class="picker-serving-icon" aria-hidden="true">👤</span>
+          <span x-text="pickerServingNeed ? pickerServingNeed.label : ''"></span>
+        </p>
         <!-- quick 260712-cqr — proactive allergen callout: the KNOWN ALLERGENS of the
              residents present on the day being planned (pickerResidentAllergens), so the
              cook picks around them. NOT a conflict against already-scheduled recipes (that

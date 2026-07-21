@@ -945,6 +945,23 @@ label select {
   line-height: 1;
 }
 
+/* quick 260721-roz — quiet day serving-need advisory under the Add-Recipe heading
+   ("Feeding N", + leftover breakdown, + per-type suggestion). Mirrors .picker-weather:
+   tokens only (--color-ink-muted + --fs-sm). Simple wrapping flex line, no fixed
+   widths → reads sensibly at mobile width without a dedicated @media override. */
+.picker-serving {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.5rem;
+  color: var(--color-ink-muted);
+  font-size: var(--fs-sm);
+}
+.picker-serving-icon {
+  font-size: 1.05em;
+  line-height: 1;
+}
+
 /* quick 260712-cqr — proactive allergen callout in the Add-Recipe modal (residents'
    known allergens for the day being planned). Amber warn for has/caution, subtle
    positive for clear, muted for cant-check. All via :root design tokens. */
