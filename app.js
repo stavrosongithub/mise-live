@@ -418,7 +418,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '5c35c9d 2026-07-21';
+const APP_VERSION = '56969a8 2026-07-22';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -3058,6 +3058,16 @@ Alpine.data('app', () => ({
   // quick 260621-9lo — Filters-disclosure open state for the browse-list allergen
   // filter (mirrors mealPlanFiltersOpen). TRANSIENT: not persisted; defaults closed.
   recipeManagerFiltersOpen: false,
+  // Phase 24 (FILT-01) — BROWSE ingredient filter (READ-ONLY over the non-reactive
+  // duplicateIndex.ingredientIdsByRecipeId). recipeManagerIngredientFilter holds the
+  // selected ingredient_id numbers (contains-ALL AND, D-01/D-02);
+  // recipeManagerIngredientQuery is the transient typeahead text (cleared after an add,
+  // mirrors shoppingAddQuery). BOTH TRANSIENT — NOT persisted, NOT synced; they MUST NOT
+  // be added to _persistMealPlanUi()/_restoreMealPlanUi() (that keeps DSAFE-01 true —
+  // these fields are browse-local, but the rule is stated uniformly across all four
+  // Phase-24 filter fields so neither the browse nor picker pair ever leaks into a write).
+  recipeManagerIngredientFilter: [],
+  recipeManagerIngredientQuery: '',
   // recipeList — fresh disk rows for the browse table: { recipe_id, name, type }.
   recipeList: [],
   // recipeQtyGapsById — quick 260613-a2t. READ-ONLY browse-list tally keyed by
@@ -3493,6 +3503,15 @@ Alpine.data('app', () => ({
   // persisted (advanced filters default hidden each session, like mealPlanTab).
   // MUST NOT be added to _persistMealPlanUi()/_restoreMealPlanUi().
   mealPlanFiltersOpen: false,
+  // Phase 24 (FILT-02) — PICKER ingredient filter, the SAME widget as the browse
+  // (D-03). mealPlanIngredientFilter holds selected ingredient_id numbers (contains-ALL
+  // AND stage composed with the existing name/type/allergen/servings/difficulty/
+  // hide-recent stages); mealPlanIngredientQuery is the transient typeahead text.
+  // BOTH TRANSIENT — NOT persisted, NOT synced: they MUST NOT be added to
+  // _persistMealPlanUi()/_restoreMealPlanUi() (mirrors mealPlanFiltersOpen / shoppingAddQuery).
+  // Keeping them out of the persist/sync path is what holds DSAFE-01 true.
+  mealPlanIngredientFilter: [],
+  mealPlanIngredientQuery: '',
   // quick 260621-amm — days-first picker MODAL state. BOTH TRANSIENT (NOT persisted,
   // NOT in _persistMealPlanUi/_restoreMealPlanUi): the focused recipe picker now opens
   // as a modal pre-targeted to a specific day. mealPlanPickerOpen drives the modal's
@@ -9858,7 +9877,9 @@ Alpine.data('app', () => ({
   get mealPlanHiddenFilterCount() {
     return (Array.isArray(this.mealPlanAllergenFilter) ? this.mealPlanAllergenFilter.length : 0)
       + (Number.isFinite(Number(this.mealPlanMinServings)) && this.mealPlanMinServings !== '' ? 1 : 0)
-      + (this.mealPlanMaxDifficulty ? 1 : 0);
+      + (this.mealPlanMaxDifficulty ? 1 : 0)
+      // Phase 24 (D-05) — active ingredient filters also live in the disclosure.
+      + (Array.isArray(this.mealPlanIngredientFilter) ? this.mealPlanIngredientFilter.length : 0);
   },
 
   /**
@@ -9876,6 +9897,9 @@ Alpine.data('app', () => ({
     this.mealPlanMaxDifficulty = '';
     this.mealPlanHideRecent = true;
     this.mealPlanSort = 'default';
+    // Phase 24 (D-06) — reset the ingredient filter + clear its typeahead query.
+    this.mealPlanIngredientFilter = [];
+    this.mealPlanIngredientQuery = '';
   },
 
   /**
@@ -9925,6 +9949,16 @@ Alpine.data('app', () => ({
         if (!entry || entry.incomplete) return true; // never hide incomplete/unknown — SAFETY
         return !entry.allergens.some(a => avoidSet.has(a));
       });
+    }
+
+    // Stage 3b — INGREDIENT contains-ALL (Phase 24, D-01/D-02/D-08). Same AND stage as
+    // the browse (filteredRecipeList). INERT unless the index is ready (allergenFilterAvailable)
+    // AND ≥1 ingredient selected; keep only recipes whose ingredient set contains EVERY
+    // selected id. Read the non-reactive this.duplicateIndex holder only; ?. never throws.
+    const wantIng = Array.isArray(this.mealPlanIngredientFilter) ? this.mealPlanIngredientFilter : [];
+    if (this.allergenFilterAvailable && wantIng.length > 0) {
+      result = result.filter(r =>
+        wantIng.every(iid => this.duplicateIndex.ingredientIdsByRecipeId.get(r.recipe_id)?.has(Number(iid))));
     }
 
     // Stage 4 — MAX-SERVINGS ≥ N. ALWAYS keep null/unknown max_servings (can't be
@@ -11106,6 +11140,76 @@ Alpine.data('app', () => ({
   },
 
   /**
+   * _ingredientFilterMatches — Phase 24 (D-07). Shared match helper for the ingredient
+   * FILTER typeaheads (browse + picker), cloned from shoppingAddMatches. Reuses the
+   * shared this.fuse (NO new Fuse index). Returns [] when the trimmed query is blank or
+   * Fuse isn't ready; otherwise fuzzy-searches, skips null / already-selected ids, and
+   * caps at 8. Ids are Number-coerced to match ingredientIdsByRecipeId (parseInt) keys.
+   * @param {string} query        the view's typeahead text
+   * @param {number[]} selectedIds already-selected ingredient ids for that view
+   */
+  _ingredientFilterMatches(query, selectedIds) {
+    const q = (query || '').trim();
+    if (!q || !this.fuse) return [];
+    const chosen = new Set((Array.isArray(selectedIds) ? selectedIds : []).map(Number));
+    const out = [];
+    for (const hit of this.fuse.search(q)) {
+      const m = hit && hit.item;
+      if (!m || m.ingredient_id == null) continue;
+      const iid = Number(m.ingredient_id);
+      if (chosen.has(iid)) continue;
+      out.push({ ingredient_id: iid, ingredient_name: m.ingredient_name || '(unnamed ingredient)' });
+      if (out.length >= 8) break;
+    }
+    return out;
+  },
+
+  /** recipeManagerIngredientMatches — Phase 24 (D-07). Browse-view typeahead matches. */
+  get recipeManagerIngredientMatches() {
+    return this._ingredientFilterMatches(this.recipeManagerIngredientQuery, this.recipeManagerIngredientFilter);
+  },
+
+  /** mealPlanIngredientMatches — Phase 24 (D-07). Picker-view typeahead matches. */
+  get mealPlanIngredientMatches() {
+    return this._ingredientFilterMatches(this.mealPlanIngredientQuery, this.mealPlanIngredientFilter);
+  },
+
+  /**
+   * _addIngredientFilter / _removeIngredientFilter — Phase 24 (D-04, D-07). Shared,
+   * persist/sync-free add + remove parameterised on the view's field names. Add pushes
+   * the id when absent (Number-coerced) then clears that view's query; remove filters
+   * one id out. No putFile / no localStorage / no sync — pure transient UI state.
+   */
+  _addIngredientFilter(field, queryField, iid) {
+    const n = Number(iid);
+    if (n == null || Number.isNaN(n)) return;
+    const arr = Array.isArray(this[field]) ? this[field] : [];
+    if (!arr.map(Number).includes(n)) this[field] = [...arr, n];
+    this[queryField] = '';
+  },
+  _removeIngredientFilter(field, iid) {
+    const n = Number(iid);
+    const arr = Array.isArray(this[field]) ? this[field] : [];
+    this[field] = arr.filter(x => Number(x) !== n);
+  },
+
+  addRecipeManagerIngredient(iid) { this._addIngredientFilter('recipeManagerIngredientFilter', 'recipeManagerIngredientQuery', iid); },
+  removeRecipeManagerIngredient(iid) { this._removeIngredientFilter('recipeManagerIngredientFilter', iid); },
+  addMealPlanIngredient(iid) { this._addIngredientFilter('mealPlanIngredientFilter', 'mealPlanIngredientQuery', iid); },
+  removeMealPlanIngredient(iid) { this._removeIngredientFilter('mealPlanIngredientFilter', iid); },
+
+  /**
+   * ingredientNameById — Phase 24. Resolve an ingredient_id to its display name from
+   * the live ingredientMaster (for the removable chips). Returns a safe fallback so a
+   * missing id never renders blank. Name is rendered via x-text only (T-24-01).
+   */
+  ingredientNameById(iid) {
+    const n = Number(iid);
+    const m = (Array.isArray(this.ingredientMaster) ? this.ingredientMaster : []).find(x => x && Number(x.ingredient_id) === n);
+    return (m && m.ingredient_name) || '(unknown ingredient)';
+  },
+
+  /**
    * removeShoppingLine — quick 260628-v0i. Provenance-aware remove from the combined
    * shopping list. A MANUALLY-added line (ad-hoc extra and/or a regular) is taken OFF
    * the list (un-add the ad-hoc + un-add the regular); a RECIPE-derived line is left on
@@ -12115,6 +12219,16 @@ Alpine.data('app', () => ({
         return !entry.allergens.some(a => avoidSet.has(a)); // hide only when a KNOWN allergen is avoided
       });
     }
+    // Stage 4 — INGREDIENT contains-ALL (Phase 24, D-01/D-02/D-08). INERT unless the
+    // index is ready (reuses allergenFilterAvailable, D-08) AND ≥1 ingredient selected.
+    // Keep only recipes whose ingredient set contains EVERY selected id (AND). Read the
+    // Map through the non-reactive this.duplicateIndex holder ONLY; the ?. optional chain
+    // makes a missing recipe entry fail the test without throwing — never empties the list.
+    const wantIng = Array.isArray(this.recipeManagerIngredientFilter) ? this.recipeManagerIngredientFilter : [];
+    if (this.allergenFilterAvailable && wantIng.length > 0) {
+      result = result.filter(r =>
+        wantIng.every(iid => this.duplicateIndex.ingredientIdsByRecipeId.get(r.recipe_id)?.has(Number(iid))));
+    }
     return result;
   },
 
@@ -12133,16 +12247,21 @@ Alpine.data('app', () => ({
    * disclosure button. Mirrors mealPlanHiddenFilterCount.
    */
   get recipeManagerHiddenFilterCount() {
-    return Array.isArray(this.recipeManagerAllergenFilter) ? this.recipeManagerAllergenFilter.length : 0;
+    return (Array.isArray(this.recipeManagerAllergenFilter) ? this.recipeManagerAllergenFilter.length : 0)
+      // Phase 24 (D-05) — active ingredient filters also live in the disclosure.
+      + (Array.isArray(this.recipeManagerIngredientFilter) ? this.recipeManagerIngredientFilter.length : 0);
   },
 
   /**
-   * clearManagerFilters — quick 260610-eyh. Resets all three browse filters.
+   * clearManagerFilters — quick 260610-eyh. Resets all browse filters (Phase 24 D-06:
+   * also zeroes the ingredient id array + clears its typeahead query).
    */
   clearManagerFilters() {
     this.recipeManagerFilter = '';
     this.recipeManagerTypeFilter = [];
     this.recipeManagerAllergenFilter = [];
+    this.recipeManagerIngredientFilter = [];
+    this.recipeManagerIngredientQuery = '';
   },
 
   /**

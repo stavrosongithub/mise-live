@@ -3700,6 +3700,72 @@ textarea {
 .filter-clear-link:hover {
   text-decoration: underline;
 }
+
+/* Phase 24 — ingredient FILTER UI (reused by Phase 25's cuisine/protein filters).
+   Class names are filter-generic (not ingredient-specific) so they slot in unchanged.
+   Tokens only — no bare hex / off-scale sizes. */
+
+/* Active-filter chip row, bubbled to the always-visible primary row (D-04). */
+.filter-ingredient-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+
+/* Removable-chip variant: a selected chip that carries an inline per-chip ✕ (D-06).
+   Sits on the .filter-chip / .meal-plan-chip family; renders in the accent-tint
+   selected style since an active filter chip is, by definition, selected. */
+.filter-chip-removable {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-color: var(--color-accent-tint);
+  background: var(--color-accent-tint);
+  color: var(--color-accent);
+  font-weight: var(--fw-semibold);
+}
+.filter-chip-label {
+  line-height: 1;
+}
+
+/* Per-chip ✕ — draws on the .combobox-clear precedent (circular hit target, danger
+   on hover/focus), re-expressed in tokens. */
+.filter-chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.1rem;
+  width: 1.1rem;
+  padding: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 50%;
+  background: var(--color-surface-2);
+  color: var(--color-ink-muted);
+  font-size: var(--fs-xs);
+  line-height: 1;
+  cursor: pointer;
+}
+.filter-chip-x:hover,
+.filter-chip-x:focus-visible {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: var(--color-surface-2);
+  outline: none;
+}
+
+/* Ingredient typeahead wrapper — reuses the .shopping-add* visual rules; this only
+   adds layout/width scoping so it sits cleanly inside the filters disclosure. */
+.ingredient-filter-add {
+  position: relative;
+  flex: 1 1 100%;
+  min-width: 12rem;
+}
+.ingredient-filter-add.is-unavailable {
+  opacity: 0.6;
+}
+
 .meal-plan-picker-advanced,
 .filter-advanced {
   display: flex;

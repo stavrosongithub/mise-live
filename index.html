@@ -1338,6 +1338,21 @@
                       @click="recipeManagerTypeFilter.includes('salad') ? recipeManagerTypeFilter = recipeManagerTypeFilter.filter(t => t !== 'salad') : recipeManagerTypeFilter.push('salad')">Salad</button>
             </div>
 
+            <!-- 2b — ACTIVE INGREDIENT FILTER CHIPS (Phase 24, D-04). Bubbled to the
+                 always-visible row (OUTSIDE the collapsed Filters disclosure) so an active
+                 ingredient filter is always visible + each individually removable. Name
+                 renders via x-text ONLY (T-24-01); per-chip ✕ draws on .combobox-clear. -->
+            <div class="filter-ingredient-chips" x-show="recipeManagerIngredientFilter.length > 0" x-cloak>
+              <template x-for="iid in recipeManagerIngredientFilter" :key="iid">
+                <span class="filter-chip filter-chip-removable">
+                  <span class="filter-chip-label" x-text="ingredientNameById(iid)"></span>
+                  <button type="button" class="filter-chip-x"
+                          @click="removeRecipeManagerIngredient(iid)"
+                          :aria-label="'Remove ingredient filter: ' + ingredientNameById(iid)">✕</button>
+                </span>
+              </template>
+            </div>
+
             <!-- 3 — META ROW: Filters disclosure + badge · result count · Clear -->
             <div class="filter-meta">
               <button type="button" class="filter-disclosure"
@@ -1371,6 +1386,29 @@
                             x-text="allergen"></button>
                   </template>
                 </fieldset>
+                <!-- Phase 24 (D-03, D-07) — ingredient filter typeahead, cloned from the
+                     shopping "+ Add item" widget; reuses this.fuse via the matches getter.
+                     Disabled + noted when the index didn't load (D-08). -->
+                <div class="ingredient-filter-add" :class="{ 'is-unavailable': !allergenFilterAvailable }">
+                  <input type="text" class="shopping-add-input" x-model="recipeManagerIngredientQuery"
+                         :disabled="!allergenFilterAvailable"
+                         placeholder="+ Filter by ingredient…"
+                         aria-label="Filter recipes by ingredient">
+                  <span class="manager-filter-note"
+                        x-show="!allergenFilterAvailable" x-cloak>Ingredient filter unavailable (ingredient index didn't load).</span>
+                  <ul class="shopping-add-results" x-show="recipeManagerIngredientMatches.length > 0" x-cloak>
+                    <template x-for="m in recipeManagerIngredientMatches" :key="m.ingredient_id">
+                      <li class="shopping-add-result">
+                        <span class="shopping-add-name" x-text="m.ingredient_name"></span>
+                        <button type="button" class="add-shop"
+                                @click="addRecipeManagerIngredient(m.ingredient_id)">+ add</button>
+                      </li>
+                    </template>
+                  </ul>
+                  <p class="help shopping-add-empty"
+                     x-show="allergenFilterAvailable && recipeManagerIngredientQuery.trim() && recipeManagerIngredientMatches.length === 0"
+                     x-cloak>No matching ingredient.</p>
+                </div>
               </div>
             </template>
           </div>
@@ -3312,6 +3350,20 @@
             </label>
           </div>
 
+          <!-- 2b — ACTIVE INGREDIENT FILTER CHIPS (Phase 24, D-04). Same widget as the
+               browse; bubbled to the always-visible row (OUTSIDE the disclosure). Name via
+               x-text ONLY (T-24-01); per-chip ✕ draws on .combobox-clear. -->
+          <div class="filter-ingredient-chips" x-show="mealPlanIngredientFilter.length > 0" x-cloak>
+            <template x-for="iid in mealPlanIngredientFilter" :key="iid">
+              <span class="meal-plan-chip filter-chip-removable">
+                <span class="filter-chip-label" x-text="ingredientNameById(iid)"></span>
+                <button type="button" class="filter-chip-x"
+                        @click="removeMealPlanIngredient(iid)"
+                        :aria-label="'Remove ingredient filter: ' + ingredientNameById(iid)">✕</button>
+              </span>
+            </template>
+          </div>
+
           <!-- 3 — META ROW: Filters disclosure + badge · Hide-planned · count · Clear -->
           <div class="meal-plan-picker-meta">
             <button type="button" class="meal-plan-disclosure"
@@ -3360,6 +3412,29 @@
                   <option value="5">5</option>
                 </select>
               </label>
+              <!-- Phase 24 (D-03, D-07) — ingredient filter typeahead (same widget as browse).
+                   Reuses this.fuse via mealPlanIngredientMatches; disabled + noted when the
+                   index didn't load (D-08). -->
+              <div class="ingredient-filter-add" :class="{ 'is-unavailable': !allergenFilterAvailable }">
+                <input type="text" class="shopping-add-input" x-model="mealPlanIngredientQuery"
+                       :disabled="!allergenFilterAvailable"
+                       placeholder="+ Filter by ingredient…"
+                       aria-label="Filter recipes by ingredient">
+                <span class="manager-filter-note"
+                      x-show="!allergenFilterAvailable" x-cloak>Ingredient filter unavailable (ingredient index didn't load).</span>
+                <ul class="shopping-add-results" x-show="mealPlanIngredientMatches.length > 0" x-cloak>
+                  <template x-for="m in mealPlanIngredientMatches" :key="m.ingredient_id">
+                    <li class="shopping-add-result">
+                      <span class="shopping-add-name" x-text="m.ingredient_name"></span>
+                      <button type="button" class="add-shop"
+                              @click="addMealPlanIngredient(m.ingredient_id)">+ add</button>
+                    </li>
+                  </template>
+                </ul>
+                <p class="help shopping-add-empty"
+                   x-show="allergenFilterAvailable && mealPlanIngredientQuery.trim() && mealPlanIngredientMatches.length === 0"
+                   x-cloak>No matching ingredient.</p>
+              </div>
             </div>
           </template>
           <p class="manager-empty-state"
