@@ -67,7 +67,15 @@ export const STORE_FILES = ['recipes.csv', 'ingredients.csv', 'recipe_ingredient
 // = seed empty/local (defaults), never PARTIAL and never an error. It is EXPLICITLY
 // NOT the fragile meal_plan.json 3-way merge — it rides the whole-file LWW transport
 // like suppliers.json / residents_roster.json, just with a per-key merge inside.
-export const OPTIONAL_JSON_FILES = ['meal_plan.json', 'residents_roster.json', 'suppliers.json', 'settings.json'];
+//
+// Phase 25 (D-03) adds classifications.json as the 5th safe-rail optional JSON
+// artifact — the synced, in-app-editable cuisine/protein controlled vocabulary
+// (closed enum, DSAFE-02). Same discipline: absent = seed the approved DEFAULT_VOCAB
+// locally, never PARTIAL and never an error (a repo predating the file classifies
+// 'full', per classifyRemoteShape over REQUIRED_STORE_FILES only). It rides the
+// whole-file LWW transport like suppliers.json / residents_roster.json — NOT the
+// fragile meal_plan.json 3-way merge (DSAFE-01 preserved).
+export const OPTIONAL_JSON_FILES = ['meal_plan.json', 'residents_roster.json', 'suppliers.json', 'settings.json', 'classifications.json'];
 
 const DB_NAME = 'recipe_ingest';
 const STORE_NAME = 'csvFiles';

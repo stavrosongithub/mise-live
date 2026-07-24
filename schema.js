@@ -138,10 +138,34 @@ export const REVIEW_FLAG_ENUM = [
  * `enum` set to `[...masterIds, null]` — the model can emit any known ID or
  * `null` for "unknown" (D-13).
  *
+ * Phase 25 / CLASS-04 (D-10): the header also carries `cuisine` and `protein`
+ * as non-nullable arrays-of-enum, grammar-constrained to the SYNCED controlled
+ * vocabulary (classifications.json → this.cuisineVocab / this.proteinVocab).
+ * The enums are PASSED IN (never hardcoded here — DSAFE-02 / D-03: the vocab is
+ * user-editable and synced, not a schema literal). Like `allergens`, these are
+ * non-nullable arrays (the model emits `[]` when nothing applies) so they add
+ * ZERO anyOf branches — the 16-anyOf Anthropic cap (which applies to the ROW
+ * schema, not the header) is unaffected.
+ *
  * @param {Array<number>} masterIds — every `ingredient_id` from the master.
+ * @param {string[]} cuisineEnum — the closed cuisine vocabulary (non-empty).
+ * @param {string[]} proteinEnum — the closed protein vocabulary (non-empty).
  * @returns {object} JSON Schema ready for `output_config.format.schema`.
  */
-export function buildRecipeSchema(masterIds) {
+export function buildRecipeSchema(masterIds, cuisineEnum, proteinEnum) {
+  // Fail-loud guard (Rule 2 — vocabulary-discipline correctness, T-25-11): an
+  // empty/undefined enum would silently produce an UNCONSTRAINED string array,
+  // letting the LLM emit off-vocab classifications. Both call sites resolve the
+  // enum through effectiveVocab() (always non-empty), so this never trips in
+  // practice — it defends the grammar-constraint invariant against a future
+  // caller that forgets the args. We do NOT hardcode a fallback vocab here
+  // (that belongs in the synced file, not the schema — D-03).
+  if (!Array.isArray(cuisineEnum) || cuisineEnum.length === 0) {
+    throw new Error('buildRecipeSchema: cuisineEnum must be a non-empty array');
+  }
+  if (!Array.isArray(proteinEnum) || proteinEnum.length === 0) {
+    throw new Error('buildRecipeSchema: proteinEnum must be a non-empty array');
+  }
   return {
     type: 'object',
     additionalProperties: false,
@@ -170,6 +194,8 @@ export function buildRecipeSchema(masterIds) {
           'popularity_notes',
           'difficulty_notes',
           'allergens',
+          'cuisine',
+          'protein',
           'review_flags'
         ],
         properties: {
@@ -190,6 +216,21 @@ export function buildRecipeSchema(masterIds) {
           allergens: {
             type: 'array',
             items: { type: 'string', enum: FSA14 }
+          },
+          // Phase 25 / CLASS-04 (D-10) — at-ingest cuisine/protein classification.
+          // Non-nullable arrays-of-enum grammar-constrained to the SYNCED closed
+          // vocabulary passed in (cuisineEnum/proteinEnum — NOT hardcoded, D-03).
+          // The model emits `[]` when a recipe has no specific cuisine / no
+          // significant protein — same empty-array convention as `allergens`, so
+          // NO anyOf branch is added and the 16-anyOf row cap is unaffected. There
+          // is deliberately no "None" enum value (D-14): `[]` IS "none".
+          cuisine: {
+            type: 'array',
+            items: { type: 'string', enum: cuisineEnum }
+          },
+          protein: {
+            type: 'array',
+            items: { type: 'string', enum: proteinEnum }
           },
           // quick 260618-ihr (Workstream B, D2) — PARSE-ONLY judgement-call
           // flags surfaced in the review pane. NEVER serialized to any CSV
@@ -282,6 +323,66 @@ export function buildRecipeSchema(masterIds) {
             },
             // suggested_allergens — D-48, per-row nullable FSA-14 array; null when ingredient_id is non-null
             suggested_allergens: { anyOf: [{ type: 'array', items: { type: 'string', enum: FSA14 } }, { type: 'null' }] }
+          }
+        }
+      }
+    }
+  };
+}
+
+/**
+ * buildClassifySchema — Phase 25 / CLASS-03 (D-09/D-11/D-17). The DEDICATED LEAN
+ * multi-recipe classification schema for the bulk backfill. This is deliberately
+ * NOT `buildRecipeSchema` (which ships the full 30KB parse extraction contract):
+ * the backfill sends only name + ingredients_20 + type per recipe and wants only
+ * a cuisine/protein array back, keyed by recipe_id.
+ *
+ * Shape: `{ results: [ { recipe_id: integer, cuisine: [enum], protein: [enum] } ] }`.
+ * `additionalProperties: false` on EVERY object (assertNoOpenObjects enforces it
+ * pre-request). The cuisine/protein items are grammar-constrained arrays-of-enum
+ * — the enums are PASSED IN from the SYNCED vocabulary (never hardcoded here,
+ * D-03), exactly like `allergens` / the parse header cuisine/protein. Non-nullable
+ * arrays (the model emits `[]` when nothing applies — no invented "None", D-14),
+ * so no anyOf branch is added.
+ *
+ * Fail-loud guard (Rule 2 — vocabulary-discipline correctness, T-25-13): an
+ * empty/undefined enum would silently produce an UNCONSTRAINED string array,
+ * letting the LLM emit off-vocab classifications. The caller resolves the enum
+ * through effectiveVocab() (always non-empty), so this never trips in practice.
+ *
+ * @param {string[]} cuisineEnum — the closed cuisine vocabulary (non-empty)
+ * @param {string[]} proteinEnum — the closed protein vocabulary (non-empty)
+ * @returns {object} JSON Schema for output_config.format
+ * @throws {Error} when either enum is empty/undefined.
+ */
+export function buildClassifySchema(cuisineEnum, proteinEnum) {
+  if (!Array.isArray(cuisineEnum) || cuisineEnum.length === 0) {
+    throw new Error('buildClassifySchema: cuisineEnum must be a non-empty array');
+  }
+  if (!Array.isArray(proteinEnum) || proteinEnum.length === 0) {
+    throw new Error('buildClassifySchema: proteinEnum must be a non-empty array');
+  }
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['results'],
+    properties: {
+      results: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['recipe_id', 'cuisine', 'protein'],
+          properties: {
+            recipe_id: { type: 'integer' },
+            cuisine: {
+              type: 'array',
+              items: { type: 'string', enum: cuisineEnum }
+            },
+            protein: {
+              type: 'array',
+              items: { type: 'string', enum: proteinEnum }
+            }
           }
         }
       }

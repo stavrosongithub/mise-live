@@ -242,6 +242,9 @@ The per-row \`section\` groups a multi-part recipe's ingredients by component (a
 ALLERGEN UNION
 The recipe-level \`allergens\` array is the UNION of (a) allergens declared in the ingredient master for every matched ingredient AND (b) allergens you spot in the instructions text that are not already covered by an ingredient row (e.g. "garnish with sesame seeds" → add Sesame). Use the FSA-14 enum below, case-sensitive.
 
+CUISINE & PROTEIN CLASSIFICATION (\`header.cuisine\` + \`header.protein\`)
+Classify the recipe by cuisine(s) and protein(s), emitting EACH as an array of strings drawn ONLY from the closed vocabulary the response schema allows for that field — never invent a value (the same vocabulary-discipline rule as allergens, units, and roles). A recipe may belong to SEVERAL cuisines (a fusion dish) and carry SEVERAL proteins (e.g. tofu + peanuts); list every one that genuinely applies. Emit an EMPTY array \`[]\` when nothing applies — a plain side or salad with no significant protein, or a dish with no specific cuisine. Do NOT invent a "None" value: an empty array IS "none".
+
 LOW-CONFIDENCE FLAGGING (per-row, sparse)
 For each ingredient row, ALSO emit a \`flagged_fields\` array indicating which of YOUR OWN outputs you were not confident about. Each entry is { field, reason_code }. Use these reason codes EXACTLY (no others):
 

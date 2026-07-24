@@ -1025,6 +1025,16 @@
           <span x-show="!suppliersPanelOpen">Suppliers…</span>
           <span x-show="suppliersPanelOpen" x-cloak>Close suppliers</span>
         </button>
+        <!-- Phase 25 (D-03) — open the synced Classifications (cuisine/protein) editor
+             (an inline panel, NOT a modal, so it can't stack over the edit modal). -->
+        <button type="button"
+                class="btn-secondary classifications-toggle-btn"
+                x-show="!managerAddMode"
+                @click="classificationsPanelOpen = !classificationsPanelOpen"
+                :aria-expanded="classificationsPanelOpen">
+          <span x-show="!classificationsPanelOpen">Classifications…</span>
+          <span x-show="classificationsPanelOpen" x-cloak>Close classifications</span>
+        </button>
       </div>
 
       <!-- quick 260630-e8v — Suppliers manager (inline panel). Edits the synced
@@ -1061,6 +1071,60 @@
           <button type="button" class="btn-primary"
                   @click="saveSuppliers()"
                   :disabled="shopOrderGateDisabled">Save suppliers</button>
+        </div>
+      </div>
+
+      <!-- Phase 25 (D-03) — Classifications manager (inline panel). Edits the synced
+           cuisine + protein controlled vocabulary (classifications.json) as two
+           labelled lists in ONE panel (D-03 discretion). The closed enum drives the
+           editor multi-selects, the parse schema, the backfill and the filters
+           (Plans 03-06). Write-gated: all controls disable when read-only or another
+           user holds the lock. Saving persists locally + pushes classifications.json
+           (LWW mirror of the suppliers snapshot; NEVER mealplan-sync.js — DSAFE-01).
+           Every bucket name is rendered/edited via inputs + x-text — never x-html. -->
+      <div class="suppliers-panel" x-show="classificationsPanelOpen" x-cloak>
+        <h3>Classifications</h3>
+        <p class="help">The controlled cuisine + protein vocabulary used to classify recipes. Recipes can only be tagged with values from these lists (the AI cannot invent new ones). Leave a recipe's field blank for "no specific cuisine / no significant protein". This vocabulary is shared with everyone connected.</p>
+
+        <h4 x-text="'Cuisines (' + cuisineVocab.length + ')'"></h4>
+        <div class="suppliers-rows">
+          <template x-for="(c, i) in cuisineVocab" :key="i">
+            <div class="supplier-row">
+              <input type="text" class="supplier-name" x-model="cuisineVocab[i]"
+                     placeholder="cuisine (e.g. Italian)"
+                     :disabled="shopOrderGateDisabled" />
+              <button type="button" class="supplier-remove" title="Remove cuisine"
+                      @click="removeCuisine(i)"
+                      :disabled="shopOrderGateDisabled">✕</button>
+            </div>
+          </template>
+        </div>
+        <div class="suppliers-actions">
+          <button type="button" class="btn-secondary"
+                  @click="addCuisine()"
+                  :disabled="shopOrderGateDisabled">+ Add cuisine</button>
+        </div>
+
+        <h4 x-text="'Proteins (' + proteinVocab.length + ')'"></h4>
+        <div class="suppliers-rows">
+          <template x-for="(p, i) in proteinVocab" :key="i">
+            <div class="supplier-row">
+              <input type="text" class="supplier-name" x-model="proteinVocab[i]"
+                     placeholder="protein (e.g. Tofu)"
+                     :disabled="shopOrderGateDisabled" />
+              <button type="button" class="supplier-remove" title="Remove protein"
+                      @click="removeProtein(i)"
+                      :disabled="shopOrderGateDisabled">✕</button>
+            </div>
+          </template>
+        </div>
+        <div class="suppliers-actions">
+          <button type="button" class="btn-secondary"
+                  @click="addProtein()"
+                  :disabled="shopOrderGateDisabled">+ Add protein</button>
+          <button type="button" class="btn-primary"
+                  @click="saveVocab()"
+                  :disabled="shopOrderGateDisabled">Save classifications</button>
         </div>
       </div>
 
@@ -1338,6 +1402,21 @@
                       @click="recipeManagerTypeFilter.includes('salad') ? recipeManagerTypeFilter = recipeManagerTypeFilter.filter(t => t !== 'salad') : recipeManagerTypeFilter.push('salad')">Salad</button>
             </div>
 
+            <!-- 2a — NEEDS-REVIEW chip (Phase 25, D-07). Isolates AI-guessed recipes
+                 still awaiting review, with a live count. Mirrors the missing-filter
+                 chip IDEA (toggle + count) — deliberately NOT part of MISSING_FILTER_DEFS
+                 (that registry is the ingredient manager's, over filteredMaster). Shown
+                 only when there's a queue OR the filter is already active. -->
+            <div class="missing-filter-chips"
+                 x-show="recipeReviewNeededCount > 0 || recipeManagerReviewOnly" x-cloak>
+              <button type="button" class="chip missing-filter-chip"
+                      :aria-pressed="recipeManagerReviewOnly"
+                      @click="recipeManagerReviewOnly = !recipeManagerReviewOnly">
+                <span>Needs classification review</span>
+                <span class="count" x-text="'· ' + recipeReviewNeededCount"></span>
+              </button>
+            </div>
+
             <!-- 2b — ACTIVE INGREDIENT FILTER CHIPS (Phase 24, D-04). Bubbled to the
                  always-visible row (OUTSIDE the collapsed Filters disclosure) so an active
                  ingredient filter is always visible + each individually removable. Name
@@ -1349,6 +1428,29 @@
                   <button type="button" class="filter-chip-x"
                           @click="removeRecipeManagerIngredient(iid)"
                           :aria-label="'Remove ingredient filter: ' + ingredientNameById(iid)">✕</button>
+                </span>
+              </template>
+            </div>
+
+            <!-- 2c — ACTIVE CUISINE/PROTEIN FILTER CHIPS (Phase 25, CLASS-05). Bubbled to
+                 the always-visible row, each removable (toggles the same value off).
+                 Values render via x-text ONLY (T-25-17). -->
+            <div class="filter-ingredient-chips"
+                 x-show="recipeManagerCuisineFilter.length > 0 || recipeManagerProteinFilter.length > 0" x-cloak>
+              <template x-for="c in recipeManagerCuisineFilter" :key="'c-' + c">
+                <span class="filter-chip filter-chip-removable">
+                  <span class="filter-chip-label" x-text="c"></span>
+                  <button type="button" class="filter-chip-x"
+                          @click="toggleRecipeManagerCuisine(c)"
+                          :aria-label="'Remove cuisine filter: ' + c">✕</button>
+                </span>
+              </template>
+              <template x-for="p in recipeManagerProteinFilter" :key="'p-' + p">
+                <span class="filter-chip filter-chip-removable">
+                  <span class="filter-chip-label" x-text="p"></span>
+                  <button type="button" class="filter-chip-x"
+                          @click="toggleRecipeManagerProtein(p)"
+                          :aria-label="'Remove protein filter: ' + p">✕</button>
                 </span>
               </template>
             </div>
@@ -1409,6 +1511,28 @@
                      x-show="allergenFilterAvailable && recipeManagerIngredientQuery.trim() && recipeManagerIngredientMatches.length === 0"
                      x-cloak>No matching ingredient.</p>
                 </div>
+                <!-- Phase 25 (CLASS-05, D-15) — cuisine + protein chip filters. OR
+                     within a field, AND across fields (composed in filteredRecipeList).
+                     Sourced from the loaded synced vocab (cuisineVocab/proteinVocab),
+                     plain toggle (no typeahead). Labels via x-text ONLY (T-25-17). -->
+                <fieldset class="manager-filter-group">
+                  <legend>Cuisine</legend>
+                  <template x-for="c in cuisineVocab" :key="c">
+                    <button type="button" class="filter-chip"
+                            :class="{ active: recipeManagerCuisineFilter.includes(c) }"
+                            @click="toggleRecipeManagerCuisine(c)"
+                            x-text="c"></button>
+                  </template>
+                </fieldset>
+                <fieldset class="manager-filter-group">
+                  <legend>Protein</legend>
+                  <template x-for="p in proteinVocab" :key="p">
+                    <button type="button" class="filter-chip"
+                            :class="{ active: recipeManagerProteinFilter.includes(p) }"
+                            @click="toggleRecipeManagerProtein(p)"
+                            x-text="p"></button>
+                  </template>
+                </fieldset>
               </div>
             </template>
           </div>
@@ -1459,6 +1583,18 @@
                               x-cloak
                               :title="recipeQtyGapTooltip(r.recipe_id)"
                               x-text="recipeQtyGapLabel(r.recipe_id)"></span>
+                        <!-- Phase 25 (D-07/D-08) — AMBER needs-review badge on an
+                             AI-guessed recipe, with a one-click "looks right" tick that
+                             clears class_needs_review (clear path A). @click.stop so the
+                             tick does NOT also open the editor (the row @click opener).
+                             Warn tokens only (no bare hex). -->
+                        <span class="class-review-badge" x-show="r.class_needs_review" x-cloak>
+                          <span class="class-review-badge-label" title="Cuisine/protein were AI-guessed — confirm or edit.">⚠ needs review</span>
+                          <button type="button" class="class-review-ok"
+                                  @click.stop="clearRecipeReviewFlag(r.recipe_id)"
+                                  :disabled="approving || merging || classifyBackfillRunning"
+                                  title="Looks right — clear the review flag">✓ looks right</button>
+                        </span>
                         </span>
                         <button type="button" class="manager-edit-btn"
                                 @click="openEditRecipe(r.recipe_id)"
@@ -3364,6 +3500,28 @@
             </template>
           </div>
 
+          <!-- ACTIVE CUISINE/PROTEIN FILTER CHIPS (Phase 25, CLASS-05). Same bubbled
+               removable-chip affordance as the browse. Values via x-text ONLY. -->
+          <div class="filter-ingredient-chips"
+               x-show="mealPlanCuisineFilter.length > 0 || mealPlanProteinFilter.length > 0" x-cloak>
+            <template x-for="c in mealPlanCuisineFilter" :key="'c-' + c">
+              <span class="meal-plan-chip filter-chip-removable">
+                <span class="filter-chip-label" x-text="c"></span>
+                <button type="button" class="filter-chip-x"
+                        @click="toggleMealPlanCuisine(c)"
+                        :aria-label="'Remove cuisine filter: ' + c">✕</button>
+              </span>
+            </template>
+            <template x-for="p in mealPlanProteinFilter" :key="'p-' + p">
+              <span class="meal-plan-chip filter-chip-removable">
+                <span class="filter-chip-label" x-text="p"></span>
+                <button type="button" class="filter-chip-x"
+                        @click="toggleMealPlanProtein(p)"
+                        :aria-label="'Remove protein filter: ' + p">✕</button>
+              </span>
+            </template>
+          </div>
+
           <!-- 3 — META ROW: Filters disclosure + badge · Hide-planned · count · Clear -->
           <div class="meal-plan-picker-meta">
             <button type="button" class="meal-plan-disclosure"
@@ -3435,6 +3593,27 @@
                    x-show="allergenFilterAvailable && mealPlanIngredientQuery.trim() && mealPlanIngredientMatches.length === 0"
                    x-cloak>No matching ingredient.</p>
               </div>
+              <!-- Phase 25 (CLASS-05, D-15) — cuisine + protein chip filters, SAME widget
+                   + semantics as the browse. Sourced from the loaded synced vocab; plain
+                   toggle. Labels via x-text ONLY (T-25-17). -->
+              <fieldset class="manager-filter-group">
+                <legend>Cuisine</legend>
+                <template x-for="c in cuisineVocab" :key="c">
+                  <button type="button" class="meal-plan-chip"
+                          :class="{ active: mealPlanCuisineFilter.includes(c) }"
+                          @click="toggleMealPlanCuisine(c)"
+                          x-text="c"></button>
+                </template>
+              </fieldset>
+              <fieldset class="manager-filter-group">
+                <legend>Protein</legend>
+                <template x-for="p in proteinVocab" :key="p">
+                  <button type="button" class="meal-plan-chip"
+                          :class="{ active: mealPlanProteinFilter.includes(p) }"
+                          @click="toggleMealPlanProtein(p)"
+                          x-text="p"></button>
+                </template>
+              </fieldset>
             </div>
           </template>
           <p class="manager-empty-state"
@@ -3975,6 +4154,24 @@
                   <span x-show="!merging">Migrate schema</span>
                   <span x-show="merging" x-cloak>Working…</span>
                 </button>
+                <!-- Phase 25 / CLASS-03 (D-09/D-11/D-17) — one-time bulk LLM
+                     classification backfill. DISTINCT from Migrate (D-12): Migrate
+                     adds the 3 columns blank; this fills cuisine/protein with
+                     reviewable AI guesses (class_needs_review=TRUE) via a lean
+                     chunked/resumable Sonnet pass. Disabled while running
+                     (double-click guard) and shows done/total progress. -->
+                <button type="button"
+                        class="manager-btn"
+                        x-show="csvStoreLoaded"
+                        x-cloak
+                        @click="suggestClassifications()"
+                        :disabled="classifyBackfillRunning || approving || merging || !apiKey"
+                        title="One-time bulk pass: proposes cuisine &amp; protein for un-classified recipes with Claude. Every result is flagged for review and never overwrites anything you've already set. Safe to re-run — it skips recipes already done.">
+                  <span x-show="!classifyBackfillRunning">Suggest classifications</span>
+                  <span x-show="classifyBackfillRunning" x-cloak
+                        x-text="'Classifying… ' + classifyBackfillDone + '/' + classifyBackfillTotal"></span>
+                </button>
+                <p class="help" x-show="classifyBackfillNotice" x-cloak x-text="classifyBackfillNotice"></p>
               </fieldset>
 
               <!-- DANGER ZONE — destructive actions bordered + separated from the
@@ -5028,6 +5225,35 @@
             <span class="allergen-chip" x-text="a"></span>
           </template>
         </div>
+      </fieldset>
+
+      <!-- CLASS-02 (Plan 25-03) — cuisine + protein multi-select chips. Defined
+           ONCE in the shared editor-header-fields template, so BOTH the parse
+           editor and the recipe-manager editor render them automatically
+           (Conventions: no duplicated load-bearing markup). Options come from the
+           SYNCED cuisineVocab / proteinVocab arrays (Plan 25-01), NOT a hardcoded
+           const. x-model on an array = multi-select: unticking ALL yields [] →
+           toHeaderCsvRow writes '' (clear-to-blank path). Labels via x-text only
+           (never x-html — T-25-09). :disabled mirrors the sibling header fields.
+           Chip styling reuses the token-based allergen-chip rules via the
+           .classification-fieldset marker (styles.css) — no bare hexes. -->
+      <fieldset class="allergens-fieldset classification-fieldset">
+        <legend>Cuisine</legend>
+        <template x-for="c in cuisineVocab" :key="c">
+          <label class="inline">
+            <input type="checkbox" :value="c" x-model="form.header.cuisine" :disabled="editorDisabled" />
+            <span x-text="c"></span>
+          </label>
+        </template>
+      </fieldset>
+      <fieldset class="allergens-fieldset classification-fieldset">
+        <legend>Protein</legend>
+        <template x-for="p in proteinVocab" :key="p">
+          <label class="inline">
+            <input type="checkbox" :value="p" x-model="form.header.protein" :disabled="editorDisabled" />
+            <span x-text="p"></span>
+          </label>
+        </template>
       </fieldset>
 
       <!-- quick 260627-q7x — progressive disclosure for the rarely-touched header

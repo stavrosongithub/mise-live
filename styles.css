@@ -1362,7 +1362,8 @@ label select {
    (accent-tint bg, accent border + text, semibold). The raw checkbox box is
    hidden (the chip itself communicates state) but stays in the DOM for x-model. */
 .allergen-chip-control label.inline,
-.add-new-allergens label.inline {
+.add-new-allergens label.inline,
+.classification-fieldset label.inline {
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-control);
   padding: 0.2143rem 0.7143rem;
@@ -1373,7 +1374,8 @@ label select {
   transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 .allergen-chip-control label.inline:has(input:checked),
-.add-new-allergens label.inline:has(input:checked) {
+.add-new-allergens label.inline:has(input:checked),
+.classification-fieldset label.inline:has(input:checked) {
   background: var(--color-accent-tint);
   border-color: var(--color-accent);
   color: var(--color-accent);
@@ -1382,7 +1384,8 @@ label select {
 /* hide the raw checkbox box — the chip face IS the state; the input stays in the
    DOM (display:none keeps it in the form, x-model binding intact). */
 .allergen-chip-control label.inline input[type="checkbox"],
-.add-new-allergens label.inline input[type="checkbox"] {
+.add-new-allergens label.inline input[type="checkbox"],
+.classification-fieldset label.inline input[type="checkbox"] {
   position: absolute;
   opacity: 0;
   width: 0.0714rem;
@@ -3569,6 +3572,40 @@ textarea {
   color: var(--warn-text);
   margin-left: 0.5rem;
   white-space: nowrap;
+}
+
+/* Phase 25 (D-07/D-08) — needs-classification-review amber badge on a browse row,
+   with a one-click "looks right" clear. Warn tokens only (amber ground + border +
+   strong caveat text), consistent with the caveat family — no new palette / bare hex. */
+.class-review-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.45rem;
+  border: 1px solid var(--warn-border);
+  border-radius: var(--radius-control);
+  background: var(--warn-bg);
+  color: var(--warn-text-strong);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.class-review-ok {
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  padding: 0;
+}
+.class-review-ok:hover,
+.class-review-ok:focus-visible {
+  text-decoration: underline;
+}
+.class-review-ok:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* ==========================================================================

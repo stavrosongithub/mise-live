@@ -419,6 +419,88 @@ export function migrateIngredientsRows(rows, oldColumns) {
 }
 
 /**
+ * isClassifiedRecipesHeader — single-column gate for the recipes.csv
+ * classification migration (phase 25 / CLASS-01). Keyed on the FIRST of the three
+ * new additive columns (`cuisine`), exactly as `isRegularTaggedIngredientsHeader`
+ * keys the pair regular+regular_qty_per_person on `regular`. The three columns
+ * cuisine + protein + class_needs_review ride ONE Migrate pass; this gate drives
+ * both the migration-needed lighting (schemaMigrationNeeded OR-in) AND the
+ * _migrateOneFile idempotency early-return / post-write verify for recipes.csv.
+ *
+ * This is the FIRST time Migrate touches recipes.csv — prior additive-column
+ * migrations only touched the two ingredient/join files (D-16).
+ *
+ * @param {string[]} columns
+ * @returns {boolean}
+ */
+export function isClassifiedRecipesHeader(columns) {
+  return Array.isArray(columns) && columns.includes('cuisine');
+}
+
+/**
+ * migrateRecipesRows — mechanical, no-LLM, ADDITIVE backfill of the live
+ * recipes.csv to carry the three classification columns cuisine, protein, and
+ * class_needs_review (phase 25 / D-12 / CLASS-01). D-12 is explicit: the Migrate
+ * button ONLY adds the columns BLANK (structural). The LLM *fill* ("Suggest
+ * classifications") is a SEPARATE operation (D-09/D-11/D-17) — do NOT infer any
+ * value here. All three columns are backfilled '' (NO heuristic) — mirror the
+ * pantry_staple / pantry_section / regular pattern, NOT the scale_category
+ * name-heuristic.
+ *
+ *   newColumns: a COPY of oldColumns with cuisine, protein, class_needs_review
+ *               APPENDED at the end, each ONLY when absent (additive; nothing is
+ *               spliced/replaced — byte-faithful order preserved, DSAFE-02).
+ *   newRows:    each input row copied verbatim (every oldColumns cell FIRST),
+ *               then each absent new column set to '' (blank).
+ *
+ * PER-COLUMN idempotent: a file already carrying some but not all three gains
+ * only the missing ones; an existing cell is preserved by the verbatim copy and
+ * NEVER clobbered. Re-running on a fully-migrated file is a no-op transform.
+ *
+ * @param {Array<object>} rows — parsed recipes rows (string cells).
+ * @param {string[]} oldColumns — the legacy recipes header (column order).
+ * @returns {{ newColumns: string[], newRows: Array<object> }}
+ */
+export function migrateRecipesRows(rows, oldColumns) {
+  const cols = Array.isArray(oldColumns) ? oldColumns : [];
+  // PER-COLUMN idempotent: only ADD a column when it is ABSENT from oldColumns.
+  const hadCuisine = cols.includes('cuisine');
+  const hadProtein = cols.includes('protein');
+  const hadFlag = cols.includes('class_needs_review');
+  const newColumns = cols.slice();
+  if (!hadCuisine) newColumns.push('cuisine');
+  if (!hadProtein) newColumns.push('protein');
+  if (!hadFlag) newColumns.push('class_needs_review');
+
+  const newRows = (rows || []).map(r => {
+    const out = {};
+    // Copy every original column cell verbatim FIRST (byte-faithful; existing
+    // cells / column order preserved — DSAFE-02 / T-25-05).
+    for (const col of cols) {
+      out[col] = r[col] != null ? r[col] : '';
+    }
+    // BLANK backfill, NO heuristic (D-12): Migrate only adds columns blank; the
+    // LLM fill is a separate op. blank cuisine/protein = "no specific cuisine /
+    // no significant protein" (D-14, no "None" enum); blank class_needs_review =
+    // not flagged. Backfill '' ONLY when the column was ABSENT; an existing cell
+    // is preserved by the verbatim copy above and NEVER clobbered (idempotent;
+    // T-25-04).
+    if (!hadCuisine) {
+      out.cuisine = '';
+    }
+    if (!hadProtein) {
+      out.protein = '';
+    }
+    if (!hadFlag) {
+      out.class_needs_review = '';
+    }
+    return out;
+  });
+
+  return { newColumns, newRows };
+}
+
+/**
  * isShoppingUnitValue — true iff `v` is a member of the locked enum. Keeps the
  * enum's single source of truth in merge.js; consumed by the app.js add-new
  * delta-writer clamps (submitAddNew / toIngredientCsvRow).
