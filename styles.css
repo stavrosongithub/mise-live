@@ -6126,17 +6126,38 @@ a.meal-plan-shop-search {
     min-height: 2.5rem;
     padding: 0;
   }
-  /* the name + 🛒 row centres (not baseline) so the 44px cart target aligns */
-  .shopping-name-cell {
-    align-items: center;
-    gap: 0.5rem;
-  }
-  /* the shared shopping/meal row grid pins the name column at minmax(11rem,1fr);
-     that 11rem floor can't absorb the now-44px ✕ on a narrow phone (360px → 9px
-     overflow). Relax the floor to 0 so the name column shrinks (it wraps rather
-     than pushing the page) — the amount + ✕ columns keep their size. */
+  /* ---- Shopping row: stack so name / icon / amount / ✕ never collide (T2) ----
+     The base 3-col grid (name-cell | amount | ✕) squeezes column 1 on a narrow
+     phone; the fixed 44px 🛒/🔍 icon (flex:none) then overflows the name-cell and
+     paints OVER the amount text (measured: cart right 166 vs amount left 142).
+     Wrapping names dropped the icon straight onto the number. Re-lay the row as a
+     wrap-flex: line 1 = name + inline icon (free to wrap) with the ✕ pinned right;
+     the amount drops to its own full-width line 2. Nothing is truncated; the
+     44px targets are kept. Replaces the old grid-relax that couldn't stop the
+     fixed icon from overflowing a shrunk column. */
   .shopping-list-item {
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 0.5rem;
+    row-gap: 0.1rem;
+  }
+  .shopping-name-cell {
+    flex: 1 1 auto;
+    flex-wrap: wrap;      /* a long name + icon wraps WITHIN the cell, not over col 2 */
+    align-items: center;  /* centres the 44px icon against the name */
+    gap: 0.5rem;
+    min-width: 0;
+  }
+  .shopping-remove {
+    order: 1;
+    margin-left: auto;    /* pin ✕ to the right edge of line 1 */
+    flex: none;
+  }
+  .meal-plan-shop-q {
+    order: 2;
+    flex: 1 0 100%;       /* force the amount onto its own full-width line 2 */
+    justify-content: flex-start;
   }
 
   /* dish / ingredient name links → ≥44px-tall tap rows */
@@ -6176,12 +6197,61 @@ a.meal-plan-shop-search {
     min-height: 2.5rem;
   }
 
-  /* ---- Safe-area insets on fixed / edge chrome ----
-     max() keeps the existing padding where an inset is 0 (no notch). */
+  /* ---- Header: kill the 107px page overflow (260725-9rv T1) ----
+     .topbar is a nowrap flex row; when CONNECTED the wordmark + version +
+     "Loaded" badge + sync-status + "Recent changes" button exceed 390px and
+     force whole-page horizontal scroll (button right edge measured 497px).
+     Let the row WRAP: line 1 keeps hamburger + wordmark (the spacer eats the
+     slack); the status chrome flows onto a tidy second line instead of off the
+     screen. row-gap keeps the wrapped line close (the flex `gap:1rem` would
+     otherwise apply 1rem vertically too). Scoped ≤640px — desktop stays a
+     single nowrap row. */
   .topbar {
+    flex-wrap: wrap;
+    row-gap: 0.35rem;
     padding-top: max(0.75rem, env(safe-area-inset-top));
     padding-left: max(1rem, env(safe-area-inset-left));
     padding-right: max(1rem, env(safe-area-inset-right));
+  }
+  /* keep the sync-status from adding a big left indent when it wraps to line 2 */
+  .topbar .sync-status { margin-left: 0; }
+
+  /* ---- Managers: contain the dense tables + action rows (260725-9rv T3) ----
+     The recipe/ingredient/residents managers are desktop tasks (user won't edit
+     on a phone). The .manager-row grid (4rem 1.4fr 2fr 7rem 4rem ≈ 424px min)
+     overflowed the page ~52px, and the nowrap .manager-controls button row spilled
+     off-screen. Rather than a card rework: (a) scroll the TABLE inside its own
+     .manager-table-wrap box; (b) WRAP the controls so every button stays visible.
+     Page stops breaking; full access is kept. */
+  .manager-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;   /* momentum scroll on iOS */
+  }
+  .manager-table {
+    min-width: 26rem;   /* hold the columns' natural width so the wrap box scrolls
+                           rather than crushing the name/allergen columns */
+  }
+  .manager-controls {
+    flex-wrap: wrap;
+  }
+
+  /* ---- Settings: stack the two-pane body so the panel isn't crushed (T3) ----
+     .settings-body is a flex ROW: a fixed 12.25rem (≈214px) vertical nav + the
+     panel. On a 390px phone the panel collapsed to ~133–150px — the fieldsets /
+     inputs overflowed and were unusable. Stack to a column: the nav becomes a
+     horizontal wrapping tab bar on top; the panel takes the full modal width. */
+  .settings-body {
+    flex-direction: column;
+  }
+  .settings-nav {
+    width: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    border-right: none;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .settings-nav .meal-list-tab {
+    width: auto;   /* tabs size to content and wrap, instead of one full-width stack */
   }
   .drawer {
     padding-top: max(1.25rem, env(safe-area-inset-top));
