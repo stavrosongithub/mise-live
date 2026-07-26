@@ -348,10 +348,37 @@ export function serializeMasterBlock(ingredientMaster) {
     )
   );
 
+  // WR-04 — neutralise at EMIT. `ingredient_name` is Manage-Ingredients free
+  // text in a shared multi-user database and it is emitted into a pipe-delimited,
+  // newline-separated block, so a name containing `|` or a line break could forge
+  // a column or a whole extra master row. Allergens get the same treatment (they
+  // ride the same line, `;`-joined).
+  //
+  // ⚠ CROSS-FEATURE, and deliberately so. This function is SHARED: buildSystemPrompt
+  // (the PARSE prompt, ~397) and buildRevisePrompt (the REVISE prompt, ~538) both
+  // call it — plan 27-01 extracted it precisely so those two serializations could
+  // not drift. Fixing only the revise call site would leave the identical hole open
+  // in the busier path AND re-create the duplication the extraction removed, so the
+  // fix belongs here.
+  //
+  // Byte impact, MEASURED not assumed: neutralisation is a no-op unless a name or
+  // allergen contains `|`, `\r` or `\n`. The real master (live-data/ingredients.csv,
+  // 236 rows) has ZERO such names, and allergens are the closed FSA-14 vocabulary —
+  // so the parse prompt's bytes are UNCHANGED in practice and the prompt cache is
+  // not invalidated. (scripts/revise.test.mjs pins this with a byte-identity
+  // assertion against a hand-computed reference.) If a name ever DID acquire a pipe,
+  // that one row's bytes would change and the cached prefix would rebuild ONCE — a
+  // single cache_creation spike, expected, not a regression.
+  //
+  // ⚠ The .sort() above stays on the RAW name. Neutralising before the sort could
+  // reorder `A|B` against `A/B`, and the sort ORDER is the cache-prefix stability
+  // contract this whole function exists to hold.
+  const clean = (s) => String(s ?? '').replace(/[\r\n]+/g, ' ').replace(/\|/g, '/');
+
   return sorted
     .map(m => {
-      const allergens = Array.isArray(m.allergens) ? m.allergens.join(';') : '';
-      return `${m.ingredient_id}|${m.ingredient_name}|${allergens}`;
+      const allergens = Array.isArray(m.allergens) ? m.allergens.map(clean).join(';') : '';
+      return `${m.ingredient_id}|${clean(m.ingredient_name)}|${allergens}`;
     })
     .join('\n');
 }
@@ -638,6 +665,49 @@ export function buildRecipeContextBlock({ form, salt, isNew } = {}) {
   // judgement, not data we round-trip.
   const cell = (v) => val(v).replace(/[\r\n]+/g, ' ').replace(/\|/g, '/');
 
+  // WR-04 — header values need the same neutralising as row cells, but NOT the
+  // same treatment. `instructions_20`, `prep` and `serve_with` are multi-line
+  // free text that arrives from `recipes.csv` (LLM-parsed from pasted web text,
+  // editable by the other user of the shared database), so an unneutralised value
+  // could emit a second `instructions_20:` line, forge a `# Ingredient rows`
+  // legend, or close the salted region early.
+  //
+  // ⚠ DO NOT "simplify" this to `cell()`. `cell()` collapses line breaks to a
+  // space, which would flatten a numbered method onto one line. `instructions_20`
+  // IS the recipe method and reasoning about the method ("too salty", "doesn't
+  // make enough portions") is this feature's primary use case — flattening it is a
+  // real comprehension cost on exactly the input that matters most, and it shows
+  // the model a single-line method, which is the shape it mirrors back when it
+  // proposes a rewrite.
+  //
+  // INDENTING is strictly stronger than collapsing for the same cost: after this,
+  // NO line derived from a header value can begin at column 0 at all, so a forged
+  // `key:` line, a forged `# Ingredient rows` heading and a forged
+  // `</recipe-{salt}>` closer are all impossible — while the method stays readable.
+  // Runs of breaks collapse to ONE indented break so a blank line inside a value
+  // cannot split the header section either.
+  //
+  // Pipes are rewritten REGARDLESS, because indentation alone does not stop a
+  // forged pipe-delimited row being assembled — it only moves it off column 0.
+  // Both halves are needed.
+  //
+  // Applied to all ten RECIPE_CONTEXT_HEADER_FIELDS uniformly (a no-op on the
+  // scalars) so a field that becomes multi-line later is covered without a second
+  // edit. `cell()` and the row loop below are unchanged.
+  //
+  // ⚠ THE TRAILING `[ \t]*` IS LOAD-BEARING — IT MAKES THE INDENT IDEMPOTENT.
+  // Without it the transform COMPOUNDS across turns and silently mutates stored
+  // data. D-1's own rationale is that the model mirrors the shape it is shown: it
+  // reads the indented method, echoes the indent back in a `set_header_field`
+  // value, `validateHeaderValue`'s free-text branch stores `String(value)`
+  // verbatim, and the next turn re-indents what is already indented. Measured on
+  // the pre-fix form: `1. A\n  2. B` -> `\n    ` -> `\n      ` -> `\n        `,
+  // two spaces per turn, straight into `recipes.csv`. The operator cannot see it
+  // — the diff renders through `x-text` with no `white-space: pre`, so HTML
+  // collapses the delta. Consuming any existing leading whitespace first makes
+  // the function a true normaliser: headerVal(headerVal(x)) === headerVal(x).
+  const headerVal = (v) => val(v).replace(/\|/g, '/').replace(/[\r\n]+[ \t]*/g, '\n  ');
+
   const lines = [`<${tag}>`];
 
   const nameIsBlank = val(header.name).trim() === '';
@@ -648,7 +718,7 @@ export function buildRecipeContextBlock({ form, salt, isNew } = {}) {
 
   lines.push('# Recipe header (blank value = not set)');
   for (const k of RECIPE_CONTEXT_HEADER_FIELDS) {
-    lines.push(`${k}: ${val(header[k])}`);
+    lines.push(`${k}: ${headerVal(header[k])}`);
   }
 
   lines.push('');

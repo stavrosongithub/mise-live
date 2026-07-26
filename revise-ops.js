@@ -471,6 +471,8 @@ export function applyOps({ form, ops, master, cuisineEnum, proteinEnum, blankRow
   const removeLines = new Map();    // rowIndex -> line_order as the op wrote it
   const quantityProposed = new Map(); // rowIndex -> Set of the quantity fields set (drives D-12)
   const unitProposed = new Map();     // rowIndex -> Map(unit field -> VALIDATED new value) (CR-03)
+  const seenRowTargets = new Set();    // `${resolvedIndex}:${field}` — WR-05
+  const seenHeaderTargets = new Set(); // field — WR-05
 
   for (const op of opList) {
     if (!op || typeof op !== 'object') {
@@ -487,6 +489,37 @@ export function applyOps({ form, ops, master, cuisineEnum, proteinEnum, blankRow
 
       const val = validateRowValue(op.field, op.value, masterById);
       if (!val.ok) return refuse(val.error);
+
+      // --- WR-05: the same (row, field) written twice by one proposal --------
+      // Exactly the "a row cannot be both edited and removed" disposition below:
+      // whichever we did last would silently win, and the diff would read as a
+      // lie. Two sets on one target used to apply last-write-wins and render as a
+      // SINGLE diff line for the survivor — so a proposal whose prose says "I've
+      // taken the salt down to 20 g" while its ops carry both 25 and 20 gave the
+      // operator no signal at all that the model had contradicted itself.
+      //
+      // ANY repeat is refused, not just two DIFFERING values: comparing validated
+      // values would add a branch, and an identical duplicate is still a malformed
+      // proposal. The wording is deliberately "twice" rather than "two different
+      // values" so the message stays TRUE in both cases.
+      //
+      // Keyed on the RESOLVED index, so two ops that reach one row by different
+      // addresses are caught too. Checked IN-LOOP, adjacent to the single push it
+      // protects (one push site, one guard, harder to drift), and AFTER value
+      // validation so an invalid value still reports the value problem first.
+      //
+      // D-12 consequence: `quantityProposed` can no longer be populated from a
+      // last-wins duplicate, so the paired-quantity derivation below cannot run
+      // off a value the model already contradicted.
+      //
+      // DELIBERATELY NOT REFUSED: two `remove_row` ops on one row (PASS 2 dedupes
+      // via `new Set(...)` and the diff renders one removal, which is honest), and
+      // multiple `add_row` ops (two adds are legitimately two rows).
+      const target = `${res.index}:${op.field}`;
+      if (seenRowTargets.has(target)) {
+        return refuse(`Chat proposed ${labelFor(op.field)} twice for line ${String(op.line_order)}. Nothing was changed.`);
+      }
+      seenRowTargets.add(target);
 
       rowSets.push({ index: res.index, field: op.field, value: val.value, ingredient_name: val.ingredient_name });
       setLines.set(res.index, String(op.line_order));
@@ -511,6 +544,12 @@ export function applyOps({ form, ops, master, cuisineEnum, proteinEnum, blankRow
 
       const val = validateHeaderValue(op.field, op.value, cuisineEnum, proteinEnum);
       if (!val.ok) return refuse(val.error);
+
+      // WR-05, header half — same reasoning as the row guard above.
+      if (seenHeaderTargets.has(op.field)) {
+        return refuse(`Chat proposed ${labelFor(op.field)} twice. Nothing was changed.`);
+      }
+      seenHeaderTargets.add(op.field);
 
       headerSets.push({ field: op.field, value: val.value });
 
