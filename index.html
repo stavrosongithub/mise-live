@@ -2036,11 +2036,17 @@
                    x-text="turn.text"></p>
 
                 <!-- I2 18 — the retry affordance: petrol ghost text, the
-                     `.banner-warning button` idiom. -->
+                     `.banner-warning button` idiom. PER-TURN, and offered only on
+                     the newest error turn: chatCanRetry(turn.id) is the SAME
+                     planRetry the click handler runs, so the control is never
+                     rendered where the handler would refuse (WR-01 — this used to
+                     render on every error turn and re-send whichever question was
+                     newest, including one that had already succeeded). The
+                     :disabled list mirrors the Apply button's idiom. -->
                 <button type="button" class="recipe-chat-retry"
-                        x-show="turn.role === 'error'"
-                        :disabled="chatPending"
-                        @click="retryLastChatMessage()">Try again</button>
+                        x-show="turn.role === 'error' && chatCanRetry(turn.id)"
+                        :disabled="chatPending || editorDisabled || !apiKey"
+                        @click="retryLastChatMessage(turn.id)">Try again</button>
 
                 <!-- I2 17 (D-14) — the applied separator: a mono ink-faint eyebrow
                      between two hairline rules. NO tick and NOT herb-green (R2): an

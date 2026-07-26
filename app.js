@@ -65,6 +65,13 @@ import { generateSalt, buildUserMessage } from './prompt-utils.js';
 // structuredClone (DataCloneError on an Alpine Proxy) and never a JSON round-trip
 // (NaN -> null would silently rewrite untouched sibling rows).
 import { applyOps, cloneForm } from './revise-ops.js';
+// Phase 27 / plan 27-09 — the transcript's own consistency rules, lifted out of
+// this file so they can be proven in node. All three defects they close (CR-01
+// two consecutive `user` messages, CR-02 a superseded proposal regaining a live
+// Apply, WR-01 a per-turn control acting globally) were STATE TRANSITIONS that a
+// grep cannot see and a happy-path browser seed cannot reach. chat-turns.js has
+// zero imports and no browser globals; scripts/chat-turns.test.mjs is the proof.
+import { liveProposalTurnId, buildChatMessages, planRetry } from './chat-turns.js';
 import { validateRecipe } from './validate.js';
 import { checkCoverage } from './coverage.js';
 import { estimateParseCost } from './count.js';
@@ -443,7 +450,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '850278e 2026-07-26';
+const APP_VERSION = 'f5458b8 2026-07-26';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -15729,10 +15736,18 @@ Alpine.data('app', () => ({
    *     a fresh per-request salt, so the recipe is re-read from the live form every
    *     single turn.
    *
-   *   messages — the accumulated conversation. Assistant entries carry the REPLY
-   *     TEXT ONLY, never the ops JSON: that would double history size for
-   *     information block 2 already carries (27-RESEARCH §1.5). `error` and
-   *     `applied` turns are transcript-only and never enter the payload. Operator
+   *   messages — the accumulated conversation, built by chat-turns.js's pure
+   *     `buildChatMessages` (CR-01). Assistant entries carry the REPLY TEXT ONLY,
+   *     never the ops JSON: that would double history size for information block 2
+   *     already carries (27-RESEARCH §1.5). TWO KINDS OF TURN ARE EXCLUDED. `error`
+   *     and `applied` turns are transcript-only. And a `you` turn marked
+   *     `unanswered` — the question whose request FAILED — is dropped too: leaving
+   *     it in produced two consecutive `user` messages, which the Messages API
+   *     rejects with a 400, permanently breaking the conversation (CR-01). The
+   *     builder additionally collapses any adjacent same-role pair and trims
+   *     leading/trailing assistants, so THE RESULT ALWAYS ALTERNATES STRICTLY AND
+   *     ENDS ON THE NEWEST OPERATOR QUESTION — which is precisely what the applied
+   *     note's rewrite of messages[length - 1] below assumes. Operator
    *     turns get their own salted boundary named `operator-message-` and
    *     deliberately NOT `recipe-…`, because the prompt declares `<recipe-{salt}>`
    *     content to be DATA-not-instructions and reusing that prefix for the
@@ -15760,7 +15775,11 @@ Alpine.data('app', () => ({
 
     // (2) Seed. The `you` turn goes in immediately so the transcript reads in the
     // order things happened, and the composer clears the moment the send commits.
-    this.chatTurns.push({ id: ++this._chatTurnSeq, role: 'you', text: outgoing, proposal: null });
+    // The id is bound to a local so the catch can find THIS turn again by id —
+    // never by holding the pushed object, which is not the identity the Alpine
+    // proxy array hands back.
+    const youTurnId = ++this._chatTurnSeq;
+    this.chatTurns.push({ id: youTurnId, role: 'you', text: outgoing, proposal: null });
     this.chatInput = '';
     this.chatPending = true;
 
@@ -15793,14 +15812,12 @@ Alpine.data('app', () => ({
       });
 
       const wrap = (text) => `<operator-message-${salt}>\n${text}\n</operator-message-${salt}>`;
-      const messages = [];
-      for (const turn of this.chatTurns) {
-        if (turn.role === 'you') {
-          messages.push({ role: 'user', content: wrap(turn.text) });
-        } else if (turn.role === 'claude') {
-          messages.push({ role: 'assistant', content: String(turn.text ?? '') });
-        }
-      }
+      // CR-01 — built by the pure derivation, not an inline loop. It drops
+      // unanswered questions and error/applied turns, collapses any adjacent
+      // same-role pair, and guarantees the array alternates strictly from `user`
+      // to `user`. That last guarantee is what the D-14 rewrite below stands on:
+      // messages[length - 1] is always the newest operator question.
+      const messages = buildChatMessages(this.chatTurns, wrap);
       if (appliedNote && messages.length > 0) {   // D-14's payload half
         messages[messages.length - 1] = {
           role: 'user',
@@ -15862,6 +15879,17 @@ Alpine.data('app', () => ({
       if (isStale()) return;
       // Restore the applied note so a retry still carries it.
       if (appliedNote) this._chatAppliedSinceLastSend = true;
+      // CR-01 — mark THIS send's question as never answered, so no later payload
+      // re-sends it. An unanswered `you` turn leaves a `user` message with no
+      // assistant reply behind it, and the moment the operator types a NEW message
+      // instead of pressing Try again the payload carries two consecutive `user`
+      // messages — which the Messages API rejects with a 400 that
+      // mapToPlainLanguage mislabels as "There's a bug in the schema our tool
+      // sent.", permanently breaking every later send in the session. The marker
+      // rides on the turn object, so no new chat state key is needed and
+      // initChatState / clearChatState keep working unchanged.
+      const failedTurn = (this.chatTurns || []).find(t => t && t.id === youTurnId);
+      if (failedTurn) failedTurn.unanswered = true;
       // D-08 — the failure goes in the transcript, NOT recipeManagerError.
       // Plain language only: callReviseLLM tags the messages it composed itself
       // (mapToPlainLanguage's pass-through list is parse-specific and this plan
@@ -15881,24 +15909,51 @@ Alpine.data('app', () => ({
   },
 
   /**
-   * retryLastChatMessage — Phase 27, backs UI-SPEC state 18's `Try again` control.
-   * Drops the trailing error turn(s), lifts the failed message back out of the
-   * transcript into the composer, and re-sends it — so a retry reads as one attempt,
-   * not as a duplicated question.
+   * retryLastChatMessage(errorTurnId) — Phase 27, backs UI-SPEC state 18's
+   * `Try again` control. Drops the trailing error turn(s), lifts the failed message
+   * back out of the transcript into the composer, and re-sends it — so a retry
+   * reads as one attempt, not as a duplicated question.
+   *
+   * WR-01 — IT TAKES THE TURN IT BELONGS TO. The button renders on every `error`
+   * turn, but this handler used to take no id at all: it popped the trailing error
+   * run and spliced the LAST `you` turn in the whole transcript. So with
+   * [you1, error1, you2, claude2], clicking error1's Try again re-sent `you2` — the
+   * message that had already SUCCEEDED — and left claude2's reply sitting above the
+   * question it answered. A per-turn control must receive its turn, or it acts
+   * globally on whatever happens to be newest.
+   *
+   * Availability is checked FIRST, before anything is lifted. The old version
+   * mutated the transcript and only then discovered sendChatMessage would silently
+   * early-return — destroying a message when chat had become unavailable (lock
+   * acquired, gone read-only, key cleared).
+   *
+   * The decision itself is chat-turns.js's pure `planRetry`, so this and the
+   * markup's chatCanRetry cannot disagree about what a retry is allowed to do.
    */
-  retryLastChatMessage() {
+  retryLastChatMessage(errorTurnId) {
     if (this.chatPending) return;
-    while (this.chatTurns.length > 0 && this.chatTurns[this.chatTurns.length - 1].role === 'error') {
-      this.chatTurns.pop();
-    }
-    let idx = -1;
-    for (let i = this.chatTurns.length - 1; i >= 0; i--) {
-      if (this.chatTurns[i].role === 'you') { idx = i; break; }
-    }
-    if (idx === -1) return;
-    const [failed] = this.chatTurns.splice(idx, 1);
-    this.chatInput = failed.text;
+    if (this.editorDisabled) return;
+    if (!this.apiKey) return;
+    const plan = planRetry(this.chatTurns, errorTurnId);
+    if (!plan.ok) return;
+    // Survivors are the SAME turn objects (planRetry never clones), so live
+    // proposal identities and their Apply/Undo state ride through untouched.
+    this.chatTurns = plan.turns;
+    this.chatInput = plan.text;
     return this.sendChatMessage();
+  },
+
+  /**
+   * chatCanRetry(turnId) — may this error turn's `Try again` be offered? Delegates
+   * to the SAME `planRetry` the click handler runs, so the control is never
+   * rendered where the handler would refuse (only the trailing error run may retry
+   * — WR-01). Side-effect-free.
+   *
+   * One derivation, read by both the markup and the method behind it — the rule
+   * chatLiveProposalTurnId already sets. No second predicate, no new state key.
+   */
+  chatCanRetry(turnId) {
+    return planRetry(this.chatTurns, turnId).ok;
   },
 
   /**
@@ -15978,7 +16033,10 @@ Alpine.data('app', () => ({
 
     // Snapshot BEFORE the assignment. The entry holds the PRE-apply form, so popping
     // it restores the state that existed a moment ago — step-back, not revert-to-open.
-    this._chatUndoStack.push({ turnId, form: before });
+    // `prevAppliedNote` records the D-14 flag AS IT WAS before this Apply set it, so
+    // Undo can be the exact inverse of Apply rather than an approximation (WR-02 —
+    // see undoChatApply for why a stack-depth heuristic gets an ordering wrong).
+    this._chatUndoStack.push({ turnId, form: before, prevAppliedNote: this._chatAppliedSinceLastSend === true });
 
     // The wholesale reassignment openRecipeForEdit already performs. Safe because
     // _recipeEditFormBackup captured the parse editor's objects BY REFERENCE before
@@ -16045,29 +16103,57 @@ Alpine.data('app', () => ({
       turn.proposal.applied = false;
       turn.proposal.reverted = true;
     }
+
+    // WR-02 — UNDO IS THE EXACT INVERSE OF APPLY. Restoring the form is only two
+    // thirds of it: Apply also set the D-14 note flag and pushed an `applied`
+    // separator, and leaving either behind told Claude a falsehood ("(I applied
+    // your previous changes.)") over a card that reads `Not applied`.
+    //
+    // The flag is RESTORED FROM THE RECORDED PRE-APPLY VALUE, not set to false and
+    // not derived from stack depth. Walk the four orderings and only the recorded
+    // value is right in all of them — Apply-1, send, Apply-2, Undo must leave the
+    // flag FALSE (Apply-1 was already communicated to Claude by the send, so
+    // nothing is newly applied), while Apply-1, Apply-2, Undo must leave it TRUE
+    // (Apply-1 still stands and Claude has not been told). An unconditional false
+    // breaks the second; `_chatUndoStack.length === 0` breaks the first.
+    this._chatAppliedSinceLastSend = entry.prevAppliedNote === true;
+
+    // The separator this Apply pushed: the `applied` turn with the SMALLEST id
+    // greater than the proposal's own turn id. Ids are monotonic and the array is
+    // in id order, so the FIRST match walking forwards is unambiguously that one.
+    const markIdx = (this.chatTurns || []).findIndex(
+      t => t && t.role === 'applied' && t.id > entry.turnId
+    );
+    if (markIdx !== -1) this.chatTurns.splice(markIdx, 1);
   },
 
   /**
    * chatLiveProposalTurnId — the id of the ONE proposal that may still be applied, or
    * null. Side-effect-free.
    *
-   * SPEC req 10b: exactly one live Apply exists at a time. The newest turn carrying a
-   * proposal that is not currently applied owns it — so sending a new message strips
-   * the Apply from the older proposal (which stays visible as read-only transcript
-   * with its diff intact, UI state 11), and undoing the newest proposal hands its
-   * Apply straight back (UI state 15).
+   * SPEC req 10b: exactly one live Apply exists at a time. The NEWEST
+   * proposal-bearing turn owns it — and when that proposal is applied there is NO
+   * live Apply at all. Sending a new message strips the Apply from the older
+   * proposal, which is then PERMANENTLY superseded: it stays visible as read-only
+   * transcript with its diff intact (UI state 11) but never gets its Apply back.
+   * Undoing the NEWEST proposal does hand its own Apply straight back (UI state 15).
+   *
+   * CR-02 — the rule above is not what this getter used to say or do. It returned the
+   * newest proposal that was not *currently applied*, so applying the newest one made
+   * it walk straight past and hand the live Apply to an older, abandoned proposal.
+   * The rule and its regression matrix now live in chat-turns.js /
+   * scripts/chat-turns.test.mjs; this is a one-line delegation and holds no loop of
+   * its own.
    *
    * Derived in ONE place and read by BOTH the markup and applyChatProposal's guard,
    * so "which one is live" cannot be answered differently by the button and the
-   * method behind it.
+   * method behind it. That is also why applyChatProposal's guard and
+   * chatProposalState were left untouched when CR-02 was fixed: they became correct
+   * THROUGH this getter, and a second parallel check is how two enforcement points
+   * for one rule start to drift.
    */
   get chatLiveProposalTurnId() {
-    const turns = Array.isArray(this.chatTurns) ? this.chatTurns : [];
-    for (let i = turns.length - 1; i >= 0; i--) {
-      const t = turns[i];
-      if (t && t.proposal && !t.proposal.applied) return t.id;
-    }
-    return null;
+    return liveProposalTurnId(this.chatTurns);
   },
 
   /**

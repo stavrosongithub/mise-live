@@ -121,9 +121,18 @@ function labelFor(field) {
 
 /**
  * cloneForm(form) — THE boundary copy. An EXPLICIT two-level structural copy of
- * `{ header, rows }`: a fresh header object with fresh `allergens` / `cuisine` /
- * `protein` arrays, and a fresh object per row with a fresh `flagged_fields`
- * array. Nothing in the result shares a reference with the input.
+ * `{ header, rows }`: a fresh header object in which EVERY array-valued key is
+ * copied, and a fresh object per row with a fresh `flagged_fields` array (the
+ * only array a row carries). Nothing in the result shares a reference with the
+ * input.
+ *
+ * The header copy is deliberately STRUCTURAL (`Object.keys` + `Array.isArray`)
+ * rather than a literal key list. It used to name `allergens` / `cuisine` /
+ * `protein` only, which silently excluded `header.review_flags` — a real,
+ * validator-required array seeded by `openAddRecipe` — so one array object was
+ * shared by the live form, the undo snapshot and `nextForm` (WR-03). A key list
+ * cannot keep a promise about keys it has not heard of: a NEW array header field
+ * must not be able to alias just because nobody remembered to add it here.
  *
  * WHY NOT `structuredClone`: it throws `DataCloneError` on an Alpine reactive
  * Proxy, and the caller hands us live form state (memory
@@ -140,6 +149,12 @@ function labelFor(field) {
  * `mealplan-base-must-be-deep-cloned` bug class. Do not grow a second copy of
  * this logic there.
  *
+ * The ROW copy stays key-named (`flagged_fields`) rather than structural: a row
+ * carries exactly one array and its shape is pinned by
+ * scripts/check-editor-row-fields.mjs, so an unnoticed new row array cannot
+ * appear the way a new header array can. If a second row array is ever added,
+ * generalise this the same way.
+ *
  * @param {{header?: object, rows?: Array<object>}} form
  * @returns {{header: object, rows: Array<object>}}
  */
@@ -153,7 +168,7 @@ export function cloneForm(form) {
   // would ADD it, and a no-op proposal's nextForm must be deep-equal to the
   // input form (an added `undefined` key fails deepStrictEqual).
   const header = { ...h };
-  for (const k of ['allergens', 'cuisine', 'protein']) {
+  for (const k of Object.keys(header)) {
     if (Array.isArray(header[k])) header[k] = header[k].slice();
   }
 
@@ -455,6 +470,7 @@ export function applyOps({ form, ops, master, cuisineEnum, proteinEnum, blankRow
   const setLines = new Map();       // rowIndex -> line_order as the op wrote it
   const removeLines = new Map();    // rowIndex -> line_order as the op wrote it
   const quantityProposed = new Map(); // rowIndex -> Set of the quantity fields set (drives D-12)
+  const unitProposed = new Map();     // rowIndex -> Map(unit field -> VALIDATED new value) (CR-03)
 
   for (const op of opList) {
     if (!op || typeof op !== 'object') {
@@ -478,6 +494,15 @@ export function applyOps({ form, ops, master, cuisineEnum, proteinEnum, blankRow
       if (op.field === 'quantity_metric' || op.field === 'quantity_volumetric') {
         if (!quantityProposed.has(res.index)) quantityProposed.set(res.index, new Set());
         quantityProposed.get(res.index).add(op.field);
+      }
+
+      // Unit writes are recorded with their VALIDATED value (never the raw
+      // `op.value`), because the CR-03 check below compares the proposed unit
+      // against the one the row already holds and a raw value has not been
+      // enum-checked or blank-normalized yet.
+      if (op.field === 'unit_metric' || op.field === 'unit_volumetric') {
+        if (!unitProposed.has(res.index)) unitProposed.set(res.index, new Map());
+        unitProposed.get(res.index).set(op.field, val.value);
       }
 
     } else if (kind === 'set_header_field') {
@@ -522,6 +547,60 @@ export function applyOps({ form, ops, master, cuisineEnum, proteinEnum, blankRow
     }
   }
 
+  // --- CR-03: a quantity change whose PAIRED half's UNIT is also changing ----
+  // The D-12 derivation below scales the OLD value of the unproposed half but
+  // rounds it with that half's unit AS WRITTEN BY THIS PROPOSAL. So
+  // `quantity_metric 100 -> 50` sent alongside `unit_volumetric tbsp -> cup`
+  // used to rewrite `4 tbsp` (~60 ml) as `2 cup` (~480 ml) — a 16x error landing
+  // in a `recipe_ingredients.csv` quantity cell, with a diff whose two lines each
+  // read as individually reasonable. The ratio is simply not transferable across
+  // a unit change; the model has given us no basis to convert.
+  //
+  // DISPOSITION: refuse the WHOLE proposal, not "apply and skip the derivation":
+  //   1. skipping would leave the two halves describing DIFFERENT amounts
+  //      (`50 g` beside `4 cup`) — a silent data-quality defect in the operator's
+  //      own CSV that the diff cannot show, because both rendered lines look fine;
+  //   2. it is the same class as the set+removal collision refused directly above,
+  //      and refused there for the same reason — the diff would read as a lie;
+  //   3. it is not a dead end for the model: a proposal that sets BOTH quantity
+  //      halves alongside the unit is still accepted (the `fields.size !== 1`
+  //      guard means no derivation runs), so "switch that to cups and cut it
+  //      back" remains expressible in one turn.
+  //
+  // The conditions below MIRROR the D-12 guard exactly — refuse only in the
+  // combination where the derivation would otherwise have fired against a changed
+  // unit, never more, or a harmless unit edit would start being rejected.
+  for (const [index, fields] of quantityProposed) {
+    // Both halves proposed => no derivation runs => nothing to protect.
+    if (fields.size !== 1) continue;
+
+    const proposedField = fields.has('quantity_metric') ? 'quantity_metric' : 'quantity_volumetric';
+    const otherField = proposedField === 'quantity_metric' ? 'quantity_volumetric' : 'quantity_metric';
+    const otherUnitField = otherField === 'quantity_metric' ? 'unit_metric' : 'unit_volumetric';
+
+    const units = unitProposed.get(index);
+    if (!units || !units.has(otherUnitField)) continue;   // the paired unit is untouched
+
+    // A no-op unit write (the row already holds that unit) changes no rounding.
+    const baseRow = baseRows[index] || {};
+    const newUnit = units.get(otherUnitField);
+    if (String(newUnit ?? '') === String(baseRow[otherUnitField] ?? '')) continue;
+
+    // The remaining two clauses are the D-12 guard verbatim: with no paired value
+    // or a non-positive old value the derivation would not have fired at all.
+    const otherOld = baseRow[otherField];
+    if (otherOld === null || otherOld === undefined || otherOld === '') continue;
+
+    const oldVal = Number(baseRow[proposedField]);
+    if (!Number.isFinite(oldVal) || oldVal <= 0) continue;
+
+    return refuse(
+      `Chat proposed a new ${labelFor(otherUnitField)} for line ${setLines.get(index)} and a ` +
+      `${labelFor(proposedField)} change on the same row, so the paired amount can't be worked out. ` +
+      `Nothing was changed.`
+    );
+  }
+
   // --------------------------------------------------------------------------
   // PASS 2 — apply. Everything below is already validated; no refusal past here.
   // --------------------------------------------------------------------------
@@ -550,14 +629,23 @@ export function applyOps({ form, ops, master, cuisineEnum, proteinEnum, blankRow
   // side; we derive the other from the ratio using scale.js's existing per-unit
   // rounding — deterministic, no model arithmetic, no density guessing.
   //
-  // GUARD (all three required, else derive nothing and refuse nothing):
+  // GUARD — FOUR conditions, only three of which are enforced here:
   //   • the proposal sets exactly ONE of the two quantity fields for this row
   //     (if it set both, the model has already decided the pair);
   //   • the OTHER half currently holds a value (non-null, non-'');
-  //   • the OLD value of the proposed half is a FINITE number > 0.
-  // The third clause is the important one: an old value of 0 or null yields an
-  // Infinity/NaN ratio, and scaleVolumetric(2,'cup',Infinity) returns Infinity —
-  // which would land in a quantity field and then in a CSV cell.
+  //   • the OLD value of the proposed half is a FINITE number > 0;
+  //   • the OTHER half's UNIT is UNCHANGED by this proposal — enforced in PASS 1
+  //     as a REFUSAL, not here as a skip, so by the time control reaches this
+  //     loop the condition is guaranteed. Do NOT add a second `continue` for it:
+  //     two enforcement points for one rule is how they drift (the same reason
+  //     the difficulty/popularity range checks live only in validateRecipe).
+  //     ⚠ This clause was MISSING until CR-03 — the derivation scaled the OLD
+  //     value of the unproposed half but rounded it with that half's NEW unit,
+  //     turning `4 tbsp` into `2 cup` (16x). The three clauses above were
+  //     documented as the complete guard; they were not. See the PASS-1 check.
+  // The third clause is the important one of the three kept here: an old value of
+  // 0 or null yields an Infinity/NaN ratio, and scaleVolumetric(2,'cup',Infinity)
+  // returns Infinity — which would land in a quantity field and then a CSV cell.
   //
   // Only the two primitives are used, each with a plain numeric ratio. The
   // meal-plan scaler's per-category scaling strengths must NOT be involved:
