@@ -52,9 +52,19 @@ window.Alpine = Alpine;
 // D-55 auto-resolve cascade after Add-new. 235-entry master is trivially small;
 // search runs in <1ms (RESEARCH §Standard Stack).
 import Fuse from 'https://esm.sh/fuse.js@7.3.0';
-import { buildRecipeSchema, buildClassifySchema, assertNoOpenObjects, FSA14, REASON_CODE_ENUM, FLAGGED_FIELD_NAME_ENUM, REVIEW_FLAG_ENUM } from './schema.js';
-import { buildSystemPrompt, DEFAULT_PROMPT_TEMPLATE } from './system-prompt.js';
+import { buildRecipeSchema, buildClassifySchema, buildReviseSchema, assertNoOpenObjects, FSA14, REASON_CODE_ENUM, FLAGGED_FIELD_NAME_ENUM, REVIEW_FLAG_ENUM } from './schema.js';
+import { buildSystemPrompt, DEFAULT_PROMPT_TEMPLATE, buildRevisePrompt, buildRecipeContextBlock } from './system-prompt.js';
 import { generateSalt, buildUserMessage } from './prompt-utils.js';
+// Phase 27 (Plan 27-02) — the PURE chat safety core: whole-proposal rejection,
+// the writable-field allow-list, closed-vocabulary validation, the D-12 paired-
+// quantity derivation and the two-forms-only diff. Zero I/O, zero browser
+// globals; node-tested by scripts/revise.test.mjs (~250 assertions). The impure
+// wiring (Alpine state, the Anthropic call, Apply/Undo) lives in THIS file.
+// cloneForm is the Proxy-safe, NaN-preserving boundary copy — use it for every
+// form snapshot crossing into the pure module and for the Undo stack; never
+// structuredClone (DataCloneError on an Alpine Proxy) and never a JSON round-trip
+// (NaN -> null would silently rewrite untouched sibling rows).
+import { applyOps, cloneForm } from './revise-ops.js';
 import { validateRecipe } from './validate.js';
 import { checkCoverage } from './coverage.js';
 import { estimateParseCost } from './count.js';
@@ -433,7 +443,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '43598d9 2026-07-25';
+const APP_VERSION = '850278e 2026-07-26';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -829,6 +839,156 @@ async function callClassifyLLM({ apiKey, model, systemPrompt, userMessage, schem
   const text = response.content && response.content[0] && response.content[0].text;
   if (!text) {
     throw new Error("Anthropic's response had no text content. Try again.");
+  }
+  const parsed = JSON.parse(text);
+  return { parsed, usage };
+}
+
+/**
+ * callReviseLLM — Phase 27 / RCHAT-02 (D-13, SPEC req 2). The LEAN chat call for
+ * "chat with Claude about a recipe". It COPIES callClassifyLLM's shape (the
+ * assertNoOpenObjects pre-flight, output_config.format, the e.model tag, the
+ * stop_reason refusal handling, max_tokens, the returned usage) and differs in
+ * exactly three deliberate ways:
+ *
+ *   1. `system` is an ARRAY of two text blocks with a prompt-cache breakpoint
+ *      between them (see the comment at the breakpoint below — the single
+ *      highest-value comment in this phase).
+ *   2. `messages` is the caller's ACCUMULATED conversation, not a one-shot user
+ *      message. Assistant entries carry the `reply` TEXT ONLY — never the ops
+ *      JSON, which would double history size for information block 2 already
+ *      carries (27-RESEARCH §1.5).
+ *   3. `model` comes from the caller, which passes `this.selectedModel`. NEVER
+ *      DEFAULT_MODEL — that constant is Phase 25's deliberate backfill override
+ *      (_classifyChunk), not the operator's Settings choice.
+ *
+ * KEY SAFETY (T-27-05): the apiKey is a request header only. It is never logged,
+ * never concatenated into a message, and the error is never JSON.stringify'd —
+ * the caller routes failures through mapToPlainLanguage / extractErrorDetail,
+ * which read named fields only.
+ *
+ * @param {{ apiKey: string, model: string, cachedPrefix: string,
+ *           recipeBlock: string, messages: Array<{role:string, content:string}>,
+ *           schema: object }} args
+ * @returns {Promise<{ parsed: object, usage: object|null }>} — `usage` is
+ *   REQUIRED by the caller: it is the ONLY way the caching claim is provable.
+ */
+async function callReviseLLM({ apiKey, model, cachedPrefix, recipeBlock, messages, schema }) {
+  // Local linter — fail fast with a debug-friendly path, not an opaque 400.
+  assertNoOpenObjects(schema);
+
+  const client = makeClient(apiKey);
+  let response;
+  try {
+    response = await client.messages.create({
+      model,
+      max_tokens: MAX_TOKENS,
+      // ---- THE PROMPT-CACHE BREAKPOINT (read this before touching it) --------
+      // (a) The breakpoint sits AFTER the rules+master prefix. Block 1 is the
+      //     revision rules plus the compact ingredient master and contains NO
+      //     per-turn bytes; block 2 is the recipe, re-serialized every turn with
+      //     a fresh per-request salt. Because the recipe sits after the marker,
+      //     re-serializing it cannot invalidate the prefix.
+      // (b) Prefix order is tools -> system -> messages, and a cache hit is a
+      //     STRICT PREFIX match. So nothing per-turn may EVER move into block 1:
+      //     a salt, a timestamp or a turn counter there re-bills the whole master
+      //     on every single turn, silently — no error, just a bill.
+      // (c) Because block 2 changes every turn and carries no marker, the message
+      //     history is not cached either. That is ACCEPTED: caching here buys
+      //     exactly one thing, the master is not re-billed. Do NOT "optimise" by
+      //     adding a second breakpoint after the recipe — that churns a fresh
+      //     cache entry per turn at 1.25x write price, i.e. strictly worse.
+      // (d) The minimum cacheable prefix is MODEL-DEPENDENT and non-monotonic:
+      //     1,024 tokens on claude-sonnet-4-6 / -4-5, but 4,096 on
+      //     claude-haiku-4-5. Mise's prefix (~1,850-2,850 tokens) clears Sonnet
+      //     and does NOT clear Haiku, where caching silently no-ops with no error
+      //     returned. The console.warn below names that case so a Haiku session
+      //     does not read as a bug. No ttl is set — the 5-minute default is
+      //     correct, and prompt caching is GA so NO beta header is needed.
+      //     https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+      system: [
+        { type: 'text', text: cachedPrefix, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: recipeBlock }
+      ],
+      messages,
+      output_config: {
+        format: {
+          type: 'json_schema',
+          schema
+        }
+      }
+    });
+  } catch (e) {
+    // Tag the actual model so mapToPlainLanguage's 404 branch names the model the
+    // OPERATOR selected, not a constant (03-REVIEW WR-09, same as callLLM).
+    if (e && typeof e === 'object') {
+      try { e.model = model; } catch (_) { /* frozen error — ignore */ }
+    }
+    throw e;
+  }
+
+  const usage = response.usage || null;
+  const u = usage || {};
+  const cacheCreated = u.cache_creation_input_tokens || 0;
+  const cacheRead = u.cache_read_input_tokens || 0;
+
+  // ONE diagnostic line per turn. These six numbers are the whole proof of the
+  // caching claim (SPEC req 2): on turn 2 against Sonnet, cache_read_input_tokens
+  // should be > 0. Logged BEFORE the stop_reason check so even a refused or
+  // truncated turn still yields its cache diagnostics. Deliberately six named
+  // NUMBERS and the model — never the request body, never the messages, never
+  // the key.
+  console.log('[chat] revise turn', {
+    model,
+    cachedPrefixChars: typeof cachedPrefix === 'string' ? cachedPrefix.length : 0,
+    cache_creation_input_tokens: cacheCreated,
+    cache_read_input_tokens: cacheRead,
+    input_tokens: u.input_tokens ?? null,
+    output_tokens: u.output_tokens ?? null
+  });
+
+  if (cacheCreated === 0 && cacheRead === 0) {
+    // Landmine L1 — the silent no-op. Both counters at zero means NOTHING was
+    // cached, and the API returns no error when that happens.
+    console.warn(
+      '[chat] prompt caching did not engage: cache_creation_input_tokens and ' +
+      'cache_read_input_tokens are both 0. Most likely cause — the cached prefix ' +
+      "is below the selected model's minimum cacheable size, in which case " +
+      'caching silently no-ops and no error is returned. The minimum is 1,024 ' +
+      'tokens on claude-sonnet-4-6 / claude-sonnet-4-5 and 4,096 tokens on ' +
+      "claude-haiku-4-5; Mise's rules+master prefix clears Sonnet but not Haiku. " +
+      'See https://platform.claude.com/docs/en/build-with-claude/prompt-caching'
+    );
+  }
+
+  // Refuse partial output (Pitfall B), with chat-appropriate wording.
+  //
+  // isChatPlainMessage: mapToPlainLanguage's pass-through list is PARSE-specific
+  // ("The recipe was too long", "Parse incomplete") and this plan must not edit
+  // that function, so a chat-worded message would fall through to its generic
+  // last-resort phrasing and the operator would lose the actionable detail. The
+  // tag lets sendChatMessage prefer the message we composed ourselves, exactly
+  // as callClassifyLLM tags isClassifyChunkTooBig for its own caller. Every
+  // error we did NOT compose still routes through mapToPlainLanguage.
+  if (response.stop_reason !== 'end_turn') {
+    let err;
+    if (response.stop_reason === 'max_tokens') {
+      err = new Error('That reply ran past the length limit before it finished. Ask for a smaller change and try again.');
+    } else if (response.stop_reason === 'refusal') {
+      err = new Error('The model declined to answer that. Try rephrasing your message.');
+    } else {
+      err = new Error(`The reply came back incomplete (stop_reason=${response.stop_reason}). Try again.`);
+    }
+    err.isChatPlainMessage = true;
+    err.model = model;
+    throw err;
+  }
+
+  const text = response.content && response.content[0] && response.content[0].text;
+  if (!text) {
+    const err = new Error("Anthropic's response had no text content. Try again.");
+    err.isChatPlainMessage = true;
+    throw err;
   }
   const parsed = JSON.parse(text);
   return { parsed, usage };
@@ -1308,6 +1468,17 @@ function csvNumber(v) {
  * @param {object} form — the reactive form (form.rows).
  * @returns {object} — a new row object.
  */
+// SHARED-ROW-FIELDS (blankRow defaults): keep these 15 keys and their default
+// values in sync with `fixtureBlankRow` in scripts/revise.test.mjs — its paired
+// counterpart. Phase 27's chat applier (revise-ops.js) builds every `add_row`
+// from `blankRow`, but it receives the function by INJECTION (production passes
+// THIS function verbatim; the node matrix passes the fixture, because blankRow
+// calls the app-local nextRowKey() counter and revise-ops.js must stay
+// browser-free). So the matrix asserts against the FIXTURE, not against this
+// function: change a default here without changing it there and the drift is
+// silent — nothing fails. Same idiom as the SHARED-ROW-FIELDS markers on the two
+// editor row templates (index.html ~L616 / ~L1716), except this pairing has no
+// automated guard, so the comment IS the control.
 function blankRow(form) {
   const nextLineOrder = Math.max(
     0,
@@ -2235,6 +2406,32 @@ Alpine.data('app', () => ({
       return `${lock.holder}'s edit looks abandoned (no activity for ${sinceLabel}). Take over?`;
     }
     return `${lock.holder} is editing — saving paused (${sinceLabel}).`;
+  },
+
+  // chatDisabledReason — Phase 27 (RCHAT-01, D-17/D-18, UI-SPEC I3). Side-effect-free
+  // copy getter (mirrors readOnlyBanner / presenceBanner): the plain-language reason
+  // the chat composer is unavailable, or '' when chat is usable.
+  //
+  // THE ORDER IS LOAD-BEARING: it mirrors editorDisabled's own OR-clause order
+  // (readOnlyMode, then the foreign presence lock, then merging) so the reason the
+  // composer shows always MATCHES the reason the editor itself is locked. The one
+  // deliberate re-ordering: the foreign-lock clause is tested FIRST because its copy
+  // (presenceBanner, "X is editing…") is the more specific and more actionable of the
+  // two read-only causes when both are somehow true at once.
+  //
+  // There is deliberately NO parallel `chatDisabled` boolean state key. D-17 requires
+  // routing through the ONE existing editorDisabled getter; the markup binds
+  // :disabled="editorDisabled || !apiKey || chatPending" inline and reads THIS getter
+  // only for the human-readable reason. A second flag is how the two drift.
+  //
+  // The no-key branch is last because it is the only cause the operator can fix
+  // without touching the shared database — its copy is D-18's locked wording.
+  get chatDisabledReason() {
+    if (this.presenceLock && !this._lockIsMine) return this.presenceBanner;
+    if (this.readOnlyMode) return this.readOnlyBanner;
+    if (this.merging) return 'Saving this recipe — chat is paused.';
+    if (!this.apiKey) return 'Add your Anthropic key in Settings to chat about this recipe.';
+    return '';
   },
 
   // presenceLockStale — Phase 12 (LOCK-04). Side-effect-free getter: true when the
@@ -3213,6 +3410,55 @@ Alpine.data('app', () => ({
   //   lifecycle owns this snapshot end-to-end (openRecipeManager/closeRecipeManager no
   //   longer touch it).
   _recipeEditFormBackup: null,
+
+  // ---------- Phase 27 (RCHAT-01/-02/-05/-07) — recipe Chat state ----------
+  // ALL of these are SESSION-ONLY (SPEC req 8): they live in Alpine state and
+  // NOWHERE else. Nothing here is written to localStorage, to IndexedDB (putFile /
+  // putJsonFile), to any CSV, or to any synced document — reopening the same recipe
+  // must show an empty conversation. initChatState() (called by BOTH openers) seeds
+  // them and clearChatState() (called by closeEditRecipe, the SINGLE teardown owner)
+  // resets them. They are deliberately ABSENT from the _dirtyTargets map: only
+  // {header, rows} counts as dirty, and an applied proposal already mutates those.
+
+  // recipeEditTab — which pane the recipe-edit modal shows: 'edit' | 'chat'.
+  //   ALWAYS 'edit' on open (both openers). Distinct from mealListTab /
+  //   mealPlanTab (do not conflate). The tab bar is HIDDEN below 640px (D-20),
+  //   where a CSS rule forces the Edit pane visible regardless of this value.
+  //   Owned by initChatState / clearChatState.
+  recipeEditTab: 'edit',
+  // chatTurns — the transcript, default []. Entry shape:
+  //     { id: <int>, role: 'you'|'claude'|'error'|'applied', text: <string>,
+  //       proposal: <object|null> }
+  //   where proposal (only ever on a 'claude' turn) is
+  //     { ops, diff, error, applied: false, reverted: false }.
+  //   The proposal RIDES ON its claude turn — there is deliberately no second
+  //   parallel array to keep in step. Owned by initChatState / clearChatState.
+  chatTurns: [],
+  // chatInput — the composer textarea model, default ''. Cleared on send.
+  chatInput: '',
+  // chatPending — true while ONE turn is in flight (one at a time). Reset in a
+  //   `finally` on EVERY path out of sendChatMessage (the parse()/`parsing`
+  //   precedent). Owned by sendChatMessage + initChatState / clearChatState.
+  chatPending: false,
+  // _chatTurnSeq — monotonic transcript-entry id counter, default 0. Internal
+  //   (underscore): never bound in a template. Deliberately NOT reset by
+  //   init/clear — ids stay unique across modal sessions, which costs nothing
+  //   and makes a stale :key impossible.
+  _chatTurnSeq: 0,
+  // _chatRequestSeq — monotonic request-id counter for the stale-response guard
+  //   (SPEC req 10a). sendChatMessage captures `++this._chatRequestSeq` BEFORE
+  //   its first await; a response whose captured id no longer matches is
+  //   discarded silently. initChatState BUMPS it so an in-flight response from a
+  //   PREVIOUS modal session is already stale the moment a new one opens.
+  _chatRequestSeq: 0,
+  // _chatUndoStack — Apply snapshots, default []. Entries { turnId, form },
+  //   where `form` is a cloneForm() deep copy (never a live reference — the
+  //   mealplan-base-must-be-deep-cloned bug class). Filled by plan 27-05.
+  _chatUndoStack: [],
+  // _chatAppliedSinceLastSend — set true by Apply, consumed (and reset) by the
+  //   next send, which folds D-14's "(I applied your previous changes.)" note
+  //   into the outgoing user message. Default false.
+  _chatAppliedSinceLastSend: false,
 
   // ---------- Approve / delta-write state (Plan 03) ----------
   sessionFolderHandle: null,          // FileSystemDirectoryHandle | null
@@ -8207,6 +8453,10 @@ Alpine.data('app', () => ({
   async openEditRecipe(recipe_id) {
     if (!Number.isInteger(recipe_id)) return;
     this._recipeEditFormBackup = { header: this.form.header, rows: this.form.rows };
+    // Phase 27 (SPEC req 8) — a modal session ALWAYS starts on the Edit tab with an
+    // empty conversation. Called in BOTH openers rather than relying on a prior
+    // closeEditRecipe, because openAddRecipe is reachable on a first-ever open.
+    this.initChatState();
     await this.openRecipeForEdit(recipe_id);
     // Phase 12 (LOCK-01, D-02) — acquire-on-open (existing-record edit). Guard on a
     // successful open (openRecipeForEdit sets editingRecipeId only on success, so a
@@ -8257,6 +8507,10 @@ Alpine.data('app', () => ({
     // Snapshot the SHARED form the same way openEditRecipe does (by reference —
     // closeEditRecipe restores it).
     this._recipeEditFormBackup = { header: this.form.header, rows: this.form.rows };
+    // Phase 27 (SPEC req 8) — same seed as openEditRecipe: Edit tab, empty
+    // conversation. Set here (immediately after the backup) rather than at the end
+    // so the fail-closed early-returns below cannot leave a half-seeded chat state.
+    this.initChatState();
 
     // Re-read recipes.csv fresh to suggest the id (maxOnDisk + 1, mirroring
     // recomputeRecipeId). On read failure, fail closed.
@@ -8337,6 +8591,18 @@ Alpine.data('app', () => ({
    * paths — exactly ONE restore per modal session (no double-restore, no stale
    * backup). MUST NOT clear recipeManagerNotice/recipeManagerError: save/delete set
    * the "Saved/Deleted ✓" notice BEFORE calling this, and it must survive the close.
+   *
+   * WHAT THIS FUNCTION OWNS (the complete list — keep it complete, it is how the next
+   * reader knows teardown leaves nothing behind):
+   *   this.form.header / this.form.rows  — restored from _recipeEditFormBackup
+   *   editingRecipeId                    — nulled (closes the modal)
+   *   recipeDeleteConfirmText            — cleared
+   *   _recipeEditFormBackup              — nulled
+   *   the advisory lock                  — released (fire-and-forget)
+   *   Phase 27 chat state (SPEC req 8), via clearChatState():
+   *     recipeEditTab, chatTurns, chatInput, chatPending,
+   *     _chatRequestSeq (bumped), _chatUndoStack, _chatAppliedSinceLastSend
+   *   NOT owned: _chatTurnSeq — a monotonic id counter, deliberately never rewound.
    */
   closeEditRecipe() {
     if (this._recipeEditFormBackup) {
@@ -8346,10 +8612,54 @@ Alpine.data('app', () => ({
     this.editingRecipeId = null;
     this.recipeDeleteConfirmText = '';
     this._recipeEditFormBackup = null;
+    // Phase 27 (SPEC req 8) — the conversation does NOT outlive the modal. Nothing
+    // was persisted, so clearing the in-memory keys IS the whole teardown; the
+    // _chatRequestSeq bump inside also invalidates any still-in-flight turn.
+    this.clearChatState();
     // Phase 12 (LOCK-01, D-05) — RELEASE on close (the SINGLE teardown owner;
     // Cancel/Escape + save/delete success all funnel here). Fire-and-forget;
     // releaseLock no-ops when heldLock is null and swallows its own errors.
     this.releaseLock();
+  },
+
+  /**
+   * initChatState — Phase 27 (SPEC req 8). Seed a FRESH chat session. Called by BOTH
+   * modal openers (openEditRecipe + openAddRecipe) immediately after each sets
+   * _recipeEditFormBackup — deliberately NOT relying on a prior closeEditRecipe,
+   * because openAddRecipe is reachable on a first-ever open with no close before it.
+   *
+   * The _chatRequestSeq bump is the load-bearing line: it makes any response still in
+   * flight from a PREVIOUS modal session stale before this session's first turn, so a
+   * late reply can never land in the new conversation (SPEC req 10a).
+   */
+  initChatState() {
+    this.recipeEditTab = 'edit';
+    this.chatTurns = [];
+    this.chatInput = '';
+    this.chatPending = false;
+    this._chatUndoStack = [];
+    this._chatAppliedSinceLastSend = false;
+    this._chatRequestSeq++;
+  },
+
+  /**
+   * clearChatState — Phase 27 (SPEC req 8). The teardown half, called ONLY from
+   * closeEditRecipe (the single teardown owner). Identical resets to initChatState:
+   * the conversation is session-only, so "clear" and "seed" are the same operation
+   * and keeping them as two named callers documents the two lifecycle ends.
+   *
+   * Nothing chat-related was ever written to localStorage, IndexedDB or any synced
+   * document, so this in-memory reset IS the complete teardown — there is no
+   * persisted residue to clean up.
+   */
+  clearChatState() {
+    this.recipeEditTab = 'edit';
+    this.chatTurns = [];
+    this.chatInput = '';
+    this.chatPending = false;
+    this._chatUndoStack = [];
+    this._chatAppliedSinceLastSend = false;
+    this._chatRequestSeq++;
   },
 
   /**
@@ -15354,6 +15664,498 @@ Alpine.data('app', () => ({
     } finally {
       this.classifyBackfillRunning = false;
     }
+  },
+
+  // ==========================================================================
+  // Phase 27 (RCHAT-01/-02/-05/-07) — chat with Claude about a recipe
+  // ==========================================================================
+
+  /**
+   * _reviseCall — the DELIBERATE TEST SEAM for the chat feature. A one-line
+   * delegation to the module-level callReviseLLM.
+   *
+   * Why it exists: the executor has no Playwright and the browser verification has
+   * no Anthropic key, so the whole UI surface would otherwise be unprovable. The
+   * verification overrides `app._reviseCall` with a stub that returns a canned
+   * `{ parsed: { reply, ops }, usage }`, which makes every transcript state, every
+   * diff, every Apply/Undo path and the stale-response discard provable with no
+   * network and no key. What that leaves genuinely unverifiable is ONLY live model
+   * judgement and the live cache counters — a small, nameable residue instead of
+   * "we couldn't test any of it". Keep this a pure delegation: any logic added here
+   * is logic the stub silently skips.
+   */
+  _reviseCall(args) {
+    return callReviseLLM(args);
+  },
+
+  /**
+   * sendChatMessage — Phase 27 (RCHAT-01/-05/-07, SPEC req 2/9/10). Send ONE chat
+   * turn about the recipe currently in the edit modal. Follows suggestClassifications'
+   * four-part async shell: re-entry/availability guard, state seed, try/catch routed
+   * through the existing error mappers, and a `finally` that always clears the
+   * pending flag (the parse()/`parsing` precedent).
+   *
+   * Three properties are load-bearing:
+   *
+   *   AVAILABILITY (D-17, T-27-04b) — the guard reads `this.editorDisabled`, the ONE
+   *   existing getter that already covers the foreign advisory lock, readOnlyMode and
+   *   mid-save. Never a parallel flag: chat must not be able to stage edits into a
+   *   form that Save would refuse.
+   *
+   *   STALENESS (SPEC req 10a, T-27-08) — the request id and the open recipe id are
+   *   captured BEFORE the first await and re-checked in BOTH the success and the
+   *   failure path. A response that arrives after the modal closed, or after a newer
+   *   turn superseded it, returns having touched nothing and logged nothing.
+   *
+   *   NO WRITE PATH (SPEC req 11, T-27-06) — nothing here reaches putFile, the GitHub
+   *   store, saveRecipeEdit or saveNewRecipe. Chat proposes; Apply mutates this.form
+   *   in memory; Save remains the only writer.
+   *
+   * Failures land IN THE TRANSCRIPT as an `error` turn (D-08), never in
+   * recipeManagerError — that shared banner renders at the top of a long scrolling
+   * body, where the operator may never see it.
+   *
+   * PAYLOAD SHAPE (the rationale, so the body below can stay short):
+   *
+   *   block 1 / cachedPrefix — buildRevisePrompt: revision rules + the compact
+   *     ingredient master. NO per-turn bytes, ever (see callReviseLLM's breakpoint
+   *     comment). Its cuisine/protein enums come from `effectiveVocab`, the same
+   *     resolution the parse / classify / estimate call sites use: buildReviseSchema
+   *     THROWS on an empty enum, and `this.cuisineVocab` is legitimately `[]` on a
+   *     device whose classifications-sync fetch failed — which must not break chat.
+   *
+   *   block 2 / recipeBlock — buildRecipeContextBlock over a `cloneForm(this.form)`
+   *     PLAIN-OBJECT copy (live Alpine Proxies never cross into a pure module) with
+   *     a fresh per-request salt, so the recipe is re-read from the live form every
+   *     single turn.
+   *
+   *   messages — the accumulated conversation. Assistant entries carry the REPLY
+   *     TEXT ONLY, never the ops JSON: that would double history size for
+   *     information block 2 already carries (27-RESEARCH §1.5). `error` and
+   *     `applied` turns are transcript-only and never enter the payload. Operator
+   *     turns get their own salted boundary named `operator-message-` and
+   *     deliberately NOT `recipe-…`, because the prompt declares `<recipe-{salt}>`
+   *     content to be DATA-not-instructions and reusing that prefix for the
+   *     operator's own request would invite the model to ignore it. D-14's applied
+   *     note is FOLDED into the newest user message rather than injected as a
+   *     standalone turn — leaner, and it sidesteps role ordering.
+   *
+   * RECEIVE-TIME DRY RUN (display only): a non-empty `ops` array is run through the
+   * real `applyOps` against a `cloneForm(this.form)` the moment it arrives, and the
+   * result is stored on the turn's `proposal`. Two reasons. (a) The diff the operator
+   * reads is therefore LOCALLY COMPUTED from the form, never model-described — SPEC
+   * req 6. (b) A proposal that already cannot apply renders with its plain-language
+   * refusal and a disabled Apply (UI state 16) instead of failing under the
+   * operator's finger. It is NOT the authority: Apply (plan 27-05) re-runs `applyOps`
+   * against the CURRENT form, so a proposal whose rows have since moved still gets
+   * whole-proposal rejection rather than a partial apply (T-27-04).
+   */
+  async sendChatMessage() {
+    // (1) Re-entry + availability guard. No side effects on any early return.
+    if (this.chatPending) return;
+    if (this.editorDisabled) return;
+    if (!this.apiKey) return;
+    const outgoing = (this.chatInput || '').trim();
+    if (!outgoing) return;
+
+    // (2) Seed. The `you` turn goes in immediately so the transcript reads in the
+    // order things happened, and the composer clears the moment the send commits.
+    this.chatTurns.push({ id: ++this._chatTurnSeq, role: 'you', text: outgoing, proposal: null });
+    this.chatInput = '';
+    this.chatPending = true;
+
+    // Captured BEFORE any await — this pair IS the staleness guard. `requestId`
+    // catches a superseded turn, `openId` catches a closed/re-opened modal
+    // (initChatState and clearChatState both bump _chatRequestSeq, so a modal
+    // round-trip invalidates an in-flight turn even at the same id).
+    const requestId = ++this._chatRequestSeq;
+    const openId = this.editingRecipeId;
+    const isStale = () =>
+      requestId !== this._chatRequestSeq ||
+      this.editingRecipeId !== openId ||
+      this.editingRecipeId === null;
+
+    // D-14's payload half — read now, consumed just before the await so a failed
+    // assembly does not silently swallow the note.
+    const appliedNote = this._chatAppliedSinceLastSend;
+
+    try {
+      // (3) Assemble the payload — see the JSDoc's PAYLOAD SHAPE section for why
+      // each piece is the way it is. Inside the try so an assembly failure surfaces
+      // as a transcript error turn rather than an unhandled rejection.
+      const vocab = effectiveVocab({ cuisines: this.cuisineVocab, proteins: this.proteinVocab });
+      const cachedPrefix = buildRevisePrompt(this.ingredientMaster, vocab.cuisines, vocab.proteins);
+      const salt = generateSalt();
+      const recipeBlock = buildRecipeContextBlock({
+        form: cloneForm(this.form),
+        salt,
+        isNew: this.isAddingRecipe
+      });
+
+      const wrap = (text) => `<operator-message-${salt}>\n${text}\n</operator-message-${salt}>`;
+      const messages = [];
+      for (const turn of this.chatTurns) {
+        if (turn.role === 'you') {
+          messages.push({ role: 'user', content: wrap(turn.text) });
+        } else if (turn.role === 'claude') {
+          messages.push({ role: 'assistant', content: String(turn.text ?? '') });
+        }
+      }
+      if (appliedNote && messages.length > 0) {   // D-14's payload half
+        messages[messages.length - 1] = {
+          role: 'user',
+          content: wrap(`(I applied your previous changes.) ${outgoing}`)
+        };
+      }
+
+      const schema = buildReviseSchema(
+        this.ingredientMaster.map(m => m.ingredient_id),
+        vocab.cuisines,
+        vocab.proteins
+      );
+
+      // Consumed only once the request is actually about to go out.
+      this._chatAppliedSinceLastSend = false;
+
+      // (4) The call. `usage` is deliberately not destructured: callReviseLLM already
+      // logs the six cache numbers, and D-16 rules out a cost meter.
+      const { parsed } = await this._reviseCall({
+        apiKey: this.apiKey,
+        model: this.selectedModel,   // the operator's Settings choice, never a constant
+        cachedPrefix,
+        recipeBlock,
+        messages,
+        schema
+      });
+
+      // STALE GUARD — first thing after the await. Touch nothing, log nothing.
+      if (isStale()) return;
+
+      const reply = (parsed && typeof parsed.reply === 'string') ? parsed.reply : '';
+      const ops = (parsed && Array.isArray(parsed.ops)) ? parsed.ops : [];
+
+      let proposal = null;
+      if (ops.length > 0) {
+        // Receive-time DRY RUN, DISPLAY ONLY (see the JSDoc's dry-run note).
+        const dry = applyOps({
+          form: cloneForm(this.form),
+          ops,
+          master: this.ingredientMaster,
+          cuisineEnum: vocab.cuisines,
+          proteinEnum: vocab.proteins,
+          blankRow
+        });
+        proposal = {
+          ops,
+          diff: dry.diff,
+          error: dry.error,
+          applied: false,
+          reverted: false
+        };
+      }
+      // ops.length === 0 leaves proposal null — a zero-op reply is a NORMAL outcome
+      // (D-11), rendered as a plain Claude turn with no card and no error.
+
+      this.chatTurns.push({ id: ++this._chatTurnSeq, role: 'claude', text: reply, proposal });
+    } catch (e) {
+      // A late FAILURE after close must be as silent as a late success.
+      if (isStale()) return;
+      // Restore the applied note so a retry still carries it.
+      if (appliedNote) this._chatAppliedSinceLastSend = true;
+      // D-08 — the failure goes in the transcript, NOT recipeManagerError.
+      // Plain language only: callReviseLLM tags the messages it composed itself
+      // (mapToPlainLanguage's pass-through list is parse-specific and this plan
+      // must not edit it); everything else routes through the existing mapper,
+      // which reads named fields only and can never echo the API key.
+      const text = (e && e.isChatPlainMessage && typeof e.message === 'string')
+        ? e.message
+        : mapToPlainLanguage(e);
+      this.chatTurns.push({ id: ++this._chatTurnSeq, role: 'error', text, proposal: null });
+    } finally {
+      // Reset on EVERY path — but only the CURRENT request owns the flag. Close the
+      // modal mid-flight, reopen it and send again, and the ORIGINAL response can
+      // still land; an unconditional reset would clear a flag the newer in-flight
+      // turn is holding, re-enabling the composer and allowing two concurrent sends.
+      if (requestId === this._chatRequestSeq) this.chatPending = false;
+    }
+  },
+
+  /**
+   * retryLastChatMessage — Phase 27, backs UI-SPEC state 18's `Try again` control.
+   * Drops the trailing error turn(s), lifts the failed message back out of the
+   * transcript into the composer, and re-sends it — so a retry reads as one attempt,
+   * not as a duplicated question.
+   */
+  retryLastChatMessage() {
+    if (this.chatPending) return;
+    while (this.chatTurns.length > 0 && this.chatTurns[this.chatTurns.length - 1].role === 'error') {
+      this.chatTurns.pop();
+    }
+    let idx = -1;
+    for (let i = this.chatTurns.length - 1; i >= 0; i--) {
+      if (this.chatTurns[i].role === 'you') { idx = i; break; }
+    }
+    if (idx === -1) return;
+    const [failed] = this.chatTurns.splice(idx, 1);
+    this.chatInput = failed.text;
+    return this.sendChatMessage();
+  },
+
+  /**
+   * applyChatProposal — Phase 27 (RCHAT-05, SPEC req 6/10b/11, D-14). Commit ONE
+   * reviewed proposal into the operator's form. This is the single point in the
+   * whole feature where model-derived intent becomes a form mutation.
+   *
+   * IN MEMORY ONLY. It assigns this.form.header / this.form.rows and nothing else:
+   * no store call, no GitHub call, no CSV write. Save stays the sole route to the
+   * CSVs (SPEC req 11, T-27-06), still gated by validateRecipe and the
+   * snapshot -> verify -> auto-revert machinery; Cancel/Escape after an Apply still
+   * restores the pre-modal form wholesale through closeEditRecipe.
+   *
+   * THE INSPECTOR IS RE-RUN HERE — deliberately, and not redundantly. The dry run
+   * sendChatMessage performed when the proposal landed was for DISPLAY. The form can
+   * have moved since (the operator can edit on the Edit tab, or apply an earlier
+   * proposal, between reading this one and pressing Apply). Re-running against the
+   * CURRENT form is what makes SPEC req 10's "a proposal whose rows moved is
+   * rejected WHOLE" true rather than aspirational (T-27-04) — a moved row refuses
+   * the entire proposal instead of landing some ops on the wrong lines.
+   *
+   * Three fields stay unreachable from here on purpose: header allergens (the
+   * derivedAllergens getter recomputes them from the rows, so a chat ingredient swap
+   * updates them for free — assigning them would fight the getter), the stored
+   * ingredient summary, and the recipe id. The allow-list inside applyOps is the
+   * primary control; not naming them in this method is the backstop.
+   */
+  applyChatProposal(turnId) {
+    // Availability — the ONE existing getter (foreign advisory lock / readOnlyMode /
+    // mid-save). Never a parallel flag: chat must not stage an edit into a form that
+    // Save would refuse (D-17, T-27-15).
+    if (this.editorDisabled) return;
+    // A turn in flight is about to supersede this proposal; applying underneath it
+    // would race the transcript's one-live-Apply invariant.
+    if (this.chatPending) return;
+
+    const turn = (this.chatTurns || []).find(t => t && t.id === turnId);
+    if (!turn || !turn.proposal) return;
+    // SPEC req 10b — EXACTLY ONE live Apply. Enforced here as well as in the markup:
+    // the markup decides what is RENDERED, this decides what can RUN, and a stale
+    // rendered control must not be able to apply a superseded proposal.
+    if (this.chatLiveProposalTurnId !== turnId) return;
+    const proposal = turn.proposal;
+
+    // Boundary copy of the LIVE form — plain objects only, no Alpine Proxy crosses
+    // into the pure module.
+    // NOT structuredClone: it throws DataCloneError on a reactive Proxy.
+    // NOT JSON.parse(JSON.stringify(...)): a JSON round-trip turns a cleared
+    // x-model.number quantity (which is NaN) into null, silently mutating rows the
+    // operator never touched. cloneForm is the explicit two-level structural copy
+    // that survives both — REUSED, never re-implemented, so the live form and the
+    // undo snapshot below can share no nested reference at all (this is the
+    // mealplan-base-must-be-deep-cloned bug class).
+    const before = cloneForm({ header: this.form.header, rows: this.form.rows });
+
+    // The SAME vocabulary resolution the receive-time dry run used. The two runs must
+    // agree: with the raw arrays, a device whose classifications sync failed would
+    // render a valid diff and then refuse it under the operator's finger.
+    const vocab = effectiveVocab({ cuisines: this.cuisineVocab, proteins: this.proteinVocab });
+
+    const result = applyOps({
+      form: before,
+      ops: proposal.ops,
+      master: this.ingredientMaster,
+      cuisineEnum: vocab.cuisines,
+      proteinEnum: vocab.proteins,
+      blankRow
+    });
+
+    if (!result.ok) {
+      // UI state 16 — the refusal banner renders inside the card and Apply disables.
+      // Nothing else moves: `applied` stays false and the form is untouched BY
+      // CONSTRUCTION (applyOps refuses before its working copy escapes).
+      proposal.error = result.error;
+      return;
+    }
+
+    // Snapshot BEFORE the assignment. The entry holds the PRE-apply form, so popping
+    // it restores the state that existed a moment ago — step-back, not revert-to-open.
+    this._chatUndoStack.push({ turnId, form: before });
+
+    // The wholesale reassignment openRecipeForEdit already performs. Safe because
+    // _recipeEditFormBackup captured the parse editor's objects BY REFERENCE before
+    // the opener reassigned these two keys, so replacing them again cannot corrupt
+    // the pre-modal restore (27-RESEARCH 3.8, verified).
+    this.form.header = result.nextForm.header;
+    this.form.rows = result.nextForm.rows;
+
+    proposal.applied = true;
+    proposal.reverted = false;
+    proposal.error = null;
+    // The diff of what ACTUALLY applied, not the receive-time dry run's.
+    proposal.diff = result.diff;
+
+    // D-14 — fold the fact into the next model turn AND show it in the transcript
+    // (UI state 17), so neither the operator nor Claude loses track of whether a
+    // proposal was taken up (T-27-16).
+    this._chatAppliedSinceLastSend = true;
+    this.chatTurns.push({
+      id: ++this._chatTurnSeq,
+      role: 'applied',
+      text: 'YOU APPLIED THESE CHANGES',
+      proposal: null
+    });
+  },
+
+  /**
+   * undoChatApply — Phase 27 (RCHAT-05, SPEC req 6). Step back exactly ONE Apply.
+   *
+   * THE SEMANTICS ARE STEP-BACK, NOT REVERT-TO-OPEN, and that is the whole reason it
+   * exists: Cancel/Escape already restores the pre-modal form wholesale via
+   * closeEditRecipe -> _recipeEditFormBackup (with the existing "Discard changes?"
+   * confirm in front of it, which applied ops make fire because they leave the form
+   * dirty). A revert-to-open Undo would duplicate a control the modal already has.
+   * Stepping back one Apply at a time is the behaviour not otherwise obtainable —
+   * Apply, Apply, Undo leaves the FIRST Apply standing.
+   *
+   * The stack is the single source of Undo availability: when it is empty no Undo is
+   * offered anywhere (chatUndoTurnId returns null), so this method's empty-stack
+   * guard is a backstop, not the control.
+   *
+   * Like Apply, this writes to this.form only — no store, no GitHub, no CSV.
+   */
+  undoChatApply() {
+    if (this.editorDisabled) return;
+    if (!Array.isArray(this._chatUndoStack) || this._chatUndoStack.length === 0) return;
+
+    // Exactly ONE entry per call — never a loop, never a clear. Depth is the whole
+    // point: two Applies leave two entries and take two Undos.
+    const entry = this._chatUndoStack.pop();
+    if (!entry || !entry.form) return;
+
+    // Re-clone ON RESTORE. The popped entry is already a plain-object copy, but
+    // handing its own objects to the live form would make the stack entry ALIAS live
+    // state — and a later edit would then silently rewrite history if that entry were
+    // ever seen again (T-27-12). Cloning here costs one shallow pass and removes the
+    // whole class.
+    const restored = cloneForm(entry.form);
+    this.form.header = restored.header;
+    this.form.rows = restored.rows;
+
+    const turn = (this.chatTurns || []).find(t => t && t.id === entry.turnId);
+    if (turn && turn.proposal) {
+      turn.proposal.applied = false;
+      turn.proposal.reverted = true;
+    }
+  },
+
+  /**
+   * chatLiveProposalTurnId — the id of the ONE proposal that may still be applied, or
+   * null. Side-effect-free.
+   *
+   * SPEC req 10b: exactly one live Apply exists at a time. The newest turn carrying a
+   * proposal that is not currently applied owns it — so sending a new message strips
+   * the Apply from the older proposal (which stays visible as read-only transcript
+   * with its diff intact, UI state 11), and undoing the newest proposal hands its
+   * Apply straight back (UI state 15).
+   *
+   * Derived in ONE place and read by BOTH the markup and applyChatProposal's guard,
+   * so "which one is live" cannot be answered differently by the button and the
+   * method behind it.
+   */
+  get chatLiveProposalTurnId() {
+    const turns = Array.isArray(this.chatTurns) ? this.chatTurns : [];
+    for (let i = turns.length - 1; i >= 0; i--) {
+      const t = turns[i];
+      if (t && t.proposal && !t.proposal.applied) return t.id;
+    }
+    return null;
+  },
+
+  /**
+   * chatUndoTurnId — the turn id at the TOP of the Apply snapshot stack, or null.
+   * Side-effect-free. Only that proposal shows an Undo (D-06: Undo lives on the
+   * proposal, never in a persistent bar), because step-back can only unwind the most
+   * recent Apply — an older applied proposal reads `Applied` with no control
+   * (UI state 13).
+   */
+  get chatUndoTurnId() {
+    const stack = Array.isArray(this._chatUndoStack) ? this._chatUndoStack : [];
+    if (stack.length === 0) return null;
+    const top = stack[stack.length - 1];
+    return (top && top.turnId !== undefined) ? top.turnId : null;
+  },
+
+  /**
+   * chatProposalState(turn) — the ONE state word for a proposal, mapped explicitly to
+   * the 27-UI-SPEC I2 state matrix so the markup and this function cannot drift apart.
+   * Side-effect-free; returns '' for a turn that carries no proposal (a you / claude /
+   * error / applied turn), which renders no card at all.
+   *
+   *   'refused'     I2 state 16 — applyOps returned {ok:false}; refusal banner in the
+   *                 card, Apply disabled, nothing applied. Tested FIRST so a refusal is
+   *                 never dressed up as a live Apply.
+   *   'applied-top' I2 state 12 — applied AND top of the snapshot stack: `Applied` + a
+   *                 live Undo.
+   *   'applied'     I2 state 13 — applied but buried under a later Apply: `Applied`
+   *                 only, no Undo (step-back cannot reach it yet).
+   *   'live'        I2 states 10 and 15 — the single live Apply. State 15 (a reverted
+   *                 NEWEST proposal regaining its Apply) is the same condition, which
+   *                 is why it is not a separate word.
+   *   'reverted'    I2 state 14 — undone and no longer the newest: `Not applied` only.
+   *   'superseded'  I2 state 11 — has a proposal, never applied, not the live one: card
+   *                 + diff with the action row EMPTY (Apply removed, not disabled).
+   */
+  chatProposalState(turn) {
+    const p = turn && turn.proposal;
+    if (!p) return '';
+    if (p.error) return 'refused';                                        // I2 16
+    if (p.applied) return turn.id === this.chatUndoTurnId
+      ? 'applied-top'                                                     // I2 12
+      : 'applied';                                                        // I2 13
+    if (turn.id === this.chatLiveProposalTurnId) return 'live';           // I2 10 / 15
+    if (p.reverted) return 'reverted';                                    // I2 14
+    return 'superseded';                                                  // I2 11
+  },
+
+  /**
+   * chatDiffGroups — Phase 27 (D-07). The view model for the compact changed-only
+   * diff: split a computeDiff array into the two render groups D-07 specifies —
+   * `recipe` (header entries) and `ingredients` (row entries) — preserving
+   * computeDiff's ordering within each group. An empty group comes back as an empty
+   * array, so the markup renders its head only when it has lines.
+   *
+   * PURE: no state read, no state write, and every entry passes through BY REFERENCE
+   * and unchanged. This groups; it does not reformat. computeDiff already produced
+   * display-ready strings (arrays `;`-joined per the Phase-25 D-13 delimiter,
+   * null/undefined as ''), and the markup binds `label`, `name`, `old`, `new` and
+   * `change` straight off the entry. Nothing here re-rounds or re-derives a quantity:
+   * a second formatting point is how the diff starts disagreeing with the form it
+   * describes. The count the proposal head shows is read at the binding site as
+   * `proposal.diff.length` rather than through another member (leaner, and one fewer
+   * thing to keep in step).
+   *
+   * ⚠ WHERE THE BEFORE-VALUES COME FROM — the guarantee this whole surface rests on:
+   * every entry originates in `computeDiff(prevForm, nextForm)`, whose signature takes
+   * exactly two FORMS and no model-supplied data of any kind. So an `old` value the
+   * operator reads was necessarily read out of their own form; it structurally cannot
+   * be a number Claude asserted. That is SPEC req 6's central promise, and it is kept
+   * by NOT giving this function any other source of values.
+   *
+   * Deliberately absent (each ruled out, not overlooked): any cost/token estimate
+   * (D-16), any per-change accept state (SPEC non-goal — granularity comes from the
+   * conversation), any re-grouping by ingredient row (D-07 chose one line per change).
+   *
+   * @param {Array<object>} diff — a computeDiff result (tolerates null/undefined)
+   * @returns {{recipe: Array<object>, ingredients: Array<object>}}
+   */
+  chatDiffGroups(diff) {
+    const entries = Array.isArray(diff) ? diff : [];
+    const recipe = [];
+    const ingredients = [];
+    for (const entry of entries) {
+      if (!entry) continue;
+      (entry.scope === 'header' ? recipe : ingredients).push(entry);
+    }
+    return { recipe, ingredients };
   },
 
   /**

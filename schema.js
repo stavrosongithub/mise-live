@@ -76,6 +76,61 @@ export const UNIT_VOLUMETRIC_ENUM = ['whole', 'tsp', 'tbsp', 'cup'];
 export const ROLE_ENUM = ['required', 'optional', 'garnish', 'to_taste'];
 
 // ----------------------------------------------------------------------------
+// Phase 27 / RCHAT-06 — the writable-field allow-lists for the Chat feature
+// ----------------------------------------------------------------------------
+// These are CLOSED VOCABULARIES, so they are filed here with the other closed
+// vocabularies. This is the SINGLE source of truth for the allow-lists:
+// `buildReviseSchema` below uses them as the grammar's field-name enums and
+// `revise-ops.js` imports them as its apply-time allow-list. Never re-declare
+// either list anywhere else — a second literal copy is how the grammar and the
+// applier drift apart.
+//
+// THESE ARE FORM KEYS, NOT DISK COLUMNS. Chat ops write into `this.form`, which
+// uses the in-memory key names, and the existing boundary translation maps them
+// to the CSV columns at the read/write edges:
+//   `main_side_salad` ↔ the literal `main/side/salad` column (see file header)
+//   `prep`            ↔ the `prep_notes` column (see file header / 260618-i9p)
+//
+// Everything NOT on these two lists is UNWRITABLE by chat. Deliberately absent
+// (SPEC req 7 — assert on these exact names):
+//   row  `raw_text`   — verbatim source provenance; a chat-invented value would
+//                       no longer be provenance.
+//   row  `line_order` — row identity/address, assigned locally by `blankRow()`.
+//   row  `ingredient_name` — re-derived locally from the master when
+//                       `ingredient_id` changes; never model-set.
+//   head `allergens`  — DERIVED from the rows (`derivedAllergens`), so an
+//                       ingredient swap updates it for free.
+//   head `ingredients_20` — unwritable and un-derived by deliberate decision
+//                       (SPEC out-of-scope; the staleness is accepted).
+//   `recipe_id`       — allocated locally; never in the form at all.
+// (Also absent, for the same "not the model's business" reason: `source`,
+// `last_made`, `popularity_notes`, `difficulty_notes`, `class_needs_review`,
+// `review_flags`, `flag_fix_me`, `flagged_fields`, `_key`, `_confirmed`.)
+export const ROW_WRITABLE = Object.freeze([
+  'quantity_metric',
+  'unit_metric',
+  'quantity_volumetric',
+  'unit_volumetric',
+  'role',
+  'prep_note',
+  'section',
+  'ingredient_id'
+]);
+
+export const HEADER_WRITABLE = Object.freeze([
+  'name',
+  'main_side_salad',
+  'instructions_20',
+  'prep',
+  'serve_with',
+  'max_servings',
+  'difficulty',
+  'popularity',
+  'cuisine',
+  'protein'
+]);
+
+// ----------------------------------------------------------------------------
 // Phase 3 / REVIEW-05 — low-confidence flagging enums
 // ----------------------------------------------------------------------------
 // Closed 6-code reason enum (D-33). Order matches the documented ordering
@@ -385,6 +440,186 @@ export function buildClassifySchema(cuisineEnum, proteinEnum) {
             }
           }
         }
+      }
+    }
+  };
+}
+
+/**
+ * buildReviseSchema — Phase 27 / RCHAT-03 (D-02/D-19). The EDIT-INTENT schema for
+ * the recipe Chat pane. This is deliberately NOT `buildRecipeSchema` (which ships
+ * the full parse extraction contract and would have Claude rewrite the whole
+ * recipe): chat returns a short operator-facing `reply` plus a list of EDIT
+ * INTENTS that `revise-ops.js` applies locally against `this.form`, so the diff
+ * the operator reviews is computed by us, never described by the model.
+ *
+ * Shape: `{ reply: string, ops: [ set_row_field | set_header_field | add_row |
+ * remove_row ] }`. Exactly FOUR op kinds — `scale_all` is DROPPED (D-19): per-row
+ * edits only, one code path, and Claude must be explicit about every row it
+ * touches. `ops` MAY BE EMPTY — a reply with nothing to apply is a normal,
+ * supported outcome (D-11), not an error.
+ * `additionalProperties: false` on EVERY object (assertNoOpenObjects enforces it
+ * pre-request).
+ *
+ * The field-name enums ARE `ROW_WRITABLE` / `HEADER_WRITABLE` above — not a second
+ * literal copy — so a field outside the allow-list is token-level impossible for
+ * the model to name. The `ingredient_id` / classification enums are PASSED IN
+ * (never hardcoded here — D-03: the master and the cuisine/protein vocabulary are
+ * user-editable and synced, not schema literals), exactly like
+ * `buildClassifySchema` / `buildRecipeSchema`.
+ *
+ * ----------------------------------------------------------------------------
+ * anyOf BUDGET (the Pitfall-J discipline above, applied to this builder)
+ * ----------------------------------------------------------------------------
+ * Measured with a recursive walk: `ops.items` (1 keyword / 4 branches) +
+ * `set_row_field.value` (1 / 2) + `set_header_field.value` (1 / 2) =
+ * **3 anyOf keywords / 8 branches** — well under the project's conservative < 16
+ * convention, and the built JSON with 236 real master ids is ~3.5KB, SMALLER than
+ * the shipped `buildRecipeSchema` (~4.5KB / 28 branches). NOTE: the "16-union cap"
+ * quoted in the Pitfall-J block above is NOT a currently-documented Anthropic
+ * limit. The REAL limit is undocumented and fails LOUD, as HTTP 400
+ * `The compiled grammar is too large, which would cause performance issues.` —
+ * so the < 16 budget is prudence, not an API contract. If that 400 ever appears,
+ * the cheapest lever is the master-id enum occurrence count (see below).
+ *
+ * The master-id enum appears in exactly TWO places, both "NEW id" positions:
+ * `add_row.ingredient_id` and `set_row_field.value`'s integer branch. The ADDRESS
+ * `ingredient_id` on `set_row_field` / `remove_row` is a plain `{type:'integer'}`
+ * ON PURPOSE — constraining an address to the master buys nothing (an address that
+ * does not resolve to exactly one row already rejects the WHOLE proposal, SPEC
+ * req 4) and halving the enum occurrences halves that part of the compiled grammar.
+ *
+ * NAMED STRUCTURAL LIMIT — grammar constrains the field NAME, not the VALUE.
+ * `unit_metric`, `unit_volumetric`, `role`, `cuisine` and `protein` are closed
+ * vocabularies, but they CANNOT be grammar-constrained inside a generic set-field
+ * op: the field name and its value live in the same object and Structured Outputs
+ * supports no conditional keywords (`if`/`then`, `dependentSchemas` are not in the
+ * supported subset). The only grammar-level alternative is one op kind per field
+ * (8 + 10 = 18 branches — over budget, and 18 code paths). So `revise-ops.js`
+ * validates the VALUE and refuses the whole proposal on an off-enum value. Read
+ * the consequence precisely: an off-master INGREDIENT is impossible to emit; an
+ * off-enum UNIT is possible to emit and impossible to apply. Vocabulary discipline
+ * was not dropped — it is split across the grammar and the applier.
+ *
+ * Fail-loud guard (Rule 2 — vocabulary-discipline correctness, T-27-02): an
+ * empty/undefined enum array would silently produce an UNCONSTRAINED value, i.e.
+ * the vocabulary control fails OPEN and the model could emit any integer id or any
+ * classification string. That is the one condition worth throwing over. Callers
+ * resolve `masterIds` from the loaded master and the vocabularies through
+ * `effectiveVocab()` (always non-empty), so this never trips in practice.
+ *
+ * @param {Array<number>} masterIds — every `ingredient_id` from the master (non-empty).
+ * @param {string[]} cuisineEnum — the closed cuisine vocabulary (non-empty).
+ * @param {string[]} proteinEnum — the closed protein vocabulary (non-empty).
+ * @returns {object} JSON Schema for output_config.format
+ * @throws {Error} when any of the three arrays is empty/undefined.
+ */
+export function buildReviseSchema(masterIds, cuisineEnum, proteinEnum) {
+  if (!Array.isArray(masterIds) || masterIds.length === 0) {
+    throw new Error('buildReviseSchema: masterIds must be a non-empty array');
+  }
+  if (!Array.isArray(cuisineEnum) || cuisineEnum.length === 0) {
+    throw new Error('buildReviseSchema: cuisineEnum must be a non-empty array');
+  }
+  if (!Array.isArray(proteinEnum) || proteinEnum.length === 0) {
+    throw new Error('buildReviseSchema: proteinEnum must be a non-empty array');
+  }
+
+  // ONE de-duplicated union for the header array branch. A grammar cannot tell
+  // which header field the value belongs to (see the structural limit above), so
+  // it constrains the union; `revise-ops.js` member-filters per field (a cuisine
+  // value must be in cuisineEnum, not merely in the union) — the same
+  // belt-and-braces filter the Phase-25 classify path already applies.
+  const classVocab = [...new Set([...cuisineEnum, ...proteinEnum])];
+
+  // set_row_field — edit ONE allow-listed field on ONE existing row.
+  // Addressing carries BOTH `line_order` and `ingredient_id`; they must resolve
+  // jointly to exactly one row or the whole proposal is rejected (SPEC req 4).
+  const setRow = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['kind', 'line_order', 'ingredient_id', 'field', 'value'],
+    properties: {
+      kind:          { type: 'string', enum: ['set_row_field'] },
+      line_order:    { type: 'integer' },   // ADDRESS — deliberately unconstrained
+      ingredient_id: { type: 'integer' },   // ADDRESS — deliberately unconstrained
+      field:         { type: 'string', enum: ROW_WRITABLE },
+      // Numbers arrive as strings and are Number()-coerced (with a refusal on
+      // NaN) in revise-ops.js — a {type:'number'} branch would only make the
+      // grammar ambiguous with the id-enum branch for no gain.
+      value: {
+        anyOf: [
+          { type: 'string' },
+          { type: 'integer', enum: masterIds }   // NEW id — constraint site 1 of 2
+        ]
+      }
+    }
+  };
+
+  // set_header_field — edit ONE allow-listed header field.
+  const setHeader = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['kind', 'field', 'value'],
+    properties: {
+      kind:  { type: 'string', enum: ['set_header_field'] },
+      field: { type: 'string', enum: HEADER_WRITABLE },
+      // The array branch exists because `cuisine` / `protein` are ARRAYS in the
+      // form (they bind to checkbox x-model on form.header.*).
+      value: {
+        anyOf: [
+          { type: 'string' },
+          { type: 'array', items: { type: 'string', enum: classVocab } }
+        ]
+      }
+    }
+  };
+
+  // add_row — append ONE new ingredient row. Apply builds it from `blankRow()`'s
+  // defaults and then writes only these allow-listed fields, so `raw_text: ''`,
+  // `_key`, `line_order` and `flagged_fields` stay locally-owned (SPEC req 7).
+  // Deliberately NO volumetric pair: `blankRow` already nulls both, a
+  // from-scratch drafted row has no source text to preserve a cup measure from,
+  // and including the pair would cost 2 anyOf keywords / 4 branches (the repo's
+  // convention is "every property REQUIRED, nullability via anyOf"). An EXISTING
+  // row's volumetric pair stays fully editable via `set_row_field`, which is the
+  // primary D-12 case.
+  const addRow = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['kind', 'ingredient_id', 'quantity_metric', 'unit_metric', 'role', 'section', 'prep_note'],
+    properties: {
+      kind:            { type: 'string', enum: ['add_row'] },
+      ingredient_id:   { type: 'integer', enum: masterIds },  // NEW id — constraint site 2 of 2
+      quantity_metric: { type: 'number' },
+      unit_metric:     { type: 'string', enum: UNIT_METRIC_ENUM },
+      role:            { type: 'string', enum: ROLE_ENUM },
+      section:         { type: 'string' },   // '' = none (matches blankRow's defaults)
+      prep_note:       { type: 'string' }    // '' = none (matches blankRow's defaults)
+    }
+  };
+
+  // remove_row — drop ONE existing row. Same joint addressing as set_row_field.
+  const removeRow = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['kind', 'line_order', 'ingredient_id'],
+    properties: {
+      kind:          { type: 'string', enum: ['remove_row'] },
+      line_order:    { type: 'integer' },   // ADDRESS
+      ingredient_id: { type: 'integer' }    // ADDRESS
+    }
+  };
+
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['reply', 'ops'],
+    properties: {
+      reply: { type: 'string' },
+      ops: {
+        type: 'array',
+        items: { anyOf: [setRow, setHeader, addRow, removeRow] }
       }
     }
   };

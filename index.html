@@ -1666,6 +1666,62 @@
           <p x-text="recipeManagerNotice"></p>
         </div>
 
+        <!-- ============ EDIT | CHAT TAB SWITCHER (phase 27-06, RCHAT-01) ============
+             REUSES THE ONE TAB COMPONENT — `.meal-list-tabs-bar` + `.meal-list-tab` /
+             `.meal-list-tab-active` (styles.css ~5142, DESIGN-LANGUAGE §4.5 "one tab
+             component everywhere"), the same shared component the meal-plan scope
+             switcher, the derived-list tabs and the Settings left-nav already use. It is
+             NOT forked and NOT generalized; the ONLY new tab rule is
+             `.recipe-edit-tabs { margin-bottom }`.
+
+             Deliberately NOT wrapped in a `.meal-list-tabs` container: that container
+             SCOPES the folder-tab restyle (styles.css ~5179 — accent-tint strip,
+             borderless top-rounded tabs) to the derived-list panel, and it must not
+             apply here.
+
+             HIDDEN below 640px (D-20) — the hide lives in the ONE @media
+             (max-width: 640px) block at the end of styles.css and targets
+             `.recipe-edit-tabs` (this phase's own container), never the shared
+             `.meal-list-tabs-bar` class, which the meal-plan AND shopping bars need. -->
+        <div class="recipe-edit-tabs meal-list-tabs-bar" role="tablist">
+          <button type="button" class="meal-list-tab" role="tab"
+                  id="recipe-edit-tab-edit"
+                  :class="{ 'meal-list-tab-active': recipeEditTab === 'edit' }"
+                  :aria-selected="recipeEditTab === 'edit'"
+                  :tabindex="recipeEditTab === 'edit' ? 0 : -1"
+                  :aria-controls="'recipe-edit-pane'"
+                  @click="recipeEditTab = 'edit'">Edit</button>
+          <!-- Switching TO Chat focuses the composer on $nextTick (UI-SPEC I5);
+               switching to Edit moves focus nowhere (the form keeps what it had). -->
+          <button type="button" class="meal-list-tab" role="tab"
+                  id="recipe-edit-tab-chat"
+                  :class="{ 'meal-list-tab-active': recipeEditTab === 'chat' }"
+                  :aria-selected="recipeEditTab === 'chat'"
+                  :tabindex="recipeEditTab === 'chat' ? 0 : -1"
+                  :aria-controls="'recipe-chat-pane'"
+                  @click="recipeEditTab = 'chat'; $nextTick(() => { if ($refs.chatInput) $refs.chatInput.focus(); })">Chat</button>
+        </div>
+
+      <!-- ============ EDIT PANE (phase 27-06) ============
+           ⚠ A PLAIN <div> WITH A :class TOGGLE — never x-if, never x-show. Three
+           constraints collide and this is the only shape that satisfies all three:
+             1. x-if would put the manager editor <template> inside ANOTHER template's
+                inert content fragment, so mountSharedEditorTemplate()'s global
+                querySelectorAll('template[data-editor]') would find 1 instead of 2
+                and THROW at boot — the whole app would fail to start.
+             2. x-if would also DESTROY the editor on a tab round trip; SPEC req 1
+                requires every field value and the focus state to survive it.
+             3. x-show writes an INLINE display:none, which the D-20 mobile rule
+                (.recipe-edit-pane.is-off { display: block }) could not beat without
+                !important. A class toggle has ordinary specificity.
+           The template below, its data-mount=editor-header-fields placeholder and the
+           SHARED-ROW-FIELDS marker comment are WRAPPED, never edited — byte-identical. -->
+      <div class="recipe-edit-pane"
+           id="recipe-edit-pane"
+           role="tabpanel"
+           aria-labelledby="recipe-edit-tab-edit"
+           :class="{ 'is-off': recipeEditTab !== 'edit' }">
+
       <!-- ============ EDITOR (editingRecipeId !== null) ============
            Reuses the parse-view editor form, bound to the SAME form.header /
            form.rows. Every parse-only approval lock is the merging lock here. -->
@@ -1918,6 +1974,257 @@
           </div>
         </div>
       </template>
+
+      </div><!-- /.recipe-edit-pane (phase 27-06) -->
+
+      <!-- ============ CHAT PANE (phase 27-06) ============
+           Sibling of the Edit pane, same plain-div + :class toggle shape (see the
+           Edit-pane note above for why it must not be x-if/x-show). All chat markup
+           lives HERE — after the manager editor template's close, i.e. OUTSIDE both
+           check-editor-row-fields.mjs scan windows — and binds no row.<field> x-model,
+           so the drift guard stays exit 0.
+
+           Every binding names a member on the app.js factory — there is deliberately
+           NO markup-local x-data in here, so closeEditRecipe/clearChatState can reach
+           every chat key (SPEC req 8 / T-27-07). All model-authored text (a reply, a
+           refusal, an error) renders through x-text ONLY — never x-html, never
+           innerHTML — so markup in a reply cannot execute (T-27-19). -->
+      <div class="recipe-chat-pane"
+           id="recipe-chat-pane"
+           role="tabpanel"
+           aria-labelledby="recipe-edit-tab-chat"
+           :class="{ 'is-off': recipeEditTab !== 'chat' }">
+        <!-- The 560px centred working column (32rem × the 17.5px dial). The modal is
+             --modal-lg (~1125px); letting prose run its full width would be the single
+             most un-Mise thing this pane could do (DESIGN-LANGUAGE §3). -->
+        <div class="recipe-chat-col">
+
+          <!-- ============ TRANSCRIPT ============
+               ONE scroll region only (D-05): .manager-edit-panel .modal-body already
+               scrolls and the transcript grows inside it — no overflow-y here, no
+               sticky composer.
+               AUTO-SCROLL: on a new turn / a new proposal / the pending line, pin the
+               MODAL BODY (never this pane) to the bottom. The guard is read off the
+               DOM (`.is-off` on the pane) rather than off `recipeEditTab`, so the
+               effect has exactly two reactive dependencies — chatTurns.length and
+               chatPending — and a tab switch can never re-trigger a scroll
+               (UI-SPEC §Layout: "on tab switch to Chat, do not scroll"). -->
+          <div class="recipe-chat-transcript" aria-live="polite"
+               x-effect="[chatTurns.length, chatPending] && $nextTick(() => { const pane = $el.closest('.recipe-chat-pane'), body = $el.closest('.modal-body'); if (pane && body && !pane.classList.contains('is-off')) body.scrollTop = body.scrollHeight; })">
+
+            <template x-for="turn in chatTurns" :key="turn.id">
+              <div class="recipe-chat-turn"
+                   :class="{
+                     'recipe-chat-turn-you': turn.role === 'you',
+                     'recipe-chat-turn-claude': turn.role === 'claude',
+                     'recipe-chat-turn-error': turn.role === 'error'
+                   }">
+
+                <!-- Attribution is a mono EYEBROW, not a name in prose and not a
+                     bubble/avatar (UI-SPEC §Anti-Goals). An `error` turn is Claude's
+                     slot — the request failed on the way there. -->
+                <p class="recipe-chat-who"
+                   x-show="turn.role !== 'applied'"
+                   x-text="turn.role === 'you' ? 'YOU' : 'CLAUDE'"></p>
+
+                <!-- I2 7 (operator) / 8 (Claude) / 18 (API failure). For an `error`
+                     turn this is the ALREADY-mapped mapToPlainLanguage string produced
+                     in 27-04 — this markup formats no errors of its own and never
+                     renders apiKey (T-27-05). -->
+                <p class="recipe-chat-text"
+                   x-show="turn.role !== 'applied'"
+                   x-text="turn.text"></p>
+
+                <!-- I2 18 — the retry affordance: petrol ghost text, the
+                     `.banner-warning button` idiom. -->
+                <button type="button" class="recipe-chat-retry"
+                        x-show="turn.role === 'error'"
+                        :disabled="chatPending"
+                        @click="retryLastChatMessage()">Try again</button>
+
+                <!-- I2 17 (D-14) — the applied separator: a mono ink-faint eyebrow
+                     between two hairline rules. NO tick and NOT herb-green (R2): an
+                     Apply writes nothing, so a green ✓ would assert a save that did
+                     not happen. The literal below is the UI-SPEC copy and doubles as
+                     the fallback if a turn ever arrives without its text. -->
+                <p class="recipe-chat-applied-mark" x-show="turn.role === 'applied'">
+                  <span x-text="turn.text || 'YOU APPLIED THESE CHANGES'"></span>
+                </p>
+
+                <!-- ============ PROPOSAL CARD ============
+                     x-if (NOT x-show) so a turn with `proposal: null` never EVALUATES
+                     the bindings inside — that is both D-11 (a zero-op reply renders as
+                     an ordinary reply: no card, no Apply, no error) and the reason this
+                     adds no new console errors to the 3-error baseline. -->
+                <template x-if="turn.proposal">
+                  <div class="recipe-chat-proposal">
+
+                    <p class="recipe-chat-proposal-head">PROPOSED CHANGES <span class="count" x-text="`— ${turn.proposal.diff.length}`"></span></p>
+
+                    <!-- The compact CHANGED-ONLY diff (D-07), grouped by
+                         chatDiffGroups: recipe header first, then ingredients. Each
+                         group head renders only when its group has lines. Every value
+                         here was computed in JS from the operator's OWN form — never a
+                         before/after the model asserted (SPEC req 6). -->
+                    <p class="recipe-chat-diff-group-head"
+                       x-show="chatDiffGroups(turn.proposal.diff).recipe.length > 0">RECIPE</p>
+                    <template x-for="(entry, ei) in chatDiffGroups(turn.proposal.diff).recipe" :key="'h' + ei">
+                      <div class="recipe-chat-diff-line">
+                        <span class="recipe-chat-diff-name" x-text="entry.label"></span>
+                        <span class="recipe-chat-diff-values">
+                          <span class="recipe-chat-diff-old" x-show="entry.old" x-text="entry.old"></span>
+                          <span class="recipe-chat-diff-arrow" x-show="entry.old && entry.new">→</span>
+                          <span class="recipe-chat-diff-new" x-show="entry.new" x-text="entry.new"></span>
+                        </span>
+                      </div>
+                    </template>
+
+                    <p class="recipe-chat-diff-group-head"
+                       x-show="chatDiffGroups(turn.proposal.diff).ingredients.length > 0">INGREDIENTS</p>
+                    <template x-for="(entry, ei) in chatDiffGroups(turn.proposal.diff).ingredients" :key="'r' + ei">
+                      <!-- A `remove` line strikes the ingredient name and drops it to
+                           ink-faint — the app's "excluded but still visible" idiom
+                           (DESIGN-LANGUAGE §4.8). Carried on the LINE so the name and
+                           its marker restyle together from one class. -->
+                      <div class="recipe-chat-diff-line"
+                           :class="{ 'recipe-chat-diff-line-removed': entry.change === 'remove' }">
+                        <span class="recipe-chat-diff-name">
+                          <span class="recipe-chat-diff-add" x-show="entry.change === 'add'">＋</span>
+                          <span class="recipe-chat-diff-remove" x-show="entry.change === 'remove'">−</span>
+                          <!-- A row line leads with the INGREDIENT NAME and carries the
+                               operator-facing field label (UI-SPEC I6 — never the CSV
+                               column name) as a mono qualifier. An add/remove entry has
+                               no field, so `label` is '' and the qualifier is absent. -->
+                          <span x-text="entry.name"></span>
+                          <span class="recipe-chat-diff-field" x-show="entry.label" x-text="entry.label"></span>
+                        </span>
+                        <span class="recipe-chat-diff-values">
+                          <span class="recipe-chat-diff-old" x-show="entry.old" x-text="entry.old"></span>
+                          <span class="recipe-chat-diff-arrow" x-show="entry.old && entry.new">→</span>
+                          <span class="recipe-chat-diff-new" x-show="entry.new" x-text="entry.new"></span>
+                        </span>
+                      </div>
+                    </template>
+
+                    <!-- I2 16 — whole-proposal rejection. DANGER ground + the 5px rail
+                         + ⚠ (the .banner-error face, inherited from the
+                         .manager-edit-panel scope), NOT amber (R3): amber is a caveat,
+                         this is "nothing was written". The copy is applyOps' own
+                         plain-language refusal, ending "Nothing was changed." -->
+                    <div class="recipe-chat-refusal banner banner-error" role="alert"
+                         x-show="turn.proposal.error">
+                      <p x-text="turn.proposal.error"></p>
+                    </div>
+
+                    <!-- ============ ACTION ROW ============
+                         Switches on chatProposalState(turn) — the ONE place the six
+                         I2 state words are derived (app.js), so markup and logic
+                         cannot drift.
+                           live (10/15)     → enabled `Apply changes`
+                           refused (16)     → the SAME button, disabled
+                           applied-top (12) → `Applied` + a live `Undo`
+                           applied (13)     → `Applied` only
+                           reverted (14)    → `Not applied` only
+                           superseded (11)  → NOTHING: the row itself is not rendered.
+                                              SPEC req 10b — exactly one live Apply at
+                                              a time, and it is REMOVED, not disabled.
+                         Apply/Undo live HERE, attached to their proposal — never in the
+                         modal foot beside Cancel/Save (D-06). -->
+                    <div class="recipe-chat-proposal-actions"
+                         x-show="chatProposalState(turn) !== 'superseded'">
+                      <!-- Petrol OUTLINE (.btn-secondary), never the petrol FILL (R1):
+                           `Save changes` wears the fill and writes to the CSVs; Apply
+                           writes nothing but memory. -->
+                      <button type="button" class="recipe-chat-apply btn-secondary"
+                              x-show="chatProposalState(turn) === 'live' || chatProposalState(turn) === 'refused'"
+                              :disabled="chatProposalState(turn) === 'refused' || editorDisabled || chatPending"
+                              @click="applyChatProposal(turn.id)">Apply changes</button>
+                      <span class="recipe-chat-proposal-state"
+                            x-show="chatProposalState(turn) === 'applied-top' || chatProposalState(turn) === 'applied' || chatProposalState(turn) === 'reverted'"
+                            x-text="chatProposalState(turn) === 'reverted' ? 'Not applied' : 'Applied'"></span>
+                      <button type="button" class="recipe-chat-undo"
+                              x-show="chatProposalState(turn) === 'applied-top'"
+                              :disabled="editorDisabled"
+                              @click="undoChatApply()">Undo</button>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            <!-- I2 6 — in-flight. The app has no spinner CSS anywhere; the idiom is a
+                 label swap (Parse → Parsing…), so the pending line sits in the CLAUDE
+                 slot at the end of the transcript. -->
+            <div class="recipe-chat-turn recipe-chat-turn-claude" x-show="chatPending" x-cloak>
+              <p class="recipe-chat-who">CLAUDE</p>
+              <p class="recipe-chat-pending">Thinking…</p>
+            </div>
+          </div>
+
+          <!-- ============ EMPTY STATE (I2 3) ============
+               Two variants, split on the `'new'` sentinel. Rendered as literal text
+               (not an x-text ternary) so the copy stays verbatim and greppable. -->
+          <div class="recipe-chat-empty" x-show="chatTurns.length === 0" x-cloak>
+            <template x-if="!isAddingRecipe">
+              <div>
+                <h3>Ask Claude about this recipe</h3>
+                <p>Describe what's wrong in plain language and Claude proposes changes to the ingredients and method. You review every change before it goes into the form — and nothing reaches your CSVs until you press Save changes.</p>
+              </div>
+            </template>
+            <template x-if="isAddingRecipe">
+              <div>
+                <h3>Describe a dish and Claude will draft it</h3>
+                <p>Say what you want to make. Claude fills in the ingredients from your ingredient list and writes the method. Anything it needs that you don't stock gets swapped for the closest thing you do — it will tell you when it does. Nothing reaches your CSVs until you press Save changes.</p>
+              </div>
+            </template>
+          </div>
+
+          <!-- ============ COMPOSER (I2 4 / 6) ============
+               Rendered ONLY while chatDisabledReason is '' — the disabled band below
+               REPLACES it (never a greyed textarea AND a banner together). -->
+          <div class="recipe-chat-composer" x-show="!chatDisabledReason" x-cloak>
+            <!-- Enter sends; Shift+Enter is deliberately NOT intercepted, so it inserts
+                 a newline (UI-SPEC I4). Escape is also not intercepted — the modal's
+                 existing dirty-guarded @keydown.escape.window keeps working. -->
+            <textarea class="recipe-chat-input"
+                      x-ref="chatInput"
+                      rows="3"
+                      x-model="chatInput"
+                      aria-label="Message Claude about this recipe"
+                      :placeholder="isAddingRecipe ? 'Describe the dish you want to make.' : 'Describe the problem — &quot;too salty&quot;, &quot;it doesn\'t make enough portions&quot;, &quot;swap the fresh mango for frozen&quot;.'"
+                      :disabled="chatPending"
+                      @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); if (!chatPending && !editorDisabled && apiKey && chatInput.trim()) sendChatMessage().then(() => { if ($refs.chatInput) $refs.chatInput.focus(); }); }"></textarea>
+            <div class="recipe-chat-composer-foot">
+              <div>
+                <p class="recipe-chat-hint">Enter to send · Shift+Enter for a new line</p>
+                <!-- Makes RCHAT-07 legible to the operator instead of only true in code. -->
+                <p class="recipe-chat-hint">This conversation isn't saved — it clears when you close the recipe.</p>
+              </div>
+              <!-- The composer's own primary action wears the petrol FILL, mirroring
+                   Parse in the parse pane. :disabled is the UI-SPEC I3 form — never a
+                   separate chatDisabled boolean. -->
+              <button type="button" class="recipe-chat-send primary-cta-btn"
+                      :disabled="editorDisabled || !apiKey || chatPending || !chatInput.trim()"
+                      @click="sendChatMessage().then(() => { if ($refs.chatInput) $refs.chatInput.focus(); })">
+                <span x-show="!chatPending">Send</span>
+                <span x-show="chatPending" x-cloak>Thinking…</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- ============ DISABLED REASON (I2 5) ============
+               The amber CAVEAT face (R3 — not the danger ground), role="status" not
+               alert. The copy comes from the chatDisabledReason getter, which routes
+               through the ONE existing editorDisabled gate (D-17) and ends with D-18's
+               locked no-key wording, "Add your Anthropic key in Settings to chat about
+               this recipe." There is deliberately no "Open Settings" button — opening
+               Settings over this modal would break the no-modal-stacking rule. -->
+          <div class="recipe-chat-disabled banner banner-warning" role="status"
+               x-show="chatDisabledReason" x-cloak>
+            <p x-text="chatDisabledReason"></p>
+          </div>
+        </div>
+      </div><!-- /.recipe-chat-pane (phase 27-06) -->
 
           </div><!-- /.modal-body (quick 260627-q7x) -->
 

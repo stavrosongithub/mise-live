@@ -3516,6 +3516,398 @@ textarea {
   opacity: 0.55;
 }
 
+/* ============================================================================
+   PHASE 27-06 — EDIT | CHAT PANE SWITCH (RCHAT-01, 27-UI-SPEC I1)
+   ============================================================================
+   The recipe-edit modal body holds two panes. `.recipe-edit-tabs` reuses the ONE
+   tab component (.meal-list-tabs-bar / .meal-list-tab / .meal-list-tab-active,
+   ~L5142) VERBATIM — the only rule it adds is a bottom margin, in the spirit of
+   the existing `.settings-nav .meal-list-tab` layout-only override.
+
+   `.is-off` is a CLASS toggle, not x-show: an inline display:none could not be
+   beaten by the D-20 mobile rule (.recipe-edit-pane.is-off { display: block })
+   without !important, and x-if would destroy the editor + break
+   mountSharedEditorTemplate's two-template count at boot. See the paired note in
+   index.html above `.recipe-edit-pane`.
+   ============================================================================ */
+.recipe-edit-tabs {
+  margin-bottom: 1.7143rem;
+}
+.recipe-edit-pane.is-off,
+.recipe-chat-pane.is-off {
+  display: none;
+}
+
+/* ============================================================================
+   PHASE 27-06 — CHAT PANE COMPONENTS (27-UI-SPEC §Component Inventory)
+   ============================================================================
+   Derived from the modal idiom + DESIGN-LANGUAGE, NOT from a chat-app visual
+   language: no bubbles, no balloons, no tails, no avatars, no timestamps, no
+   spinner. Turns are separated by SPACING and attributed by a mono eyebrow.
+
+   TOKENS ONLY. Every colour resolves to an existing :root token (net new tokens
+   for this whole surface: ZERO) and every spacing value is one of the six declared
+   rem steps — 0.2857 / 0.5714 / 0.8571 / 1.1429 / 1.7143 / 2.2857 — plus the
+   INHERITED exceptions that come with a reused component (0.4rem 0.9rem from the
+   button faces, 0.5rem 0.7143rem from the .schema-label input face) and the 1px
+   hairlines. Two weights only: --fw-regular and --fw-semibold.
+
+   THREE LOAD-BEARING COLOUR RULINGS, all three easy to get plausibly wrong:
+     R1  Apply wears the petrol OUTLINE (.btn-secondary), NEVER the petrol FILL —
+         `Save changes` wears the fill and writes to the CSVs; Apply writes only
+         memory (D-06). Same face on both would defeat the separation at exactly
+         the moment it matters.
+     R2  The applied separator is an ink-faint eyebrow with NO tick and NO
+         --color-success. Herb green means saved/verified in this app; an Apply
+         saves nothing, so green would assert a write that did not happen.
+     R3  A refusal wears the DANGER ground (.banner-error), not amber. Amber is
+         for caveats and is used here only for "chat is paused / not configured".
+
+   ACCENT is earned and appears in this pane in exactly five places: the active
+   tab (inherited), the Send fill (.primary-cta-btn), the Apply outline
+   (.btn-secondary), the composer focus ring, and `Try again`. The last two are
+   the only accent declarations authored below. A CHANGE is signalled by
+   strikethrough + weight, never by hue.
+
+   NO overflow-y and NO position:sticky anywhere in this block:
+   `.manager-edit-panel .modal-body` (~L3412) is and stays the ONE scroll region
+   (D-05). A pinned composer or a nested scrolling transcript would create a
+   second scroll context inside an already-scrolling body.
+   ============================================================================ */
+
+/* The centred working column. 32rem at the 17.5 rem dial is exactly the
+   DESIGN-LANGUAGE §3 560 measure; the modal itself is --modal-lg, so the
+   deadspace lives in the margins as the language prescribes. */
+.recipe-chat-col {
+  max-width: 32rem;
+  margin: 0 auto;
+}
+
+.recipe-chat-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1429rem;
+}
+
+/* A turn has NO ground, NO border and NO radius — declared explicitly because a
+   card/bubble here is the single most likely well-meaning regression. */
+.recipe-chat-turn {
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+
+/* ----- Eyebrows (mono, uppercase, tracked, faint) -----
+   ⚠ Gotcha E1: text-transform, letter-spacing and font-weight all INHERIT. Each
+   eyebrow below is either a LEAF or is paired with a reset on its descendants
+   (see .recipe-chat-diff-name / .recipe-chat-text) — the PROPOSED CHANGES eyebrow
+   must not shout the diff lines beneath it. */
+.recipe-chat-who,
+.recipe-chat-proposal-head,
+.recipe-chat-diff-group-head,
+.recipe-chat-applied-mark,
+.recipe-chat-proposal-state,
+.recipe-chat-diff-field {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+}
+.recipe-chat-who {
+  margin: 0 0 0.2857rem;
+}
+
+/* Transcript prose. line-height 1.55 is the one deliberate divergence from the
+   app's dense default and is SCOPED here: a chat transcript is multi-sentence
+   prose that is read, not a dense data band that is scanned. Authored inline
+   rather than as a one-use --lh-prose token, matching how every other
+   line-height in this file is authored. */
+.recipe-chat-text {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--fs-base);
+  font-weight: var(--fw-regular);
+  line-height: 1.55;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: pre-wrap;
+}
+.recipe-chat-turn-you .recipe-chat-text {
+  color: var(--color-ink-muted);
+}
+.recipe-chat-turn-claude .recipe-chat-text {
+  color: var(--color-ink);
+}
+.recipe-chat-turn-error .recipe-chat-text {
+  color: var(--color-danger);
+}
+
+/* In-flight. The app has no spinner CSS anywhere and this does not add one — the
+   idiom is a label swap (Parse → Parsing…). */
+.recipe-chat-pending {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--color-ink-faint);
+}
+
+/* `Try again` — petrol ghost TEXT (accent place 5 of 5), the .banner-warning
+   button idiom. Borderless so it never competes with Apply. */
+.recipe-chat-retry {
+  margin: 0.2857rem 0 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  font-family: var(--font-body);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-accent);
+  cursor: pointer;
+}
+.recipe-chat-retry:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* R2 — the applied separator: an eyebrow between two hairline rules. No colour,
+   no tick. */
+.recipe-chat-applied-mark {
+  display: flex;
+  align-items: center;
+  gap: 0.8571rem;
+  margin: 0;
+}
+.recipe-chat-applied-mark::before,
+.recipe-chat-applied-mark::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
+}
+
+/* ----- Proposal card ----- hairline card on paper (§4.3). box-shadow: none is
+   explicit — the specimen shadow is deliberately dropped app-wide (gotcha E3). */
+.recipe-chat-proposal {
+  margin-top: 0.8571rem;
+  padding: 0.8571rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-shadow: none;
+}
+.recipe-chat-proposal-head {
+  margin: 0 0 0.5714rem;
+}
+.recipe-chat-proposal-head .count {
+  color: var(--color-ink-muted);
+}
+.recipe-chat-diff-group-head {
+  margin: 0.8571rem 0 0.2857rem;
+}
+
+/* The flush-right data band (§4.2): name left, values right. */
+.recipe-chat-diff-line {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.8571rem;
+  align-items: baseline;
+  padding: 0.2857rem 0;
+}
+.recipe-chat-diff-name {
+  font-family: var(--font-body);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
+  color: var(--color-ink);
+  /* the E1 reset — this line sits under a mono uppercase tracked eyebrow */
+  letter-spacing: normal;
+  text-transform: none;
+}
+/* The operator-facing field label as a quiet mono qualifier beside the name. */
+.recipe-chat-diff-field {
+  margin-left: 0.5714rem;
+}
+.recipe-chat-diff-values {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: normal;
+  text-transform: none;
+}
+.recipe-chat-diff-old {
+  color: var(--color-ink-faint);
+  text-decoration: line-through;
+}
+.recipe-chat-diff-arrow {
+  margin: 0 0.2857rem;
+  color: var(--color-ink-muted);
+}
+.recipe-chat-diff-new {
+  color: var(--color-ink);
+  font-weight: var(--fw-semibold);
+}
+.recipe-chat-diff-add {
+  font-family: var(--font-mono);
+  color: var(--color-ink-muted);
+}
+.recipe-chat-diff-remove {
+  font-family: var(--font-mono);
+  color: var(--color-danger);
+}
+/* "excluded but still visible" (§4.8) — the removed row's NAME is struck and
+   dropped to faint; the − marker itself keeps its own face. */
+.recipe-chat-diff-line-removed .recipe-chat-diff-name {
+  color: var(--color-ink-faint);
+  text-decoration: line-through;
+}
+.recipe-chat-diff-line-removed .recipe-chat-diff-remove {
+  text-decoration: none;
+}
+
+/* R3 — whole-proposal rejection. Composes .banner.banner-error, which inside
+   .manager-edit-panel already carries the 5px danger rail + the ⚠ ::before mark
+   (~L159). Only the box metrics and the prose size are set here; --fs-base is
+   §Typography's size for error copy in this 560 column. */
+.recipe-chat-refusal {
+  margin: 0.8571rem 0 0;
+  font-size: var(--fs-base);
+  border-radius: var(--radius-card);
+}
+.recipe-chat-refusal p {
+  margin: 0;
+}
+
+.recipe-chat-proposal-actions {
+  display: flex;
+  gap: 0.5714rem;
+  align-items: center;
+  margin-top: 0.8571rem;
+  padding-top: 0.8571rem;
+  border-top: 1px solid var(--color-border);
+}
+/* R1 — Apply composes .btn-secondary (petrol OUTLINE). The ONLY thing added is a
+   scoped size down-step: a --fs-lg button would dominate a 560 transcript column.
+   Precedented by `.recipe-manager-editor .ledger .add-row` (~L1888), which
+   down-steps for exactly this reason. */
+.recipe-chat-apply {
+  font-size: var(--fs-base);
+}
+/* Send composes .primary-cta-btn (petrol FILL) — the composer's own primary
+   action, mirroring Parse in the parse pane. Same scoped down-step. The white
+   text on the petrol fill is declared by .primary-cta-btn and is the app's ONE
+   sanctioned bare-hex literal; it is deliberately NOT re-declared here. */
+.recipe-chat-send {
+  font-size: var(--fs-base);
+}
+/* Undo wears the app's ghost neutral `Cancel` face (~L3503) — a step-back is not
+   a primary action and must not read as one. */
+.recipe-chat-undo {
+  background: var(--color-surface-2);
+  color: var(--color-ink-muted);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  padding: 0.4rem 0.9rem;
+  font-family: var(--font-body);
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+.recipe-chat-undo:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+/* `Applied` / `Not applied` — a mono state word, not a badge and not a colour. */
+.recipe-chat-proposal-state {
+  font-size: var(--fs-sm);
+}
+
+/* ----- Empty state ----- */
+.recipe-chat-empty {
+  padding: 2.2857rem 1.7143rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+}
+.recipe-chat-empty h3 {
+  margin: 0 0 0.5714rem;
+  font-family: var(--font-body);
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+  color: var(--color-ink);
+}
+.recipe-chat-empty p {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--fs-base);
+  font-weight: var(--fw-regular);
+  line-height: 1.55;
+  color: var(--color-ink-muted);
+}
+
+/* ----- Composer ----- */
+.recipe-chat-composer {
+  margin-top: 1.7143rem;
+}
+/* Reuses the app's input face verbatim (.schema-label > textarea, ~L1188). */
+.recipe-chat-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem 0.7143rem;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  font-family: var(--font-body);
+  font-size: var(--fs-base);
+  color: var(--color-ink);
+  line-height: 1.55;
+  resize: vertical;
+}
+/* accent place 4 of 5 — the focus ring */
+.recipe-chat-input:focus {
+  border-color: var(--color-accent);
+  outline: none;
+}
+.recipe-chat-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.recipe-chat-composer-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5714rem;
+  margin-top: 0.5714rem;
+}
+/* The keyboard hint + the session-only note. Mono / --fs-xs / ink-faint, but
+   deliberately NOT uppercased or tracked like the eyebrows above: the
+   §Copywriting Contract fixes both strings in sentence case verbatim
+   ("Enter to send · Shift+Enter for a new line"), and shouting them would both
+   break that copy and make `Shift+Enter` unreadable. */
+.recipe-chat-hint {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-regular);
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--color-ink-faint);
+}
+
+/* ----- Disabled reason (I2 5) -----
+   Composes .banner.banner-warning (the amber caveat face the read-only banner
+   already uses). It REPLACES the composer, so the shared banner's page-level
+   side margins are reset to sit in the chat column. */
+.recipe-chat-disabled {
+  margin: 1.7143rem 0 0;
+  font-size: var(--fs-base);
+}
+.recipe-chat-disabled p {
+  margin: 0;
+}
+
 /* quick 260610-eyh — Recipe Manager type + allergen filters (additive; the
    original .manager-controls / .manager-filter blocks above are unmodified). */
 
@@ -6298,6 +6690,34 @@ a.meal-plan-shop-search {
     width: 100%;
     min-height: 2.5rem;
     justify-content: center;
+  }
+
+  /* ---- Phase 27 — Chat tab is DESKTOP-ONLY (MOBILE ONLY hide, D-20) ----
+     Chatting about a recipe is a bench task, not a kitchen task, so the whole
+     Edit|Chat switcher and the chat pane are hidden at phone width. These three
+     display rules live ONLY inside this media query, so desktop renders both tabs
+     and both panes exactly as before (MSAFE-01) — proven inert at desktop width
+     (1440) via getComputedStyle, not by eyeballing.
+
+     The third rule is load-bearing, not belt-and-braces: if the operator left
+     recipeEditTab === 'chat' before the viewport narrowed, the Edit pane still
+     carries `.is-off` and the modal body would render EMPTY on a phone. It ties
+     .recipe-edit-pane.is-off (0,2,0) on specificity and wins on source order.
+     This is exactly why the toggle is a class and not x-show — an inline
+     display:none would need !important to beat.
+
+     ⚠ NOTHING here may target `.meal-list-tabs-bar` / `.meal-list-tab` /
+     `.meal-list-tab-active`. That bar is SHARED (it already carries a Phase-20
+     flex-wrap rule above) and hiding it would delete the meal-plan AND shopping
+     tab switchers on phones. The hide is scoped to this phase's own container. */
+  .recipe-edit-tabs {
+    display: none;
+  }
+  .recipe-chat-pane {
+    display: none;
+  }
+  .recipe-edit-pane.is-off {
+    display: block;
   }
 }
 
