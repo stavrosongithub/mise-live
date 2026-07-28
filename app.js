@@ -450,7 +450,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '5152ffd 2026-07-26';
+const APP_VERSION = '746a9e6 2026-07-28';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -6138,12 +6138,30 @@ Alpine.data('app', () => ({
   daySubtitleSegments(group) {
     const segs = [];
     const key = group && group.key;
-    // quick 260627-joq — a truly empty day (no entries) renders as JUST the petrol
-    // header band (header-only treatment), so it shows NO headcount. The headcount is
-    // a populated-day signal; the leftovers segment below stays (it's empty-day-only).
-    const hasEntries = !!(group && Array.isArray(group.entries) && group.entries.length > 0);
+    // quick 260728-bum — the headcount is now shown on EVERY day with a resolvable
+    // headcount, empty days included. This DELIBERATELY REVERSES the empty-day half of
+    // quick 260627-joq (which suppressed it on the theory that the headcount is a
+    // populated-day signal) at the user's request: an empty day still needs its
+    // headcount, because that number is what decides whether it needs cooking for.
+    // The REST of 260627-joq STANDS — .meal-plan-day-empty still renders the petrol
+    // header band only (no body whitespace, no caret, tight :has() stacking); the
+    // headcount just lands inline in that band beside the date chip.
+    // No extra guard is needed or wanted: headcountForDate already returns null when
+    // the roster is not loaded OR the key is blank, so Unscheduled and the
+    // roster-not-loaded case stay headcount-free by construction. The leftovers segment
+    // below keeps its OWN inline empty-day gate.
+    // CONSIDERED AND ACCEPTED (260728-bum code review, WR-01) — a 🥡 LEFTOVERS day is
+    // empty by definition, so it now shows a headcount too, and those same people are
+    // ALREADY folded into the previous day's composite ("12 👤 (8 + 4 leftovers)" on Mon
+    // beside "4 👤" on Tue). That is NOT a double-count bug: it reads correctly because
+    // the leftovers segment renders immediately after, giving "4 👤 · Leftovers → Monday"
+    // — i.e. 4 people here, eating Monday's food. Likewise an empty day that PRECEDES a
+    // leftovers day shows the composite total, which is the useful number (it says what
+    // to cook for IF a dish is added). This is a restoration of the pre-260627-joq
+    // behaviour that shipped live 06-21→06-27. Revisit only if it reads as confusing in
+    // real use — suppressing it is a one-line `&& this.dayLeftovers[key] !== true`.
     const base = this.headcountForDate(key);
-    if (base !== null && hasEntries) {
+    if (base !== null) {
       // quick 260621-lft — fold in any leftover headcount rolling onto THIS day from
       // the next (leftovers) day, and SHOW THE BREAKDOWN (decision 3) so the boost is
       // never silent: "12 present (8 + 4 leftovers)" vs a plain "8 present".

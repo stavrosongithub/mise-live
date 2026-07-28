@@ -4808,6 +4808,45 @@ textarea {
 .meal-plan-day-group.meal-plan-day-empty:has(+ .meal-plan-day-group.meal-plan-day-empty) {
   margin-bottom: 0.18rem;             /* 0.9rem − 80% */
 }
+/* quick 260728-bum — TODAY'S day card (index.html binds .meal-plan-day-today when
+   group.key === todayStr; the group.key && guard keeps Unscheduled inert). LOCKED
+   Option D = exactly two marks: a 4px accent bar down the left edge + the mono date
+   chip flipping from ink-fill to accent-fill. No ring round the card, no "TODAY" word.
+   WHY A ::before AND NOT border-left: a real border-left would add 4px to today's box
+   and shift its content 4px relative to every other day card — the bar has to be drawn
+   OVER the card edge, not inserted into the layout. Hence position:relative + an
+   absolutely-positioned pseudo whose -1px offsets straddle the card's own 1px border.
+   WHY z-index: 1 IS *NOT* LOAD-BEARING TODAY (corrected by the 260728-bum code review
+   — an earlier draft of this comment claimed it was): .meal-plan-day-header-row is
+   position:static / z-index:auto, so per the CSS painting order a positioned descendant
+   already paints ABOVE an in-flow block's background. MEASURED: forcing the pseudo to
+   z-index:auto in the live app produced a BYTE-IDENTICAL screenshot. It is kept purely
+   as insurance — the band DOES carry its own --color-accent-tint background bled out
+   over the card padding (margin: 0 -0.9rem), so if anyone ever gives that band a
+   position, it would become a later-in-tree-order positioned sibling and paint over the
+   bar. Don't "clean up" this line on the grounds that it currently does nothing.
+   NOTE on border-radius below: the box is 4px wide, so the 0.5rem/8.75px token is
+   CLAMPED to 4px — it rounds the bar's own ends and does NOT trace the card's larger
+   corner arc (at 1x the ~1px mismatch at the extreme corners is not visible; confirmed
+   by measurement, and left alone deliberately). Tokens only. */
+.meal-plan-day-group.meal-plan-day-today { position: relative; }
+.meal-plan-day-group.meal-plan-day-today::before {
+  content: '';
+  position: absolute;
+  left: -1px; top: -1px; bottom: -1px;
+  width: 4px;
+  background: var(--color-accent);
+  border-radius: var(--radius-card) 0 0 var(--radius-card);
+  z-index: 1;
+}
+/* THREE classes = specificity 0,3,0, which beats the existing chip rule
+   `.meal-plan-day-header-row .meal-plan-day-header` (0,2,0) regardless of source
+   order. Only the fill is overridden — the chip's light text color comes from that
+   lower-specificity rule and is deliberately NOT restated, and its shape / font /
+   letter-spacing / tabular figures are untouched. */
+.meal-plan-day-group.meal-plan-day-today .meal-plan-day-header {
+  background: var(--color-accent);
+}
 .meal-plan-day-header {
   font-size: var(--fs-md);
   font-weight: var(--fw-medium);

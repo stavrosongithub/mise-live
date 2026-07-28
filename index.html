@@ -2445,8 +2445,16 @@
                cooks line / allergen banner are already entries-gated) renders as JUST the
                petrol header band: the .meal-plan-day-empty class drives the header-only
                CSS (no body whitespace, no caret) + tight :has() stacking. Populated days
-               never get the class, so they are untouched. -->
-          <div class="meal-plan-day-group" :class="{ 'meal-plan-day-empty': group.entries.length === 0, 'mp-empty-collapsed': !emptyDaysExpanded && _collapsibleEmptyDayKeys.has(group.key) }">
+               never get the class, so they are untouched.
+               quick 260728-bum — the SAME object gains a THIRD key (below), marking
+               TODAY: LOCKED Option D = a 4px accent left-edge bar + an accent-filled
+               date chip, whose rules + rationale live in styles.css beside the
+               .meal-plan-day-empty block. It reuses the existing todayStr getter (LOCAL
+               YYYY-MM-DD, never toISOString) — no new state, no second date path — and
+               the `group.key &&` guard keeps it INERT on the Unscheduled group
+               (group.key === ''), which must never read as "today". Deliberately named
+               only once in this file (one shared markup, one binding). -->
+          <div class="meal-plan-day-group" :class="{ 'meal-plan-day-empty': group.entries.length === 0, 'mp-empty-collapsed': !emptyDaysExpanded && _collapsibleEmptyDayKeys.has(group.key), 'meal-plan-day-today': group.key && group.key === todayStr }">
             <!-- quick 260620-esf — collapsible day HEADER ROW (locked decision 2):
                  day-collapse caret · label · Tray/Prep modal openers · day-tools, all
                  on one flex row. The caret uses the missing===collapsed / ===false===
