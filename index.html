@@ -4046,8 +4046,26 @@
          calls the existing handler verbatim and corrects only the close TRIGGER
          (which is the documented point of the redesign). anyModalOpen still
          EXCLUDES settingsOpen (unchanged in app.js) — no stacking regression. -->
+    <!-- quick 260809-j6k — SECRET REVEAL. `shown` / `copied` are TRANSIENT
+         markup-locals on this same modal scope (like settingsSection/savedTick):
+         nothing new in the app.js factory, nothing persisted, nothing written to
+         localStorage. `shown[k]` flips a field's input type password↔text so the
+         operator can read + copy the real credential (the *Draft fields are
+         hydrated with the live values by `goToView('settings')` — i.e. the
+         normal Settings entry point. The two onboarding buttons set
+         `settingsOpen = true` directly and skip that hydration, so the fields
+         read blank there; that is pre-existing and applies to the inputs
+         themselves, not just to reveal/copy).
+         The modal is x-show (its scope survives close/reopen), so the x-effect
+         below re-masks everything the moment settingsOpen goes false — a reveal
+         never outlives the modal session. Modal CLOSE is not the only exposure
+         window though: the clear/rotate handlers (clearApiKey / clearCodaConfig
+         / clearToken / disconnect) deliberately KEEP the modal open so the
+         operator can paste a replacement, so each of them also resets `shown`
+         (CR-02) — otherwise a brand-new PAT gets typed in clear text. -->
     <div class="modal" x-show="settingsOpen" x-cloak
-         x-data="{ settingsSection: 'connection', savedTick: '', tick(k) { this.savedTick = k; clearTimeout(this._t); this._t = setTimeout(() => { this.savedTick = ''; }, 1600); } }"
+         x-data="{ settingsSection: 'connection', savedTick: '', tick(k) { this.savedTick = k; clearTimeout(this._t); this._t = setTimeout(() => { this.savedTick = ''; }, 1600); }, shown: {}, copied: '', toggleShown(k) { this.shown[k] = !this.shown[k]; }, async copySecret(k, v) { try { await navigator.clipboard.writeText(v ?? ''); this.copied = k; } catch (e) { this.copied = k + ':fail'; } clearTimeout(this._c); this._c = setTimeout(() => { this.copied = ''; }, 1600); } }"
+         x-effect="if (!settingsOpen) { shown = {}; copied = ''; }"
          @keydown.escape.window="settingsOpen = false"
          @click.self="settingsOpen = false">
       <div class="modal-content settings-modal-content">
@@ -4078,15 +4096,39 @@
               <p class="settings-sec-eyebrow">Connection &amp; model</p>
               <h3 class="settings-sec-h">How Mise talks to Anthropic and Coda</h3>
 
-              <label>
+              <!-- quick 260809-j6k / CR-01 — the reveal+copy actions MUST come
+                   AFTER the <input> in tree order. A <button> is a labelable
+                   element, so when the actions sat first inside the <label> the
+                   Copy BUTTON became the label's labeled control: clicking the
+                   field name — or the ~400px of empty label row — silently
+                   copied the live credential to the OS clipboard, and the input
+                   lost its accessible name (input.labels.length === 0).
+                   Keeping the input FIRST makes it the label's control again;
+                   `.secret-label` is a grid that paints the actions back up
+                   into the head row, so nothing moves visually. -->
+              <label class="secret-label">
                 <span class="settings-field-head">Anthropic API key<span class="settings-saved" x-show="savedTick === 'apikey'" x-cloak>Saved ✓</span></span>
-                <input type="password"
+                <input :type="shown.apikey ? 'text' : 'password'"
                        id="ob-api-key-input"
                        x-ref="apiKeyInput"
                        x-model="apiKeyDraft"
                        placeholder="sk-ant-..."
                        autocomplete="off"
                        @blur="if (apiKeyDraft.trim()) { saveApiKey(); settingsOpen = true; tick('apikey'); }" />
+                <span class="secret-actions">
+                  <span class="settings-saved" :class="{ 'secret-copy-fail': copied.endsWith(':fail') }"
+                        x-show="copied.startsWith('apikey')" x-cloak
+                        x-text="copied.endsWith(':fail') ? 'Copy failed' : 'Copied ✓'"></span>
+                  <button type="button" class="secret-btn"
+                          aria-label="Copy Anthropic API key"
+                          :disabled="!apiKeyDraft"
+                          @click.prevent="copySecret('apikey', apiKeyDraft)">Copy</button>
+                  <button type="button" class="secret-btn"
+                          :aria-pressed="!!shown.apikey"
+                          :aria-label="shown.apikey ? 'Hide Anthropic API key' : 'Show Anthropic API key'"
+                          @click.prevent="toggleShown('apikey')"
+                          x-text="shown.apikey ? 'Hide' : 'Show'">Show</button>
+                </span>
               </label>
               <p class="help">
                 Your API key is saved in this browser's localStorage as plain text.
@@ -4113,12 +4155,28 @@
                    close-on-save doesn't shut the modal. Clear stays explicit. -->
               <fieldset class="scaling-settings">
                 <legend>Coda — resident roster</legend>
-                <label>
+                <!-- quick 260809-j6k — reveal + copy; actions AFTER the input
+                     (CR-01, see the Anthropic field for why). -->
+                <label class="secret-label">
                   <span class="settings-field-head">API token<span class="settings-saved" x-show="savedTick === 'coda'" x-cloak>Saved ✓</span></span>
-                  <input type="password"
+                  <input :type="shown.coda ? 'text' : 'password'"
                          x-model="codaApiTokenDraft"
                          autocomplete="off"
                          @blur="saveCodaConfig(); settingsOpen = true; tick('coda')" />
+                  <span class="secret-actions">
+                    <span class="settings-saved" :class="{ 'secret-copy-fail': copied.endsWith(':fail') }"
+                          x-show="copied.startsWith('coda')" x-cloak
+                          x-text="copied.endsWith(':fail') ? 'Copy failed' : 'Copied ✓'"></span>
+                    <button type="button" class="secret-btn"
+                            aria-label="Copy Coda API token"
+                            :disabled="!codaApiTokenDraft"
+                            @click.prevent="copySecret('coda', codaApiTokenDraft)">Copy</button>
+                    <button type="button" class="secret-btn"
+                            :aria-pressed="!!shown.coda"
+                            :aria-label="shown.coda ? 'Hide Coda API token' : 'Show Coda API token'"
+                            @click.prevent="toggleShown('coda')"
+                            x-text="shown.coda ? 'Hide' : 'Show'">Show</button>
+                  </span>
                 </label>
                 <label>
                   Export doc id
@@ -4149,7 +4207,7 @@
                      Security V9; clearCodaConfig). Danger-styled ghost button per
                      specimen-settings.html (the Coda subsec keeps its own clear,
                      mirroring the API-key Clear in the Data danger zone). -->
-                <button type="button" class="settings-coda-clear" @click="clearCodaConfig()">Clear Coda config</button>
+                <button type="button" class="settings-coda-clear" @click="clearCodaConfig(); shown = {}">Clear Coda config</button>
               </fieldset>
 
               <!-- Phase 10 (ACCESS-01/02) — "Connect to shared database". Four config
@@ -4185,13 +4243,33 @@
                          placeholder="main"
                          autocomplete="off" />
                 </label>
-                <label>
-                  Shared access token (PAT)
-                  <input type="password"
+                <!-- quick 260809-j6k — this label's text was a bare text node;
+                     it's wrapped in .settings-field-head so it can carry the
+                     reveal/copy actions like the other two secret fields (the
+                     eyebrow rule matches .settings-panel .settings-field-head,
+                     so the casing/size is unchanged). Actions come AFTER the
+                     input (CR-01, see the Anthropic field for why). -->
+                <label class="secret-label">
+                  <span class="settings-field-head">Shared access token (PAT)</span>
+                  <input :type="shown.github ? 'text' : 'password'"
                          id="ob-github-token-input"
                          x-ref="githubTokenInput"
                          x-model="githubTokenDraft"
                          autocomplete="off" />
+                  <span class="secret-actions">
+                    <span class="settings-saved" :class="{ 'secret-copy-fail': copied.endsWith(':fail') }"
+                          x-show="copied.startsWith('github')" x-cloak
+                          x-text="copied.endsWith(':fail') ? 'Copy failed' : 'Copied ✓'"></span>
+                    <button type="button" class="secret-btn"
+                            aria-label="Copy shared access token"
+                            :disabled="!githubTokenDraft"
+                            @click.prevent="copySecret('github', githubTokenDraft)">Copy</button>
+                    <button type="button" class="secret-btn"
+                            :aria-pressed="!!shown.github"
+                            :aria-label="shown.github ? 'Hide shared access token' : 'Show shared access token'"
+                            @click.prevent="toggleShown('github')"
+                            x-text="shown.github ? 'Hide' : 'Show'">Show</button>
+                  </span>
                 </label>
                 <!-- Phase 14 Plan 03 (ACCESS-04, D-06) — inline PAT-scoping + never-commit
                      guidance. Static copy (no token interpolation — T-14-11). All six
@@ -4245,10 +4323,10 @@
                        so rotation is a 10-second action. -->
                   <button type="button"
                           class="connection-disconnect-btn"
-                          @click="clearToken()">Clear token (keep repo)</button>
+                          @click="clearToken(); shown = {}">Clear token (keep repo)</button>
                   <button type="button"
                           class="connection-disconnect-btn"
-                          @click="disconnect()">Disconnect &amp; clear token</button>
+                          @click="disconnect(); shown = {}">Disconnect &amp; clear token</button>
                 </div>
                 <p class="help" x-show="githubConnected" x-cloak>
                   To rotate a leaked or expired token: Clear token (keep repo) → paste the
@@ -4502,7 +4580,7 @@
                 <p class="settings-sec-eyebrow">Danger zone</p>
                 <p class="help" style="margin-top:0;">Reset all wipes the system-prompt and conversions overrides back to defaults (keeps your API key and model). Clear removes your saved Anthropic API key. Neither touches your CSV data.</p>
                 <button type="button" @click="resetAllToDefault()">Reset all to default</button>
-                <button type="button" @click="clearApiKey()" :disabled="!apiKey">Clear API key</button>
+                <button type="button" @click="clearApiKey(); shown = {}" :disabled="!apiKey">Clear API key</button>
               </div>
             </section>
 

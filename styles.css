@@ -5161,6 +5161,71 @@ textarea {
   align-items: center;
   margin-bottom: 0.25rem;
 }
+/* quick 260809-j6k — reveal/copy controls for the three masked credential
+   fields. The actions sit at the FAR RIGHT of the field-head flex row
+   (margin-left:auto) so they never crowd the label or the inline Saved ✓.
+   Tokens only. The eyebrow rule below sets casing/size on .settings-field-head
+   and cascades into these buttons — .secret-btn restates both explicitly so the
+   look is declared here, not inherited by accident. */
+/* CR-01 — the actions live AFTER the <input> in the markup so the INPUT stays
+   the label's labeled control (a <button> is labelable; when the actions came
+   first, clicking the label row fired Copy on a live credential). This grid
+   paints them back into the head row, so the source order is safe and the
+   layout is unchanged: head + actions share row 1, the input spans row 2. */
+.settings-panel label.secret-label {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "head actions"
+    "input input";
+  align-items: center;
+}
+.settings-panel label.secret-label > .settings-field-head {
+  grid-area: head;
+  /* grid items' margins don't collapse — drop this one so the head-to-input gap
+     stays the input's own 0.25rem, matching the non-secret fields. `end` pins
+     the label text to the bottom of a row whose height the taller buttons set;
+     with `center` the leftover row space read as a 8px gap against the Model
+     field's measured 4px. */
+  align-self: end;
+  margin-bottom: 0;
+}
+.settings-panel label.secret-label > input { grid-area: input; }
+.settings-panel .secret-actions {
+  grid-area: actions;
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: 0.35rem;
+}
+/* a FAILED copy must not render in the herb-green success token (CR-04) */
+.settings-panel .secret-copy-fail {
+  color: var(--color-danger);
+}
+/* Scoped to .settings-panel deliberately: `.modal-content button` (0,1,1) sets
+   its own padding and would out-specify a bare `.secret-btn` (0,1,0). */
+.settings-panel .secret-btn {
+  background: none;
+  border: 0;
+  padding: 0.2rem 0.3rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  cursor: pointer;
+}
+.settings-panel .secret-btn:hover:not(:disabled) {
+  text-decoration: underline;
+}
+/* de-emphasised, still legible: `.modal-content button:disabled` (0,2,1) adds
+   opacity 0.55, which stacked on ink-faint dropped this to ~1.76:1 (CR-06).
+   This rule is 0,3,0, so the opacity reset wins. */
+.settings-panel .secret-btn:disabled {
+  color: var(--color-ink-muted);
+  opacity: 1;
+}
 /* SIMPLE-settings field labels + subsec legends → uppercase-mono eyebrow, per
    the specimen `.setting .lab` / `.subsec legend` (settled-decision #1). The
    carriers are: `.settings-field-head` (the Saved-✓ label spans), the plain
@@ -6556,6 +6621,21 @@ a.meal-plan-shop-search {
     min-width: 2.5rem;   /* ≈44px at the 17.5px dial */
     min-height: 2.5rem;
     padding: 0;
+  }
+  /* quick 260809-j6k / CR-03 — the Settings reveal/copy controls measured
+     44.3×23.0px with a 5.6px gap, so a thumb aiming at Show landed on Copy and
+     silently put a live credential on the phone's clipboard. Both dimensions
+     get the ≥44px floor and the gap is widened so the two are distinguishable
+     by touch, not just by reading. */
+  .settings-panel .secret-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+  }
+  .settings-panel .secret-actions {
+    gap: 0.75rem;
   }
   /* ---- Shopping row: stack so name / icon / amount / ✕ never collide (T2) ----
      The base 3-col grid (name-cell | amount | ✕) squeezes column 1 on a narrow
