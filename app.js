@@ -90,7 +90,7 @@ import { splitInstructionSteps, orderEntriesByType } from './cook-artifact.js';
 // renderCookDocument; the future hosted viewer (18-04) reuses the same module so
 // the blob + viewer can never drift. Pure/browser-free (Node-tested in
 // scripts/cook-render.test.mjs).
-import { renderCookDocument } from './cook-render.js';
+import { renderCookDocument, renderCookPlaintext } from './cook-render.js';
 // Phase 17 (Plan 17-02) — PURE meal-plan sync helpers (shared/local field split +
 // the 3-way merge: delete-wins D-04, id-keyed entries D-03, per-key maps D-02).
 // Node-tested in scripts/mealplan-sync.test.mjs; the impure wiring (Alpine state,
@@ -450,7 +450,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'e086ba7 2026-08-09';
+const APP_VERSION = 'db191cd 2026-08-11';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -3959,6 +3959,28 @@ Alpine.data('app', () => ({
   cookArtifactWarning: '',
   cookArtifactBlocked: false,
   cookArtifactError: '',
+
+  // quick 260811-duh — "Copy meal plan" (plaintext) transient view state. Holds the
+  // day KEY whose copy just succeeded, so only that day's menu item flips to
+  // "Copied ✓" and a second day's item is unaffected.
+  // NEVER persisted, NEVER synced, not part of any doc — cleared by a ~1.6s timer
+  // (_cookCopyTimer, held so a rapid second copy cancels the stale revert).
+  //
+  // THE SENTINEL IS `null`, NOT `''` — deliberately UNLIKE dayMenuOpenFor. `''` is a
+  // REAL day key (the Unscheduled group; see _groupEntriesByDay), so an ''-sentinel
+  // makes `cookCopyCopiedFor === group.key` true for Unscheduled before any copy has
+  // happened, and its menu item renders a permanent "Copied ✓" — a lie about the
+  // clipboard's contents. Verified in the browser: with `''` the Unscheduled item read
+  // "Copied ✓" on load; with `null` it reads "Copy meal plan" and still flips correctly
+  // when Unscheduled is genuinely copied (null !== '' , '' === '').
+  cookCopyCopiedFor: null,
+  // Same null-sentinel rule: the day key whose copy just FAILED, so the failure is
+  // reported at the control and not only in the far-off-screen banner (review WR-01).
+  cookCopyFailedFor: null,
+  _cookCopyTimer: null,
+  // Monotonic token so an earlier overlapping copy can't clobber a later one's
+  // label or clear its revert timer (review WR-02).
+  _cookCopyGen: 0,
 
   // ---------- REVIEW-04 / REVIEW-05 (Plan 03-01) ----------
   // Quick 260607-9zz item 3 — `hoveredFlaggedField` REMOVED. Per-field reason
@@ -12625,17 +12647,26 @@ Alpine.data('app', () => ({
 
     // Fail-closed header read (mirrors openMealPlan ~L4066-4070): on failure show
     // an error AND close the placeholder tab so it doesn't sit blank.
+    // quick 260811-duh (re-review RR-W4) — `!recipes` is folded into the SAME fail-closed
+    // branch as a thrown read: getFile RESOLVES WITH null for an absent record, so
+    // without this a missing recipes.csv produced a sheet with no method for any dish.
+    // (Before the shared-helper extraction this path threw an uncaught TypeError on
+    // `recipes.rows` and left a blank tab — neither behaviour is acceptable, so both
+    // now take the named error.)
     let recipes;
     try {
       recipes = await getFile('recipes.csv');
     } catch (_e) {
+      recipes = null;
+    }
+    if (!recipes) {
       this.cookArtifactError = "Couldn't read your recipe files, so the cooking sheet couldn't be built.";
       try { win.close(); } catch (_e2) { /* ignore */ }
       return;
     }
-    const headerById = new Map(
-      (Array.isArray(recipes.rows) ? recipes.rows : []).map(r => [parseInt(r.recipe_id, 10), r])
-    );
+    // quick 260811-duh (review WR-05) — shared with copyCookPlaintext so the two
+    // cook-sheet paths cannot drift in how they build the model's INPUT.
+    const headerById = this._recipeHeaderMap(recipes);
 
     // D-17 gate: blank instructions_20 (empty/whitespace-only) is distinct from
     // "has text but doesn't split into steps" (D-16, handled in _buildCookModel).
@@ -12664,6 +12695,182 @@ Alpine.data('app', () => ({
     const model = this._buildCookModel(group, headerById);
     const html = this._renderCookArtifactHtml(model);
     win.location = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+  },
+
+  /**
+   * copyCookPlaintext — quick 260811-duh. Copy ONE day's cooking sheet to the
+   * clipboard as plaintext, for pasting into a message or a note without generating
+   * the HTML artifact. Sibling of generateCookArtifact: same `group`, same single
+   * getFile('recipes.csv') read, same headerById build, and the SAME frozen model
+   * (_buildCookModel) — the plaintext renderer (cook-render.js renderCookPlaintext)
+   * consumes that model verbatim, so the text and the HTML sheet cannot drift. Do NOT
+   * call scaledRowsFor / orderEntriesByType / splitInstructionSteps here.
+   *
+   * READ-ONLY: exactly one getFile('recipes.csv'). No putFile / putJsonFile, no
+   * githubStore.*, no localStorage, no synced doc, no _dirtyTargets, no Anthropic call.
+   *
+   * NO SILENT NO-OP: every failure path reports AT THE CONTROL (the menu item flips to
+   * "Copy failed", per-day via cookCopyFailedFor — the copySecret convention at
+   * index.html:4080) *as well as* setting the cookArtifactError banner. The banner alone
+   * is not enough: it renders after the whole day-group loop, so on a real multi-day
+   * plan it is far off-screen and a failure reads as a dead button (review WR-01).
+   *
+   * WHY THE WRITE IS NOT A PLAIN `await writeText(text)` (review CR-01):
+   * a clipboard write is safest when issued inside the task that still holds the user's
+   * transient activation. Reading recipes.csv is async, so a plain
+   * `await getFile(...)` → `writeText(...)` issues the write after the activation window
+   * has closed. So the write is handed a PROMISE synchronously instead:
+   * `navigator.clipboard.write()` is CALLED before any await, with a promise-valued
+   * ClipboardItem that settles once the read and render finish. `writeText` remains the
+   * fallback for engines without ClipboardItem.
+   *
+   * ⚠️ HONEST STATUS OF THE UNDERLYING CLAIM: the review asserted WebKit REJECTS the
+   * after-await write, which would make this a dead button on iOS (a supported device —
+   * v2.1 Mobile Kitchen). I tried to reproduce that and COULD NOT: an A/B of both
+   * orderings under real WebKit (Playwright's build, UA "Version/26.4 Safari/605.1.15"),
+   * each from a genuine trusted click, saw BOTH resolve. Desktop WebKit under automation
+   * is not iOS Safari, so this is not proof the concern is bogus — only that it is
+   * unconfirmed here. The promise-valued form is kept because it is the documented
+   * pattern for an async clipboard write, costs nothing, and is correct under the
+   * stricter interpretation too. Do NOT "simplify" it back to await-then-writeText
+   * without testing on a real iPhone.
+   *
+   * DELIBERATELY NOT reusing generateCookArtifact's D-17 blank-instructions confirm()
+   * gate: that gate exists so the user doesn't unknowingly PRINT a sheet with no
+   * method. The plaintext carries NO_STEPS_TEXT inline per dish, so a missing method
+   * is visible in the copied text itself and a modal confirm would be pure friction.
+   */
+  async copyCookPlaintext(group) {
+    // Clear stale notices (same three flags generateCookArtifact clears) + any
+    // in-flight "Copied ✓" / "Copy failed" flip from a previous copy.
+    this.cookArtifactWarning = '';
+    this.cookArtifactBlocked = false;
+    this.cookArtifactError = '';
+    this.cookCopyCopiedFor = null;   // null, not '' — '' is the Unscheduled day key
+    this.cookCopyFailedFor = null;
+    clearTimeout(this._cookCopyTimer);
+
+    // Generation token (review WR-02). Two overlapping copies race: the pre-clear above
+    // cannot cancel a timer that the FIRST call has not created yet, so without this the
+    // first copy's orphaned timer fires and wipes the second copy's "Copied ✓" early.
+    // Every state write below is gated on still being the newest call.
+    const gen = (this._cookCopyGen || 0) + 1;
+    this._cookCopyGen = gen;
+    const current = () => this._cookCopyGen === gen;
+
+    // Clipboard-capability guard BEFORE the read — fail fast and visibly. Under
+    // file:// (and any other insecure context) navigator.clipboard is simply absent.
+    const canItem = typeof ClipboardItem === 'function' && !!(navigator.clipboard && navigator.clipboard.write);
+    const canText = !!(navigator.clipboard && navigator.clipboard.writeText);
+    if (!canItem && !canText) {
+      this._failCookCopy(group.key, "Your browser blocked the clipboard — open this tool over http://localhost:8000 or the live https:// address (copying doesn't work from a file:// page).");
+      return;
+    }
+
+    // The read + render, as a promise built (not awaited) inside the gesture.
+    // failureStage records WHERE it broke so the message names the real cause instead
+    // of blaming clipboard permissions for a failed read or a render bug. null (not '')
+    // is the "nothing failed" sentinel, per the sentinel rule above.
+    let failureStage = null;   // null | 'read' | 'build' | 'superseded'
+    const textPromise = (async () => {
+      let recipes;
+      try {
+        recipes = await getFile('recipes.csv');
+      } catch (e) {
+        failureStage = 'read';
+        throw e;
+      }
+      // getFile RESOLVES WITH null for an absent record — it does not throw
+      // (csvStore.js: `if (!rec) return null`). Without this guard a missing
+      // recipes.csv produced an empty header map, so every dish fell back to {},
+      // instructions_20 read as '' and the copy silently contained dish names and
+      // ingredients with NO METHOD for any dish — reported as "Copied ✓"
+      // (re-review RR-W4). Silently-wrong output is worse than a named failure.
+      if (!recipes) {
+        failureStage = 'read';
+        throw new Error('recipes.csv is not in the local store');
+      }
+      // A newer copy started while this one was reading. Do NOT let a stale call win
+      // the clipboard: rejecting here makes write() reject, so the clipboard keeps the
+      // NEWER call's bytes, and the catch below stays silent because current() is
+      // false. Guarding only the label (as the first fix round did) left the older
+      // call writing its bytes while the label showed the newer day — a visible race
+      // turned into a silent one (re-review RR-W1).
+      if (!current()) {
+        failureStage = 'superseded';
+        throw new Error('superseded by a newer copy');
+      }
+      try {
+        // The ONE model build — identical to the HTML sheet's input.
+        return renderCookPlaintext(this._buildCookModel(group, this._recipeHeaderMap(recipes)));
+      } catch (e) {
+        failureStage = 'build';
+        throw e;
+      }
+    })();
+    // The promise the ClipboardItem actually holds is the DERIVED Blob promise, so that
+    // is the one needing its own handler — a catch on textPromise alone does NOT cover
+    // it, and on the very path this guards (write() rejecting before consuming the item)
+    // the unhandled rejection still fired (re-review RR-W2). Both get a no-op handler;
+    // the real error still flows through the chain write() consumes, and through the
+    // `await textPromise` in the writeText fallback.
+    const blobPromise = textPromise.then(t => new Blob([t], { type: 'text/plain' }));
+    textPromise.catch(() => {});
+    blobPromise.catch(() => {});
+
+    try {
+      if (canItem) {
+        // CALLED synchronously — no await before this line (see the WebKit note above).
+        await navigator.clipboard.write([new ClipboardItem({ 'text/plain': blobPromise })]);
+      } else {
+        await navigator.clipboard.writeText(await textPromise);
+      }
+      if (!current()) return;
+      this.cookCopyCopiedFor = group.key;
+      // 1600ms matches the Settings tick() / copySecret confirmation convention.
+      this._cookCopyTimer = setTimeout(() => {
+        if (current()) this.cookCopyCopiedFor = null;
+      }, 1600);
+    } catch (_e) {
+      if (!current()) return;
+      this._failCookCopy(group.key, (
+        failureStage === 'read'
+          ? "Couldn't read your recipe files, so the meal plan couldn't be copied."
+          : failureStage === 'build'
+            ? "Couldn't build the plaintext meal plan — use “Cook this day” instead, and report this."
+            : 'Couldn’t write to the clipboard — your browser refused permission. Use “Cook this day” and copy from the sheet instead.'
+      ));
+    }
+  },
+
+  /**
+   * _failCookCopy — quick 260811-duh (review WR-01). Report a copy failure BOTH at the
+   * control (the menu item flips to "Copy failed" for ~1.6s, the copySecret convention)
+   * and in the cookArtifactError banner. Keyed per day so one day's failure never
+   * mislabels another's item. Pure view state — nothing persisted, nothing synced.
+   */
+  _failCookCopy(dayKey, message) {
+    this.cookArtifactError = message;
+    this.cookCopyFailedFor = dayKey;
+    clearTimeout(this._cookCopyTimer);
+    const gen = this._cookCopyGen;
+    this._cookCopyTimer = setTimeout(() => {
+      if (this._cookCopyGen === gen) this.cookCopyFailedFor = null;
+    }, 1600);
+  },
+
+  /**
+   * _recipeHeaderMap — quick 260811-duh (review WR-05). The recipe_id -> disk-row Map
+   * that both cook-sheet paths feed to _buildCookModel. Extracted so the two callers
+   * cannot drift in how they build the model's INPUT (the renderer already cannot
+   * drift — it consumes one frozen model). parseInt matches the pre-existing behavior
+   * verbatim; the callers keep their own distinct read/error handling (generateCookArtifact
+   * must also close its placeholder tab).
+   */
+  _recipeHeaderMap(recipes) {
+    return new Map(
+      (Array.isArray(recipes && recipes.rows) ? recipes.rows : []).map(r => [parseInt(r.recipe_id, 10), r])
+    );
   },
 
   /**

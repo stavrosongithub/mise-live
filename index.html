@@ -2596,6 +2596,25 @@
                       <button type="button" class="meal-plan-menu-item" role="menuitem"
                               :disabled="anyModalOpen"
                               @click="generateCookArtifact(group); dayMenuOpenFor = ''">Cook this day</button>
+                      <!-- quick 260811-duh — "Copy meal plan": the plaintext twin of
+                           "Cook this day", copied to the clipboard. Two non-obvious choices:
+                           (1) unlike Cook this day it deliberately does NOT set
+                               dayMenuOpenFor = '' — the menu stays open so the "Copied ✓"
+                               flip is actually visible; it closes on the next outside click
+                               as usual (@click.outside on .meal-plan-day-menu).
+                           (2) the plaintext is rendered from the SAME _buildCookModel frozen
+                               model as the HTML sheet, so the two cannot drift.
+                           (3) the label reports FAILURE here too ("Copy failed"), not only
+                               in the cookArtifactError banner — that banner sits after the
+                               whole day loop, so on a real plan it is off-screen and a
+                               failure would read as a dead button (review WR-01).
+                           Both flags are keyed by day and use a NULL sentinel ('' is the
+                           real Unscheduled key), so no other day's item is affected.
+                           Reuses .meal-plan-menu-item — no new CSS, no new token. -->
+                      <button type="button" class="meal-plan-menu-item" role="menuitem"
+                              :disabled="anyModalOpen"
+                              @click="copyCookPlaintext(group)"
+                              x-text="cookCopyCopiedFor === group.key ? 'Copied ✓' : (cookCopyFailedFor === group.key ? 'Copy failed' : 'Copy meal plan')"></button>
                       <!-- quick 260707-lyk — Swap dishes with… reveals a sub-list of other
                            upcoming days; picking one swaps the dinner DISHES (re-dates entries). -->
                       <button type="button" class="meal-plan-menu-item" role="menuitem"

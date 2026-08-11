@@ -1363,3 +1363,148 @@ ${dataIsland}
 </body>
 </html>`;
 }
+
+// ----------------------------------------------------------------------------
+// NO_STEPS_TEXT — quick 260811-duh. The single wording for "this dish has no
+// numbered method". COOK_RUNTIME contains this literal INLINE (see the `no-steps`
+// paragraph in the Overview render); it is deliberately NOT refactored to consume
+// this constant, because the runtime lives inside a template string and rewriting
+// it would risk the sheet. Instead scripts/cook-render.test.mjs asserts the literal
+// appears in BOTH COOK_RUNTIME and the plaintext output — a drift guard. If you
+// reword one, reword the other in the same commit.
+// ----------------------------------------------------------------------------
+export const NO_STEPS_TEXT = 'No numbered method recorded for this dish — see the recipe.';
+
+// ----------------------------------------------------------------------------
+// renderCookPlaintext(model) — quick 260811-duh.
+//
+// The PLAINTEXT TWIN of the COOK_RUNTIME Overview render, for the meal-plan per-day
+// ⋯ menu's "Copy meal plan". The two must change together: this function says the
+// same things the HTML sheet says (day label, day note, numbered dish index with
+// servings, per-dish prep-ahead note, dish note, section-grouped ingredients with
+// roles, per-group numbered method with tips, serve-with), in the same order.
+//
+// It consumes the FROZEN model from app.js `_buildCookModel(group, headerById)`
+// VERBATIM: no re-derivation, no renumbering, no re-rounding. `amount` / `volParen`
+// are the frozen D-12 metric-leads strings and are emitted as-is; dish order is
+// `model.dishes` order (already D-07 main→side→salad→other). This function must
+// never call scaledRowsFor / orderEntriesByType / splitInstructionSteps — the model
+// is the single source, which is what makes drift from the HTML sheet impossible.
+//
+// PURE / browser-free on purpose (no document / window / navigator, no imports, no
+// runtime-in-a-string) so scripts/cook-render.test.mjs can gate it under Node with
+// a full-string equality format lock.
+//
+// `generatedAt` is deliberately NOT rendered: a timestamp makes pasted text noisy
+// and the output non-deterministic to test. `dayKey` is not read at all — nothing
+// here is device-specific and nothing is persisted.
+//
+// Blocks are separated by exactly ONE blank line; indents are two spaces (tips five);
+// the returned string has NO trailing newline.
+// ----------------------------------------------------------------------------
+export function renderCookPlaintext(model) {
+  const txt = v => String(v == null ? '' : v).trim();
+  // Mirrors the runtime's `d.servings != null && d.servings !== ''` test, so a dish
+  // with no servings renders NEITHER "(N servings)" nor a servings line.
+  const servingsText = d => (d && d.servings != null && d.servings !== '') ? `${d.servings} servings` : '';
+
+  const m = (model && typeof model === 'object') ? model : {};
+  const dishes = Array.isArray(m.dishes) ? m.dishes : [];
+
+  const blocks = [];
+  blocks.push(txt(m.dayLabel) || 'Cooking sheet');
+
+  const dayNote = txt(m.dayNote);
+  if (dayNote) { blocks.push(`Notes for today: ${dayNote}`); }
+
+  if (!dishes.length) {
+    blocks.push('(no dishes planned)');
+    return blocks.join('\n\n');
+  }
+
+  // The header dish index, mirroring #dish-index.
+  blocks.push(dishes.map((d, i) => {
+    const name = txt(d && d.name) || `Dish ${i + 1}`;
+    const srv = servingsText(d);
+    return `${i + 1}. ${name}${srv ? ` (${srv})` : ''}`;
+  }).join('\n'));
+
+  for (let i = 0; i < dishes.length; i += 1) {
+    const d = (dishes[i] && typeof dishes[i] === 'object') ? dishes[i] : {};
+    const name = txt(d.name) || `Dish ${i + 1}`;
+
+    // --- dish head: name, servings, prep-ahead, dish note -------------------
+    const head = [`=== ${name} ===`];
+    const srv = servingsText(d);
+    if (srv) { head.push(srv); }
+    const prepNote = txt(d.prepNote);
+    if (prepNote) { head.push(`Prep ahead: ${prepNote}`); }
+    const dishNote = txt(d.note);
+    if (dishNote) { head.push(`Note: ${dishNote}`); }
+    blocks.push(head.join('\n'));
+
+    // --- ingredients, grouped by section ------------------------------------
+    const ingredients = Array.isArray(d.ingredients) ? d.ingredients : [];
+    if (ingredients.length) {
+      // Same fallback as buildIngredientList: an OLD frozen model / share link with
+      // no ingredientGroups renders as ONE unsectioned list over every flat index.
+      const groups = (Array.isArray(d.ingredientGroups) && d.ingredientGroups.length)
+        ? d.ingredientGroups
+        : [{ heading: null, itemIndexes: ingredients.map((_, k) => k) }];
+      const lines = ['Ingredients'];
+      for (const group of groups) {
+        const g = (group && typeof group === 'object') ? group : {};
+        const heading = txt(g.heading);
+        if (heading) { lines.push(`  ${heading}`); }
+        for (const flatIdx of (Array.isArray(g.itemIndexes) ? g.itemIndexes : [])) {
+          const ing = ingredients[flatIdx];
+          if (!ing) { continue; }   // mirrors the runtime's `if (!ing) { return; }`
+          // amount / name / volParen, blanks dropped so an empty amount leaves no
+          // leading space; then the role suffix ('required' carries none).
+          let line = [txt(ing.amount), txt(ing.name), txt(ing.volParen)].filter(Boolean).join(' ');
+          const role = txt(ing.role);
+          if (role && role !== 'required') {
+            line += ` — ${role === 'to_taste' ? 'to taste' : role}`;
+          }
+          lines.push(`  - ${line}`);
+        }
+      }
+      blocks.push(lines.join('\n'));
+    }
+
+    // --- method: step numbering RESTARTS inside each group (per-group <ol>) ---
+    const instructionGroups = Array.isArray(d.instructionGroups) ? d.instructionGroups : [];
+    const methodLines = ['Method'];
+    // Branch on d.hasSteps ALONE — exactly what the HTML sheet's runtime does
+    // (`if (d.hasSteps)`). An extra `&& instructionGroups.length` here would make the
+    // plaintext claim "no numbered method recorded" for a dish where the sheet renders
+    // an empty Method block — the two must agree (review WR-04). Today's _buildCookModel
+    // derives hasSteps from stepCount > 0 so the disagreeing case is unreachable, but
+    // the renderers must not depend on that coincidence.
+    if (d.hasSteps) {
+      for (const group of instructionGroups) {
+        const g = (group && typeof group === 'object') ? group : {};
+        const heading = txt(g.heading);
+        if (heading) { methodLines.push(`  ${heading}`); }
+        const steps = Array.isArray(g.steps) ? g.steps : [];
+        steps.forEach((step, k) => {
+          const s = (step && typeof step === 'object') ? step : {};
+          methodLines.push(`  ${k + 1}. ${txt(s.text)}`);
+          for (const tip of (Array.isArray(s.tips) ? s.tips : [])) {
+            const t = txt(tip);
+            if (t) { methodLines.push(`     Tip: ${t}`); }
+          }
+        });
+      }
+    } else {
+      methodLines.push(`  ${NO_STEPS_TEXT}`);
+    }
+    blocks.push(methodLines.join('\n'));
+
+    // --- serve with ---------------------------------------------------------
+    const serveWith = txt(d.serveWith);
+    if (serveWith) { blocks.push(`Serve with: ${serveWith}`); }
+  }
+
+  return blocks.join('\n\n');
+}
