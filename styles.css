@@ -3904,6 +3904,44 @@ textarea {
   margin: 1.7143rem 0 0;
   font-size: var(--fs-base);
 }
+/* quick 260818-etb — the stale-lock takeover row inside the band.
+   COMMENT CORRECTED in the gap pass (WR-02): the original claimed this row reuses the
+   page-level presence banner's OTHERWISE-UNSTYLED .modal-buttons shape. That was FALSE
+   here and was measured false in the live DOM. This band renders INSIDE .modal-content,
+   so the scoped `.modal-content .modal-buttons` rule further up this file DOES match it
+   and supplies display:flex, gap and justify-content:flex-end. The row is therefore
+   right-aligned — deliberately kept, it reads correctly under the band's copy — and it
+   does NOT render like the page-level presence banner's copy of this row, which lives
+   outside .modal-content, is matched by no .modal-buttons rule at all, and stays a
+   left-aligned plain block. The two rows share MARKUP, not rendering.
+   The only inherited declaration overridden here is the top margin: 1rem is a modal-FOOTER
+   gap and is too much inside a band. That override is pinned by SPECIFICITY, not by source
+   order — `.modal-content .recipe-chat-disabled .modal-buttons` is (0,3,0) against the
+   inherited rule's (0,2,0), so moving this block cannot silently change the spacing (the
+   original selector tied at (0,2,0) and won only by sitting later in the file).
+   Button padding is pinned the same way over `.modal-content button` ((0,2,1) vs (0,1,1));
+   cursor:pointer is NOT repeated — that same rule already supplies it (WR-02/IN-04).
+   rem + tokens only, no new class. */
+.modal-content .recipe-chat-disabled .modal-buttons {
+  margin-top: 0.5rem;
+}
+.recipe-chat-disabled .modal-buttons button {
+  padding: 0.3rem 0.7rem;
+}
+/* quick 260818-etb — the failed-takeover copy needs NO rule of its own, and the gap
+   pass deleted the one it briefly had. MEASURED in the live DOM (getComputedStyle +
+   a styleSheets enumeration of every matching margin rule), because the first attempt
+   here got this wrong in exactly the way WR-02 got the row above wrong:
+   `.banner.banner-warning p` (0,2,1) BEATS both `.recipe-chat-disabled p` (0,1,1) and
+   any `.recipe-chat-disabled .merge-summary` (0,2,0) override. So the band's
+   paragraphs are NOT zeroed — they compute margin 0 0 0.5rem — and a (0,2,0) rule
+   here is DEAD, whatever its comment claims.
+   The 9px gap above this line is therefore already supplied by the REASON paragraph's
+   own inherited bottom margin, and the line's face by
+   `.banner.banner-warning .merge-summary`, both of which this band gets by composing
+   .banner.banner-warning. Adding an override would need to clear (0,2,1) to do
+   anything at all — and there is nothing to change. */
+
 .recipe-chat-disabled p {
   margin: 0;
 }

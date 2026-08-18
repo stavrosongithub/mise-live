@@ -450,7 +450,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'db191cd 2026-08-11';
+const APP_VERSION = 'da2b417 2026-08-18';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -3539,6 +3539,19 @@ Alpine.data('app', () => ({
   _lockHeartbeatTimer: null,
   _lockServerNowMs: null,
 
+  // quick 260818-etb (gap pass, WR-01) — takeoverError: friendly copy for a
+  // takeover that FAILED for a real reason (expired PAT / 403 / offline), '' =
+  // nothing to say. TRANSIENT and never persisted: takeOverStaleLock clears it at
+  // the START of every attempt, so a retry can never show stale copy and a success
+  // leaves it ''. A RACED 409 deliberately does NOT set it — that is not a failure,
+  // and the refreshed presence banner already names the winner.
+  // It exists because the takeover button is otherwise a DEAD BUTTON on those
+  // paths: the catch swallows everything, there is no unhandledrejection handler in
+  // this app, and the console line that used to be the only trace disappeared when
+  // both call sites moved onto the guarded method. Rendered in BOTH places the
+  // button appears (the chat band and the page-level presence banner).
+  takeoverError: '',
+
   // quick 260611-enp — Meal plan view state. mealPlanView is the FOURTH
   // mutually-exclusive top-level view. This whole path is READ-ONLY + EPHEMERAL:
   // it reads recipes.csv + recipe_ingredients.csv FRESH, scales in memory, and
@@ -5003,6 +5016,49 @@ Alpine.data('app', () => ({
     try {
       await this.takeOverLock();
     } catch (e) {
+      try { await this.refreshPresence(); } catch (_e2) { /* best-effort */ }
+    }
+  },
+
+  /**
+   * takeOverStaleLock — quick 260818-etb. The GUARDED one-click STALE takeover, and
+   * the ONLY takeover call site the markup binds. forceReleaseLock PROPAGATES a raced
+   * 409 (someone else took the lock first — T-12-08 keeps acquisition race-safe); called
+   * bare from an @click that propagation is an UNHANDLED REJECTION, i.e. a 4th console
+   * error against the CLAUDE.md baseline of exactly 3. Mirrors confirmTakeOverLock's
+   * recovery precisely: swallow, then refresh presence so the banner shows the winner.
+   * NEVER loop (SAVE-02).
+   *
+   * D-10 is untouched: the stale path stays ONE calm click with NO confirm dialog, so
+   * this opens no modal and cannot stack on the recipe edit modal. That is exactly why
+   * the stale branch — and only the stale branch — gets a button inside the chat band.
+   *
+   * quick 260818-etb gap pass (WR-01) — the catch used to be UNCONDITIONAL, so an
+   * expired PAT (401 — the user's tokens are minted WITH an expiry), a 403 or an
+   * offline TypeError made the button do NOTHING with zero user-visible surface: the
+   * same dead-end this task was created to fix, moved one step later. Now the RACED
+   * 409 keeps exactly its old behaviour (swallow + refresh; the refreshed banner
+   * names the winner, so error copy would be noise), and every OTHER error is still
+   * swallowed — no unhandled rejection, the console baseline stays exactly 3 — but
+   * records friendly copy in takeoverError for the band and the banner to render.
+   * The copy comes from githubFriendlyError, the never-leaks-the-token path
+   * (T-14-01); a raw error is NEVER rendered.
+   * There is deliberately NO `if (!githubConnected) return` pre-guard here (the shape
+   * 14 other GitHub-writing paths use): an early return is precisely the dead button
+   * again. Better to attempt, fail, and say why.
+   * Still never loops and never auto-retries (SAVE-02).
+   */
+  async takeOverStaleLock() {
+    this.takeoverError = '';   // clear FIRST: a retry must never show the last attempt's copy
+    try {
+      await this.forceReleaseLock();
+    } catch (e) {
+      // Same 409 idiom the rest of this file uses (cf. heartbeatLock, _pushPlanOnce).
+      const raced = e instanceof GhConflictError || e.status === 409;
+      if (!raced) {
+        this._maybeRateLimitBanner(e);                    // the D-09 central convention
+        this.takeoverError = this.githubFriendlyError(e); // never the token (T-14-01)
+      }
       try { await this.refreshPresence(); } catch (_e2) { /* best-effort */ }
     }
   },

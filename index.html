@@ -2223,11 +2223,46 @@
                alert. The copy comes from the chatDisabledReason getter, which routes
                through the ONE existing editorDisabled gate (D-17) and ends with D-18's
                locked no-key wording, "Add your Anthropic key in Settings to chat about
-               this recipe." There is deliberately no "Open Settings" button — opening
-               Settings over this modal would break the no-modal-stacking rule. -->
+               this recipe." For the NO-KEY branch there is deliberately no "Open
+               Settings" button — opening Settings over this modal would break the
+               no-modal-stacking rule. That is a statement about the NO-KEY branch only,
+               NOT a blanket ban on buttons in this band (see the stale-lock row below —
+               misreading it as blanket is what left the "Take over?" question
+               unanswerable). -->
           <div class="recipe-chat-disabled banner banner-warning" role="status"
                x-show="chatDisabledReason" x-cloak>
             <p x-text="chatDisabledReason"></p>
+            <!-- quick 260818-etb — the STALE-lock takeover, in the band.
+                 presenceBanner's stale copy ends in a QUESTION ("Take over?") and
+                 chatDisabledReason returns it verbatim, but the real button lived only in
+                 the page-level presence banner — which sits BEHIND the .modal backdrop
+                 (position:fixed; inset:0; z-index:1000) whenever this modal is open, so
+                 the question was unanswerable without abandoning the recipe.
+                 STALE ONLY, gated on presenceLockStale (D-10): the stale takeover is one
+                 click with NO confirm dialog, so it opens no modal and the
+                 no-modal-stacking rule is untouched. The LIVE-lock affordance
+                 (lockTakeoverConfirmOpen) deliberately does NOT appear here — it opens a
+                 second .modal over this one — and its copy is a statement, not a question.
+                 The x-show sits on the WRAPPER so a non-stale band renders no empty action
+                 row (and so no stray top margin). presenceLockStale never throws and is
+                 false without a foreign lock, so it is console-baseline safe. -->
+            <!-- quick 260818-etb gap pass (WR-01) — a takeover that FAILS for a real
+                 reason (expired PAT / 403 / offline) now SAYS SO here. Without this the
+                 button is dead on those paths: takeOverStaleLock swallows everything (it
+                 must — an unhandled rejection would be a 4th console error against the
+                 baseline of 3) and there is no unhandledrejection handler in this app.
+                 A raced 409 sets nothing — that is not a failure, and the refreshed
+                 banner already names the winner. Copy comes from githubFriendlyError,
+                 which never leaks the token (T-14-01). The x-text is GUARDED
+                 (takeoverError ? … : '') exactly like the presence banner's headline, so
+                 it adds NO 4th console error while hidden. Same .merge-summary shape the
+                 rate-limit / presence banners use — no new class. -->
+            <p class="merge-summary" x-show="takeoverError" x-cloak
+               x-text="takeoverError ? takeoverError : ''"></p>
+            <div class="modal-buttons" x-show="presenceLockStale" x-cloak>
+              <button type="button"
+                      @click="takeOverStaleLock()">Take over (looks abandoned)</button>
+            </div>
           </div>
         </div>
       </div><!-- /.recipe-chat-pane (phase 27-06) -->
@@ -3599,16 +3634,27 @@
          structural CSS). The headline x-text is GUARDED (presenceLock ? … : '')
          so it never adds a 4th console error under x-show (CLAUDE.md baseline = 3).
          The affordance splits on presenceLockStale (D-10): STALE → one calm click
-         forceReleaseLock() (no confirm); LIVE → "Take over editing…" opens the
-         confirm dialog below. Holder + elapsed copy comes from presenceBanner. -->
+         takeOverStaleLock() (no confirm); LIVE → "Take over editing…" opens the
+         confirm dialog below. Holder + elapsed copy comes from presenceBanner.
+         quick 260818-etb — the STALE button routes through the GUARDED
+         takeOverStaleLock() (the raw overwrite propagates a raced 409, which from a
+         bare @click is an unhandled rejection); it is the ONE takeover call site the
+         markup binds, shared with the chat band's copy of this row. -->
     <div class="banner banner-warning presence-banner"
          x-show="presenceLock && !_lockIsMine"
          x-cloak>
       <p><strong x-text="presenceLock ? presenceBanner : ''"></strong></p>
+      <!-- quick 260818-etb gap pass (WR-01) — the SAME failed-takeover surface the chat
+           band carries. Both buttons share one handler, so they must share its failure
+           report too, or the two affordances drift again. GUARDED x-text (console
+           baseline = 3); copy via githubFriendlyError, never the token (T-14-01); a
+           raced 409 shows nothing (the refreshed headline above names the winner). -->
+      <p class="merge-summary" x-show="takeoverError" x-cloak
+         x-text="takeoverError ? takeoverError : ''"></p>
       <div class="modal-buttons">
         <button type="button"
                 x-show="presenceLockStale"
-                @click="forceReleaseLock()">Take over (looks abandoned)</button>
+                @click="takeOverStaleLock()">Take over (looks abandoned)</button>
         <button type="button"
                 x-show="presenceLock && !presenceLockStale"
                 @click="lockTakeoverConfirmOpen = true">Take over editing…</button>
