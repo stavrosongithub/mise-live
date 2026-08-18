@@ -2981,6 +2981,23 @@
                 :class="{ 'has-collapsible': _collapsibleEmptyDayKeys.size > 0 }"
                 @click="emptyDaysExpanded = !emptyDaysExpanded"
                 x-text="emptyDaysExpanded ? 'Show fewer days' : ('＋ ' + _collapsibleEmptyDayKeys.size + ' more days')"></button>
+        <!-- quick 260818-pxl — extend the rolling window by a week at a time.
+             Upcoming ONLY (the Past tab has no rolling window), hence the x-show.
+             Deliberately NOT the .meal-plan-more-days class above: that class is
+             base-hidden and revealed only inside the ≤640px block, which is right
+             for a phone-only collapser and wrong for this control — the operator
+             plans ahead at a desk as much as on a phone, so it needs its own
+             always-visible class. Because this row is NOT media-gated, an x-show
+             here is safe (there is no desktop hide for an inline style to fight).
+             View state only: it widens windowDayKeys, which is a render projection
+             — no meal-plan field, nothing saved, gone on reload. -->
+        <div class="meal-plan-window-extend" x-show="mealPlanTab === 'upcoming'" x-cloak>
+          <button type="button" class="meal-plan-window-extend-btn"
+                  @click="extendWindowByWeek()">＋ Show another week</button>
+          <button type="button" class="meal-plan-window-extend-btn meal-plan-window-extend-reset"
+                  x-show="windowExtraWeeks > 0"
+                  @click="resetWindowExtension()">Show first 14 days</button>
+        </div>
         <!-- Phase 06 (WR-01) — cook-artifact feedback. generateCookArtifact sets
              these three flags but they had no UI: a blocked popup / read failure /
              file:// notice was silent. Reuse the meal-plan warning-banner pattern

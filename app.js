@@ -450,7 +450,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'da2b417 2026-08-18';
+const APP_VERSION = 'e424ec8 2026-08-18';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -2008,6 +2008,25 @@ Alpine.data('app', () => ({
   // ≤640px media query — desktop shows all days, unchanged). Transient local view
   // state (like drawerOpen); NOT synced, NOT persisted.
   emptyDaysExpanded: false,
+
+  // quick 260818-pxl — how many EXTRA 7-day blocks are appended to the base
+  // 14-day rolling window on the meal plan's Upcoming tab (0 = the base fortnight,
+  // 1 = 21 days, 2 = 28 …). Transient local view state exactly like drawerOpen /
+  // emptyDaysExpanded above: NOT synced, NOT persisted, back to 0 on reload. It
+  // only widens windowDayKeys, which is a render-only projection — see
+  // extendWindowByWeek() / resetWindowExtension() beside that getter.
+  windowExtraWeeks: 0,
+
+  // quick 260818-pxl (WR-04) — the operator's own emptyDaysExpanded value as it
+  // stood BEFORE the first extension forced the phone reveal, so
+  // resetWindowExtension() can hand it back and extend/reset round-trips.
+  // null = nothing to restore (either no extension yet, or the collapser was
+  // already open so the reveal changed nothing). Transient local view state of
+  // exactly the same class as emptyDaysExpanded / windowExtraWeeks above: NOT
+  // synced, NOT persisted, back to null on reload — it is deliberately absent
+  // from buildSharedPlanDoc()'s field whitelist AND from the key whitelist in
+  // the UI-persist funnel, and must stay absent from both.
+  _emptyDaysExpandedBeforeExtend: null,
 
   // quick 260614-sht — modal-stack guard (UI-REVIEW BLOCKER, Phase-4 "no modal
   // stacks"). Read-only derived getter: true when ANY OTHER modal is open,
@@ -11095,17 +11114,25 @@ Alpine.data('app', () => ({
     return this._displayableMealPlan.filter(e => this._entryIsPast(e));
   },
 
-  // quick 260621-amm — the rolling 14-day window keys: today .. today+13 inclusive,
-  // as 14 consecutive 'YYYY-MM-DD' strings. Built from the REAL current date each
-  // call (parses todayStr, steps with LOCAL-midnight setDate — never toISOString, or
+  // quick 260621-amm — the rolling window keys: today .. today+N inclusive, as
+  // consecutive 'YYYY-MM-DD' strings. Built from the REAL current date each call
+  // (parses todayStr, steps with LOCAL-midnight setDate — never toISOString, or
   // negative-UTC zones render the wrong day). RENDER-ONLY — not persisted anywhere.
+  // quick 260818-pxl — the length is now 14 days PLUS 7 per windowExtraWeeks, so
+  // the operator can pull further weeks into view. Still render-only: widening this
+  // adds empty day slots to plan into, and narrows the "beyond window" bucket that
+  // upcomingByDay derives from these same keys. Anything that is not a finite
+  // number above 0 falls back to the base 14 (no negative or runaway loop).
   get windowDayKeys() {
+    const extraRaw = Number(this.windowExtraWeeks);
+    const extra = Number.isFinite(extraRaw) && extraRaw > 0 ? Math.floor(extraRaw) : 0;
+    const total = 14 + 7 * extra;
     const parts = this.todayStr.split('-');
     const y = Number(parts[0]);
     const m = Number(parts[1]);
     const d = Number(parts[2]);
     const keys = [];
-    for (let i = 0; i < 14; i++) {
+    for (let i = 0; i < total; i++) {
       const dt = new Date(y, m - 1, d); // LOCAL midnight start-of-today
       dt.setDate(dt.getDate() + i);
       const yy = dt.getFullYear();
@@ -11114,6 +11141,64 @@ Alpine.data('app', () => ({
       keys.push(`${yy}-${mm}-${dd}`);
     }
     return keys;
+  },
+
+  // quick 260818-pxl — "Show another week": pull one more 7-day block into the
+  // Upcoming window. Pure in-memory assignment on the component (see the
+  // windowExtraWeeks declaration up top) — no await, no write, no shared document.
+  //
+  // It also flips emptyDaysExpanded true, and that is load-bearing rather than a
+  // nicety: at phone width the phase-21 collapser hides EMPTY upcoming days beyond
+  // the first 3, and a freshly added week is necessarily all-empty — so without
+  // this the button would appear to do nothing on a phone.
+  //
+  // WR-04 — but that reveal used to CLOBBER the operator's own collapser toggle
+  // with no way back: reset restored the window and left them staring at a fully
+  // expanded fortnight they had explicitly collapsed. So the FIRST extension that
+  // has to force the reveal now records the prior value in
+  // _emptyDaysExpandedBeforeExtend, and resetWindowExtension() hands it back —
+  // extend/reset is a round trip again. A second extension does not re-record
+  // (emptyDaysExpanded is already true by then, so the branch is skipped and the
+  // original pre-extension value survives).
+  extendWindowByWeek() {
+    this.windowExtraWeeks = (Number(this.windowExtraWeeks) || 0) + 1;
+    if (!this.emptyDaysExpanded) {
+      this._emptyDaysExpandedBeforeExtend = false;
+      this.emptyDaysExpanded = true;
+    }
+    this._keepWindowExtendInView();
+  },
+
+  // quick 260818-pxl — the new days render ABOVE this control, so extending pushes
+  // it down by however much was just added. Measured at 390×844: one tap moved the
+  // button from 398px to 1430px — 634px BELOW the fold, so the operator taps once
+  // and the control they just used is gone (on a phone the collapser reveal lands
+  // in the same tap, which is why the shift is so large there). Desktop measured
+  // fine at 1440×900 (426px → 715px, still in view), hence the guard: re-anchor
+  // ONLY when the row actually left the viewport, so a desktop that never lost it
+  // does not jump. Double rAF because Alpine's x-for must render the new day cards
+  // before the rect means anything — the same wait focusSettingsField() uses.
+  // Read-only DOM measurement + a scroll; no state, nothing persisted.
+  _keepWindowExtendInView() {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const row = document.querySelector('.meal-plan-window-extend');
+      if (!row) return;
+      const r = row.getBoundingClientRect();
+      if (r.bottom > window.innerHeight || r.top < 0) row.scrollIntoView({ block: 'end' });
+    }));
+  },
+
+  // quick 260818-pxl — back to the base fortnight in one click. WR-04: it also
+  // undoes the reveal extendWindowByWeek() forced, and ONLY that — if the operator
+  // already had the collapser open when they extended, nothing was recorded and
+  // their choice is left alone. The sentinel is cleared so a later extend/reset
+  // pair starts from a clean slate.
+  resetWindowExtension() {
+    this.windowExtraWeeks = 0;
+    if (this._emptyDaysExpandedBeforeExtend === false) {
+      this.emptyDaysExpanded = false;
+      this._emptyDaysExpandedBeforeExtend = null;
+    }
   },
 
   // quick 260618-ahg / rebuilt quick 260621-amm — the Upcoming tab's day groups.
