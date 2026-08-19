@@ -85,6 +85,13 @@ import { factor, scaleRow, classifyIngredientCategory, isValidScaleCategory, SCA
 // orderEntriesByType applies the main->side->salad->other dish sort. Both are
 // unit-tested under scripts/cook-artifact.test.mjs (scale.js precedent).
 import { splitInstructionSteps, orderEntriesByType } from './cook-artifact.js';
+// quick 260819-d92 — pure, browser-free DISPLAY ordering for a meal-plan day's
+// dishes: the fixed Main -> Side -> Salad -> other -> blank render order plus
+// the typegroup-label group-break test. Strict exact-match on the trimmed
+// lower-cased type (the dayTypeSummary convention), deliberately a DIFFERENT
+// policy from the Cook sheet's D-07 substring sort above. No write path — see
+// the module header. Unit-tested under scripts/mealplan-order.test.mjs.
+import { orderDayEntriesByType, startsDayTypeGroup } from './mealplan-order.js';
 // Phase 18 (Plan 18-01) — SINGLE SOURCE of the Cook-this-day sheet's CSS,
 // runtime, and document skeleton. _renderCookArtifactHtml is a thin caller of
 // renderCookDocument; the future hosted viewer (18-04) reuses the same module so
@@ -450,7 +457,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'e424ec8 2026-08-18';
+const APP_VERSION = '480015d 2026-08-19';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -6221,6 +6228,52 @@ Alpine.data('app', () => ({
   },
 
   /**
+   * orderedDayEntries — quick 260819-d92. READ-ONLY display helper: the order a
+   * day card's dish rows RENDER in. Thin pass-through to orderDayEntriesByType
+   * (mealplan-order.js), which returns a NEW array of THE SAME entry references
+   * in the fixed order Main -> Side -> Salad -> other non-blank -> blank last.
+   * Sited next to dayTypeSummary on purpose: both are display-only, both share the
+   * same MATCHING RULE (strict exact-match on the trimmed lower-cased type, so
+   * 'Salad Dressing' is not a salad and 'Component' is not a main), and both cost
+   * once per day group per render. Their BUCKET LAYOUT is NOT the same, and the
+   * two READ DIFFERENTLY on the same day (IN-01, quick 260819-d92): dayTypeSummary
+   * puts BLANK types in its Other bucket, while the card gives blank its own bucket
+   * AFTER Other; and within Other the subtitle keeps raw insertion order while the
+   * card sub-groups by first appearance of the type. For
+   * [blank B, Component c1, Salad Dressing d1, Component c2] the subtitle reads
+   * 'Other: B · c1 · d1 · c2' and the rows read c1, c2, d1, B. Routing the subtitle
+   * (and the Tray tab's day name list) through this helper is a DEFERRED follow-up
+   * — it needs its own browser pass.
+   *
+   * STORED and SYNCED order are untouched — this reorders the render pass only.
+   * The SAME-reference guarantee is load-bearing: the markup mutates entries in
+   * place (the collapse caret, the servings x-model, the per-dish note), so a
+   * clone would send the operator's edits to a throwaway object.
+   * No writes, no persist, no scaling wiring, no reads of app state.
+   */
+  orderedDayEntries(entries) {
+    return orderDayEntriesByType(entries);
+  },
+
+  /**
+   * startsDayTypeGroupAt — quick 260819-d92. READ-ONLY. True when the dish at
+   * ordered index `i` begins a new typegroup run, i.e. when the F7 uppercase
+   * label should render above it. Exactly one label per distinct type per day
+   * (a day holding both `Main` and lowercase `main` shows ONE "MAIN"); blank
+   * types are never labelled.
+   *
+   * It is handed the UNORDERED entries ON PURPOSE — startsDayTypeGroup orders
+   * them internally, so the label test cannot fall out of step with the render
+   * loop the way a separate comparison against the unordered array could. The
+   * per-row re-sort that costs is DELIBERATE: correctness over
+   * micro-optimisation, and a day holds a handful of dishes.
+   * No writes, no persist, no reads of app state.
+   */
+  startsDayTypeGroupAt(entries, i) {
+    return startsDayTypeGroup(entries, i);
+  },
+
+  /**
    * daySubtitleSegments — quick 260620-gi4. READ-ONLY. Flattens the day subtitle
    * into ONE ordered list of segments so the markup renders a single x-for and the
    * dot separator can be index-gated (separator shown only when i > 0). This avoids
@@ -9622,9 +9675,10 @@ Alpine.data('app', () => ({
 
   /**
    * _persistMealPlan — quick 260615-dap. Snapshot a MINIMAL projection of the
-   * plan to localStorage: { id, recipe_id, date, servings, collapsed } per entry
-   * ONLY (id + date added quick 260615-lzq so the per-entry identity and day
-   * survive a refresh). Never persists name/type (refreshed on open) or
+   * plan to localStorage: { id, recipe_id, date, servings, collapsed, type } per
+   * entry ONLY (id + date added quick 260615-lzq so the per-entry identity and day
+   * survive a refresh; `type` added quick 260819-d92 as a DISPLAY cache — see the
+   * inline note). Never persists name (refreshed on open) or
    * mealPlanGrouped (rebuilt on open). Fail-open: any quota/serialization error is
    * swallowed so persistence never throws into the UI. Called directly on every
    * plan mutation (add / remove / servings edit / collapse toggle / date change /
@@ -9638,7 +9692,19 @@ Alpine.data('app', () => ({
         recipe_id: e.recipe_id,
         date: e.date,
         servings: e.servings,
-        collapsed: e.collapsed
+        collapsed: e.collapsed,
+        // quick 260819-d92 (WR-03) — CACHE the recipe type for the first paint.
+        // Display-only, LOCAL-ONLY: the day card's dish order and its typegroup
+        // labels are derived from `type`, and _restoreMealPlan used to restore it
+        // blank, so an already-expanded day painted in STORED order with no labels
+        // for the whole openMealPlan() load window (four awaits, one of them a
+        // GitHub pull) and then visibly jumped. openMealPlan's reconcile is still
+        // AUTHORITATIVE and refreshes type from recipeList; this only fills the
+        // window. It CANNOT reach the shared document: projectSharedPlanDoc
+        // (mealplan-sync.js) builds each synced entry from the four-field
+        // SHARED_ENTRY_FIELDS whitelist and ignores everything else — asserted by
+        // S5 in scripts/mealplan-order.test.mjs against the real function.
+        type: e.type
       }));
       localStorage.setItem(MEAL_PLAN_KEY, JSON.stringify(projection));
     } catch (_e) {
@@ -9657,7 +9723,8 @@ Alpine.data('app', () => ({
    * no longer exists is reconciled there). Defensive: any throw/corruption /
    * non-array resets the plan to []. Each entry is coerced — recipe_id must be a
    * finite number (NaN entries dropped); servings coerced to Number; collapsed
-   * defaults true unless explicitly false.
+   * defaults true unless explicitly false; `type` (quick 260819-d92) coerced to ''
+   * when missing or non-string, so a pre-cache projection restores unchanged.
    * quick 260615-lzq — backward-compatible restore of PRE-lzq plans (no separate
    * migration): an entry with no/invalid id gets a generated crypto.randomUUID();
    * a non-string date is coerced to '' (unscheduled). So old projections
@@ -9678,9 +9745,15 @@ Alpine.data('app', () => ({
           // quick 260615-lzq — defensive id default for pre-lzq projections.
           id: (typeof e.id === 'string' && e.id) ? e.id : crypto.randomUUID(),
           recipe_id: rid,
-          // name/type are placeholders — refreshed from recipeList on open.
+          // name is a placeholder — refreshed from recipeList on open.
           name: '',
-          type: '',
+          // quick 260819-d92 (WR-03) — read the cached type back DEFENSIVELY, so
+          // the first paint of an already-expanded day is already in type order
+          // with its labels. A missing key (any projection written before this
+          // change) or a non-string value coerces to '' — i.e. an older stored
+          // projection restores exactly as it did before. The open reconcile still
+          // overwrites this from recipeList.
+          type: (typeof e.type === 'string') ? e.type : '',
           servings: Number(e.servings),
           collapsed: e.collapsed !== false,
           // quick 260615-lzq — coerce a missing/invalid date to '' (unscheduled).

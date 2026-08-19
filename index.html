@@ -2795,15 +2795,31 @@
                  render only when the day is EXPANDED (=== false). -->
             <template x-if="dayCollapsedByDay[group.key] === false">
             <div class="meal-plan-day-body">
-            <template x-for="(entry, i) in group.entries" :key="entry.id">
+            <!-- quick 260819-d92 — the dish loop renders in FIXED TYPE ORDER
+                 (Main, Side, Salad, any other non-blank type, blank-typed LAST)
+                 instead of the order the dishes were added, so the operator can
+                 read the day's shape top-to-bottom. orderedDayEntries returns a
+                 new array of THE SAME entry references, so every dish control
+                 below still acts on the dish the operator clicked. STORED and
+                 SYNCED order are untouched — this is display-only, there is no
+                 write path. Multiple dishes of a type and none of a type are
+                 both fine; nothing is deduped, dropped, added or renamed. -->
+            <template x-for="(entry, i) in orderedDayEntries(group.entries)" :key="entry.id">
           <div class="meal-plan-entry-block">
             <!-- F7 (quick 260625-itm) — mono uppercase typegroup label (specimen
                  `.typegroup-label`) heads each TYPE group within a day. Rendered as a
-                 GROUP-BREAK header: shown only when this entry's type differs from the
-                 previous entry's (i === 0 OR prev type !== this type). Driven purely by
-                 entry.type (CSS uppercases it — data not mutated); does NOT reorder/sort
-                 entries or touch :key. The x-for now exposes the index i for the break test. -->
-            <template x-if="entry.type && (i === 0 || (group.entries[i-1] && group.entries[i-1].type !== entry.type))">
+                 GROUP-BREAK header: shown only for the FIRST dish of each type run.
+                 quick 260819-d92 — the break test now runs against the type-ORDERED
+                 array via startsDayTypeGroupAt, and is CASE/WHITESPACE-INSENSITIVE, so
+                 a day holding both `Main` and lowercase `main` shows ONE "MAIN" label
+                 rather than two adjacent ones (the CSS uppercases the text, so a
+                 case-sensitive test looked like a duplicate). It is handed the
+                 unordered entries on purpose — the helper orders them internally, so
+                 the label can never be computed against a different order than the
+                 loop. Blank-typed dishes get no label (unchanged). Still driven purely
+                 by entry.type for the TEXT (CSS uppercases it — data not mutated) and
+                 still does not touch :key. -->
+            <template x-if="startsDayTypeGroupAt(group.entries, i)">
               <p class="meal-plan-typegroup-label" x-text="entry.type"></p>
             </template>
           <div class="meal-plan-recipe">
