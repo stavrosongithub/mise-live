@@ -4098,8 +4098,8 @@
          @click.self="recentChangesOpen = false">
       <!-- INTEG-03: a NEUTRAL modal on the shared conventions — inherits the
            petrol-ink .modal backdrop + surface-2 .modal-content card at the
-           --modal-sm width tier (short who/what/when list, like the restore
-           prompt; NO bare max-width). The .recent-changes-modal marker scopes the
+           --modal-sm width tier (short who/what/when list; NO bare max-width).
+           The .recent-changes-modal marker scopes the
            list-row typography (who=ink <strong>, what=ink-muted, mono timestamp)
            without touching the shared server-import list. Class-only change. -->
       <div class="modal-content recent-changes-modal">
@@ -5261,44 +5261,6 @@
               <span x-show="merging" x-cloak>Saving…</span>
             </button>
           </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- REVIEW-09 / D-42 (Plan 03-04) — restore-prompt modal.
-         REUSES the shipped `.modal` + `.modal-content` scaffold. Shown on
-         page load when a previous session left an inflight slot in
-         localStorage. Two explicit actions:
-           - "Start fresh"  → dismissInflight() clears the slot, dismisses
-                              modal, form stays empty.
-           - "Resume editing" → restoreInflight() repopulates rawText + form
-                              with fresh _key allocations and warps the
-                              state machine to REVIEWING.
-         Escape key is a NO-OP (UI-SPEC Interaction Contract — diverges from
-         the settings modal's escape-closes behavior; the user must
-         explicitly choose). Default keyboard focus on "Start fresh"
-         (x-init="$el.focus()") protects against accidental Enter-key
-         resume of stale state. -->
-    <div class="modal restore-prompt" x-show="restorePromptOpen" x-cloak
-         @click.self="dismissInflight()">
-      <div class="modal-content">
-        <h2>Resume your in-progress review?</h2>
-        <!-- 03-REVIEW WR-01 — x-text writes via textContent which does NOT
-             decode HTML entities. The previous `&quot;` literals rendered
-             as visible 6-char strings. Use real Unicode curly quotes
-             (U+201C / U+201D) so the modal copy reads "Hummus" instead of
-             &quot;Hummus&quot;. The fallback branch also uses curly quotes
-             for visual consistency. -->
-        <p>You had edits in progress on <span class="restore-recipe-name" x-text="inflightRestorable && inflightRestorable.form && inflightRestorable.form.header ? ('“' + (inflightRestorable.form.header.name || 'Untitled recipe') + '”') : '“Untitled recipe”'"></span>. Would you like to pick up where you left off, or start fresh?</p>
-        <p class="help">Your edits are saved in this browser only. Closing this tab clears them.</p>
-        <div class="modal-buttons">
-          <button type="button"
-                  class="start-fresh-btn"
-                  x-effect="if (restorePromptOpen) $nextTick(() => $el.focus())"
-                  @click="dismissInflight()">Start fresh</button>
-          <button type="button"
-                  class="approve-btn"
-                  @click="restoreInflight()">Resume editing</button>
         </div>
       </div>
     </div>

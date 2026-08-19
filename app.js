@@ -419,11 +419,7 @@ const STATES = Object.freeze({
 
 // transitions[fromState] = Set<allowedToState>
 const TRANSITIONS = {
-  // REVIEW-09 / D-42 — 'reviewing' added to idle's allow-list so the
-  // restore-on-load action can warp from IDLE into REVIEWING via the
-  // canonical state-machine entry (not a direct this.state assignment).
-  // The restore-prompt is a real transition, documented in the table.
-  idle:       new Set(['preflight', 'error', 'reviewing']),
+  idle:       new Set(['preflight', 'error']),
   preflight:  new Set(['calling', 'error', 'idle']),
   calling:    new Set(['validating', 'error']),
   validating: new Set(['reviewing', 'resolving', 'error']),
@@ -433,19 +429,6 @@ const TRANSITIONS = {
   approved:   new Set(['idle']),
   error:      new Set(['idle', 'preflight'])
 };
-
-// ----------------------------------------------------------------------------
-// REVIEW-09 / D-42 (Plan 03-04) — single localStorage slot key
-// ----------------------------------------------------------------------------
-// In-flight review persistence: ONE slot per browser profile. On parse-success
-// and every subsequent form edit, a debounced (750ms — D-43) write snapshots
-// rawText + form (header + rows stripped of _key/_needsFullReview) +
-// recipeIdSuggestion + version + timestamp. On page load, init() reads this
-// slot and offers the user a Resume-or-start-fresh modal (D-42).
-//
-// Naming follows the existing recipe_ingest_<purpose> convention used by
-// apiKey / model / system_prompt_override / conversions_json_override.
-const INFLIGHT_REVIEW_KEY = 'recipe_ingest_inflight_review';
 
 // quick 260615-dap — meal-plan persistence slot. Holds a MINIMAL projection of
 // the plan ONLY: an array of { recipe_id, servings, collapsed }. NEVER recipe
@@ -457,7 +440,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '480015d 2026-08-19';
+const APP_VERSION = '3fe4a45 2026-08-19';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -1503,7 +1486,7 @@ function blankRow(form) {
     // quick 260607-bru — transient session-only review marker. Confirming a row
     // sets this true (collapses it to a one-liner + drops it to the sort bottom);
     // any edit re-opens it. Dropped on write like _key (allow-list serializers
-    // never see it — see persistInflight strip + toJoinCsvRow columns:).
+    // never see it — see toJoinCsvRow columns:).
     _confirmed: false,
     line_order: nextLineOrder,
     ingredient_id: null,
@@ -1674,8 +1657,7 @@ function tryAddFlaggedField(row, field, reason) {
   // 03-REVIEW WR-06 — ALWAYS reflect the current length, idempotently. The
   // previous "only flip _needsFullReview when our own push crosses the cap"
   // logic missed the cap-3 state when the row already arrived with 4+
-  // entries (e.g. from a restored payload that bypassed Stage 3, or a
-  // future code path that bypasses this helper). Computing
+  // entries (e.g. a future code path that bypasses this helper). Computing
   // _needsFullReview from the actual flagged_fields.length makes the
   // helper safe to call on any row at any time — Stage 3's invariant
   // re-converges on every call.
@@ -2047,7 +2029,7 @@ Alpine.data('app', () => ({
     // pushConflictOffer/lockTakeoverConfirmOpen/overwriteConfirmOpen/recentChangesOpen.
     // Phase 16 — the resident edit modal (editingResidentAppid !== null) joins the
     // no-stacking gate so a second top-level modal can't open over it.
-    return this.editingRecipeId !== null || this.editingIngredientId !== null || this.currentUnknownKey !== null || this.addNewTargetKey !== null || this.previewOpen || this.shoppingExportOpen || this.checkStockExportOpen || this.trayExportOpen || this.serverImportOpen || this.restorePromptOpen || this.mergeRestoreOffer || this.pushConflictOffer || this.mealPlanPickerOpen || this.lockTakeoverConfirmOpen || this.overwriteConfirmOpen || this.recentChangesOpen || this.editingResidentAppid !== null || this.trayModalDay !== '' || this.prepModalDay !== '' || this.allergenModalDay !== '';
+    return this.editingRecipeId !== null || this.editingIngredientId !== null || this.currentUnknownKey !== null || this.addNewTargetKey !== null || this.previewOpen || this.shoppingExportOpen || this.checkStockExportOpen || this.trayExportOpen || this.serverImportOpen || this.mergeRestoreOffer || this.pushConflictOffer || this.mealPlanPickerOpen || this.lockTakeoverConfirmOpen || this.overwriteConfirmOpen || this.recentChangesOpen || this.editingResidentAppid !== null || this.trayModalDay !== '' || this.prepModalDay !== '' || this.allergenModalDay !== '';
   },
 
   // Phase 10 — read-fresh-per-call githubStore cfg. Assembles {owner, repo,
@@ -3225,8 +3207,7 @@ Alpine.data('app', () => ({
   //   assigned). Each entry is { reason_code, note }. Drives the review-pane
   //   banner only. NON-BLOCKING: gates nothing (same posture as
   //   duplicateCandidates). Never written to disk — the column-driven header
-  //   writer has no column for these flags — and reset on new parse + startFresh
-  //   + restoreInflight.
+  //   writer has no column for these flags — and reset on new parse + startFresh.
   reviewFlags: [],
   // reviewFlagsDismissed — true once the user dismisses the review-pane banner.
   reviewFlagsDismissed: false,
@@ -4044,25 +4025,15 @@ Alpine.data('app', () => ({
   matchedHighlightKey: null,
   matchedLineIndex: null,
 
-  // ---------- REVIEW-09 / REVIEW-10 (Plan 03-04) ----------
-  // In-flight review persistence (REVIEW-09) + recipe_id recompute (REVIEW-10).
+  // ---------- REVIEW-10 (Plan 03-04) ----------
+  // recipe_id recompute (REVIEW-10).
   //
-  // inflightPersistTimer — setTimeout handle for the 750ms debounce (D-43).
-  //   scheduleInflightPersist() clears + re-arms; the settled timer calls
-  //   persistInflight() which snapshots to localStorage.
-  // inflightRestorable — parsed restore-candidate payload from localStorage,
-  //   populated by init() when the slot exists and shape-validates. Drives
-  //   the restore-prompt's recipe-name preview.
-  // restorePromptOpen — boolean controlling the restore-prompt modal x-show.
   // recipeIdSuggestion — editable form value for the recipe_id (REVIEW-10).
   //   Populated on parse-success from maxRecipeIdAtSessionStart + 1; bound
   //   to a header input via x-model.number; recomputed from disk at Approve.
   // recipeIdRecomputeNotice — { newSuggestion, oldFormValue } when the
   //   Approve-time disk recompute reveals a mismatch; null otherwise. Drives
   //   the inline notice with "Use {N}" / "Keep my number" buttons.
-  inflightPersistTimer: null,
-  inflightRestorable: null,
-  restorePromptOpen: false,
   recipeIdSuggestion: null,
   recipeIdRecomputeNotice: null,
 
@@ -4097,10 +4068,8 @@ Alpine.data('app', () => ({
     // quick 260628-mbq — on-load Settings auto-open REMOVED (user request). New
     // users are guided by the onboarding landing's Connect/Add-key buttons; the
     // no-key Parse path stays gated/messaged. (Historically this auto-opened
-    // Settings on first run — SHELL-02 / 03-REVIEW WR-07 — gated on no-inflight
-    // so the restore prompt didn't stack with it; the matching restoreInflight /
-    // dismissInflight re-opens have also been removed. Settings now only opens on
-    // an explicit user action: the Settings nav item / the onboarding buttons.)
+    // Settings on first run — SHELL-02 / 03-REVIEW WR-07. Settings now only opens
+    // on an explicit user action: the Settings nav item / the onboarding buttons.)
 
     // Plan 07-03 — default the residents-panel date to LOCAL today. Build it from
     // a local Date's getFullYear/getMonth/getDate (NOT toISOString, which is UTC
@@ -4156,55 +4125,6 @@ Alpine.data('app', () => ({
     // Phase 1 explicitly does NOT attempt to restore a persisted directory
     // handle. D-15 accepts re-pick-on-refresh; persistence (RESEARCH §5c) is
     // deferred to a Phase 2 polish ticket.
-
-    // REVIEW-09 / D-42 (Plan 03-04) — restore-prompt branch. If a previous
-    // session left an inflight slot, parse + shape-validate it and queue the
-    // restore prompt. Per D-42-ambiguity-resolution (RESEARCH §4 Open Question
-    // 1) the prompt fires whenever the slot exists; we do NOT gate on a
-    // separate persisted-rawText match check (matches UI-SPEC modal copy).
-    // Corrupt-blob handling: JSON.parse throw OR version !== 1 OR malformed
-    // shape → removeItem + plain-language banner via parseError with 5s
-    // auto-dismiss (UI-SPEC Error State).
-    try {
-      const raw = localStorage.getItem(INFLIGHT_REVIEW_KEY);
-      if (raw) {
-        const payload = JSON.parse(raw);
-        if (payload && payload.version === 1 && payload.form && payload.form.header) {
-          this.inflightRestorable = payload;
-          this.restorePromptOpen = true;
-        } else {
-          // Wrong shape or future version — silently discard.
-          localStorage.removeItem(INFLIGHT_REVIEW_KEY);
-        }
-      }
-    } catch (_e) {
-      localStorage.removeItem(INFLIGHT_REVIEW_KEY);
-      this.parseError = "Your saved progress couldn't be read — starting fresh. (You can paste the recipe again to retry.)";
-      setTimeout(() => {
-        if (this.parseError && this.parseError.startsWith("Your saved progress")) {
-          this.parseError = '';
-        }
-      }, 5000);
-    }
-
-    // REVIEW-09 / D-42..D-43 (Plan 03-04) — Alpine.effect deep-tracking
-    // watcher. Touches every reactive read source the persistence layer
-    // cares about (form.header, form.rows via JSON.stringify deep-track per
-    // Alpine discussion #3922, rawText, recipeIdSuggestion) so any mutation
-    // schedules a debounced persist. The `if (this.form.header)` gate
-    // prevents the watcher from scheduling persists pre-parse (typing into
-    // the rawText textarea during paste mode is not in-flight review state).
-    Alpine.effect(() => {
-      // Touch the reactive properties the effect should track.
-      const _h = this.form.header;
-      const _r = this.form.rows.length;
-      // Deep-track every row's fields — JSON.stringify forces full traversal
-      // (the documented Alpine pattern for deep watchers).
-      JSON.stringify(this.form.rows);
-      const _t = this.rawText;
-      const _id = this.recipeIdSuggestion;
-      if (this.form.header) this.scheduleInflightPersist();
-    });
 
     // quick 260615-dap — restore the persisted meal plan (minimal projection)
     // BEFORE loadFromStore. It needs no disk read: name/type are refreshed and
@@ -8126,8 +8046,7 @@ Alpine.data('app', () => ({
    * current key (drives currentUnknown getter + modal x-show), resets
    * addNewMode to false (default state = top-3 + actions), and clears
    * addNewFormState so a fresh modal always starts with empty fields.
-   * Then schedules a focus on the first interactive button via $nextTick —
-   * matches the restore-prompt modal's focus pattern at index.html L685.
+   * Then schedules a focus on the first interactive button via $nextTick.
    *
    * @param {number} rowKey — the queue card's _key (matches row._key)
    */
@@ -15040,7 +14959,7 @@ Alpine.data('app', () => ({
       // (D2), NON-BLOCKING, populated from the validated header.review_flags
       // (assigned above at this.form.header = value.header). Reset to [] first,
       // then populate defensively (empty array when absent). Reset on new parse
-      // (here) + startFresh + restoreInflight.
+      // (here) + startFresh.
       this.reviewFlags = [];
       this.reviewFlagsDismissed = false;
       if (Array.isArray(this.form.header?.review_flags)) {
@@ -15055,7 +14974,7 @@ Alpine.data('app', () => ({
       // call transition(STATES.REVIEWING) themselves. When NO unknowns
       // exist, stay on Phase 2's existing path (validating → reviewing).
       // Loose `== null` catches both null and undefined per RESEARCH
-      // Pitfall 8 (defense-in-depth against restore-from-localStorage drift).
+      // Pitfall 8.
 
       // quick 260610-9yz — auto-collapse the raw pane on parse SUCCESS so the
       // form reflows to near-full width. This sits inside the try, AFTER the
@@ -15441,24 +15360,6 @@ Alpine.data('app', () => ({
       try {
         await this.buildDuplicateIndex();
       } catch (_e) { /* fail-open — duplicate nudge stays as-is */ }
-      // REVIEW-09 / D-44 (Plan 03-04) — clear the in-flight slot on Approve
-      // success. Placed AFTER the success state set so a failed write does
-      // NOT clear the slot (the user can retry from in-memory state on the
-      // same page, or refresh + restore).
-      localStorage.removeItem(INFLIGHT_REVIEW_KEY);
-      // 03-REVIEW CR-02 — cancel any pending debounced persist timer. Without
-      // this, the Alpine.effect's deep-track of form.rows fires on the
-      // `this.form.header.allergens = ...` mutation above (line ~1862),
-      // starting a 750ms debounce. The synchronous removeItem above runs,
-      // then 750ms later persistInflight() re-creates the slot — silently
-      // resurrecting the just-cleared inflight slot. Next page load offers
-      // to restore an already-approved recipe (the exact D-44 regression).
-      // The `this.approved = true` guard below in persistInflight() is the
-      // belt; this timer-clear is the braces.
-      if (this.inflightPersistTimer) {
-        clearTimeout(this.inflightPersistTimer);
-        this.inflightPersistTimer = null;
-      }
       // CR-01 — advance the state machine to APPROVED on the happy path.
       // The parse() re-entry guard accepts APPROVED as a valid prior state,
       // so the next Parse (after a startFresh()) is permitted to begin.
@@ -15567,178 +15468,6 @@ Alpine.data('app', () => ({
   clearHighlight() {
     this.matchedHighlightKey = null;
     this.matchedLineIndex = null;
-  },
-
-  // ----- REVIEW-09 / D-42..D-45 (Plan 03-04) — in-flight persistence -----
-  // Debounced write of in-progress review state to localStorage so a mid-review
-  // browser refresh recovers via the restore-prompt modal. 750ms debounce per
-  // D-43. Single slot key per D-42. Quota errors silently console.warn'd per
-  // D-45 + UI-SPEC Error State.
-  //
-  // Pitfall 18 (load-bearing for Phase 4): this layer reads form directly.
-  // Phase 4 modals MUST mutate form directly, NOT a draft layer. If Phase 4
-  // introduces a parallel "draft" state that commits on Save, a mid-modal
-  // refresh loses every unsaved entry — exactly the regression Pitfall 18
-  // warns against. The persistence layer NEVER opens/closes modals, NEVER
-  // intercepts edits; it is a read-the-store derived backup.
-  scheduleInflightPersist() {
-    if (this.inflightPersistTimer) clearTimeout(this.inflightPersistTimer);
-    this.inflightPersistTimer = setTimeout(() => {
-      this.persistInflight();
-      this.inflightPersistTimer = null;
-    }, 750);
-  },
-
-  // Pitfall 18 (load-bearing for Phase 4): this layer reads form directly.
-  // Phase 4 modals MUST mutate form directly, NOT a draft layer.
-  persistInflight() {
-    // Nothing to persist pre-parse — Alpine.effect's form.header gate also
-    // suppresses scheduling, but this defensive guard covers programmatic
-    // callers (e.g. a future "save now" button) and the brief window between
-    // form.header being set and Alpine's first re-render firing the effect.
-    if (!this.form.header) return;
-    // 03-REVIEW CR-02 — D-44: the slot is cleared on Approve success and must
-    // STAY cleared. The timer-clear in approve() handles the in-flight
-    // debounce; this guard handles any future code path that mutates a
-    // tracked field AFTER `approved = true` (e.g. the form is locked but a
-    // post-approve effect re-fires the watcher). Both guards must remain in
-    // place — removing either re-opens the inflight-restore-after-approve
-    // regression.
-    if (this.approved) return;
-
-    // Strip runtime markers (_key, _needsFullReview) from each row per
-    // UI-SPEC Open Implementation Note 4. _key is re-allocated fresh via
-    // nextRowKey() on restore; _needsFullReview is derived runtime state.
-    //
-    // Phase 4 / Plan 04-05 / D-53 polish — extend the payload to carry
-    // inSessionNewIngredients[] and flagSourcesByRowKey across a refresh.
-    // Without this, a user who Adds a new ingredient then refreshes BEFORE
-    // Approve loses the in-memory master entry (and the form row referencing
-    // it dangles with a stale ingredient_id). Version stays at 1 because the
-    // new fields are backward-compatible: older payloads simply lack the
-    // fields → restoreInflight treats missing fields as empty.
-    //
-    // Note on _key correspondence: flagSourcesByRowKey is keyed by the
-    // current-session _key values. On restore, _key is re-allocated fresh
-    // (nextRowKey() generates new ids), so the persisted flagSourcesByRowKey
-    // would normally point at stale keys. We persist anyway and accept the
-    // staleness — the new-ingredient + coverage attribution survives only
-    // for rows whose _key happens to match; in the typical loss-edge case
-    // (refresh-during-review), the user's primary concern is the form +
-    // master content, not the per-row source attribution. Rebuilding key
-    // correspondence would require persisting a stable row id which Phase 3
-    // D-25 explicitly avoided.
-    const payload = {
-      version: 1,
-      rawText: this.rawText,
-      form: {
-        header: this.form.header,
-        // quick 260607-bru — _confirmed is a transient review marker (parity
-        // with _key/_needsFullReview): stripped here so it never persists.
-        // Restored rows correctly start unconfirmed (a refresh mid-review
-        // re-opens everything for re-checking; no stale "Confirmed" survives a
-        // reload). restoreInflight needs no change — rows arrive without
-        // _confirmed → falsy → unconfirmed.
-        rows: this.form.rows.map(({ _key, _needsFullReview, _confirmed, ...rest }) => rest)
-      },
-      recipeIdSuggestion: this.recipeIdSuggestion,
-      inSessionNewIngredients: this.inSessionNewIngredients,
-      flagSourcesByRowKey: this.flagSourcesByRowKey,
-      timestamp: Date.now()
-    };
-    try {
-      localStorage.setItem(INFLIGHT_REVIEW_KEY, JSON.stringify(payload));
-    } catch (e) {
-      // QuotaExceededError or similar — silent fail per D-45 + UI-SPEC Error
-      // State "localStorage quota exceeded on debounced save". The user's
-      // edits remain in memory; next 750ms settle re-attempts. NEVER surface
-      // to the user — persistence is best-effort, the in-memory store is
-      // the source of truth.
-      console.warn('Inflight-review persist failed (likely quota):', e && e.message ? e.message : e);
-    }
-  },
-
-  // Restore-prompt → "Resume editing" click. Re-allocates fresh _key on every
-  // row per UI-SPEC Open Implementation Note 4 (the persisted blob STRIPS
-  // _key on serialize); defensively initializes missing flagged_fields to []
-  // (consistent with validate.js Stage 3); warps the state machine to
-  // REVIEWING via the canonical transition() call (idle → reviewing was
-  // added to TRANSITIONS above to make this legal).
-  restoreInflight() {
-    if (!this.inflightRestorable) return;
-    const p = this.inflightRestorable;
-    this.rawText = p.rawText || '';
-    this.form.header = p.form.header;
-    // 03-REVIEW WR-03 — re-apply validate.js Stage 3's _needsFullReview
-    // invariant on every restored row. The persisted blob strips
-    // _needsFullReview (it's a runtime marker — UI-SPEC Open Implementation
-    // Note 4), so on restore each row arrives without the flag. If the user
-    // persisted a row with > MAX_FLAGGED_FIELDS_PER_ROW_APP (3) flagged_fields
-    // entries — possible if the LLM emitted 5 and the user hadn't trimmed —
-    // the per-field yellow borders render instead of the single "Needs full
-    // review" pill, silently breaking D-35's cap-3 suppression contract.
-    // Compute _needsFullReview from the restored flagged_fields.length so
-    // the UI matches Stage 3's invariant.
-    this.form.rows = (p.form.rows || []).map(r => {
-      const flagged = Array.isArray(r.flagged_fields) ? r.flagged_fields : [];
-      return {
-        ...r,
-        _key: nextRowKey(),
-        flagged_fields: flagged,
-        _needsFullReview: flagged.length > MAX_FLAGGED_FIELDS_PER_ROW_APP
-      };
-    });
-    this.recipeIdSuggestion = p.recipeIdSuggestion ?? null;
-
-    // quick 260618-ihr — re-derive the instruction-standardization review flags
-    // from the restored header (parse-only / ephemeral; default [] when absent),
-    // mirroring how row state is re-derived above. reviewFlagsDismissed resets
-    // so the banner re-surfaces after a session restore.
-    this.reviewFlags = [];
-    this.reviewFlagsDismissed = false;
-    if (Array.isArray(p.form.header?.review_flags)) {
-      this.reviewFlags = p.form.header.review_flags;
-    }
-
-    // Phase 4 / Plan 04-05 / D-53 polish — rehydrate in-session new
-    // ingredients + flag-source attribution map. Append in-session adds onto
-    // ingredientMaster (dedupe by ingredient_id — the live master may
-    // already contain entries with overlapping ids if the user has
-    // re-loaded a folder where the master file grew on disk between
-    // persist and restore). Then call refreshFuse so subsequent unknown
-    // cards see the restored adds as fuzzy-match candidates.
-    this.inSessionNewIngredients = Array.isArray(p.inSessionNewIngredients)
-      ? p.inSessionNewIngredients
-      : [];
-    for (const ing of this.inSessionNewIngredients) {
-      if (!ing || ing.ingredient_id == null) continue;
-      if (!this.ingredientMaster.some(e => e.ingredient_id === ing.ingredient_id)) {
-        this.ingredientMaster.push(ing);
-      }
-    }
-    this.flagSourcesByRowKey = (p.flagSourcesByRowKey && typeof p.flagSourcesByRowKey === 'object' && !Array.isArray(p.flagSourcesByRowKey))
-      ? p.flagSourcesByRowKey
-      : {};
-    // Only call refreshFuse if a Fuse instance has been initialized (i.e.,
-    // the user has picked a CSV folder before; if not, the Fuse instance is
-    // still null and initFuse will run on pickCsvFolder later).
-    if (this.fuse) {
-      this.refreshFuse();
-    }
-
-    this.restorePromptOpen = false;
-    this.inflightRestorable = null;
-    this.transition(STATES.REVIEWING);
-    // quick 260628-mbq — Settings no longer auto-opens when the API key is missing (user request); the onboarding + gated Parse path handle this.
-  },
-
-  // Restore-prompt → "Start fresh" click. Clears the slot per D-44 and
-  // dismisses the prompt without restoring. Form state remains empty.
-  dismissInflight() {
-    localStorage.removeItem(INFLIGHT_REVIEW_KEY);
-    this.inflightRestorable = null;
-    this.restorePromptOpen = false;
-    // quick 260628-mbq — Settings no longer auto-opens when the API key is missing (user request); the onboarding + gated Parse path handle this.
   },
 
   // ----- REVIEW-10 / D-46 (Plan 03-04) — recipe_id recompute on Approve -----
@@ -17365,14 +17094,8 @@ Alpine.data('app', () => ({
     // resolve to a span in the new paste but to the wrong line).
     this.matchedHighlightKey = null;
     this.matchedLineIndex = null;
-    // REVIEW-09 / REVIEW-10 / Plan 03-04 — clear the in-flight slot and
-    // Phase 3 state on the explicit Start-fresh path (D-44 clears on (a)
-    // Approve success above, (b) explicit Start fresh here, and (c) restore-
-    // prompt → "Start fresh" via dismissInflight). Also clear the restore
-    // prompt + recipe_id state so the next paste starts clean.
-    localStorage.removeItem(INFLIGHT_REVIEW_KEY);
-    this.inflightRestorable = null;
-    this.restorePromptOpen = false;
+    // REVIEW-10 / Plan 03-04 — clear the recipe_id state on the explicit
+    // Start-fresh path so the next paste starts clean.
     this.recipeIdSuggestion = null;
     this.recipeIdRecomputeNotice = null;
     // Phase 5 / Plan 05-01 — close any open preview so a fresh paste starts

@@ -117,7 +117,7 @@
   --radius-card: 0.5rem;               /* cards / panels / inputs (was 4px) */
 
   /* --- MODAL WIDTH (same values — label tiers only) --- */
-  --modal-sm: min(31.4286rem, 92vw);   /* Settings / restore-prompt */
+  --modal-sm: min(31.4286rem, 92vw);   /* Settings */
   --modal-md: min(40rem, 92vw);        /* .modal-content-wide — unknown-ingredient / add-new / preview */
   --modal-lg: min(64.2857rem, 95vw);   /* .recipe-edit-modal-content */
 }
@@ -2401,26 +2401,10 @@ textarea {
 }
 
 /* ============================================================================
-   REVIEW-09 / D-42 (Plan 03-04) — restore-prompt modal recipe-name preview
-   ----------------------------------------------------------------------------
-   Additive ONLY — the restore-prompt modal REUSES the shipped .modal +
-   .modal-content scaffold (no new modal CSS). This single rule styles the
-   recipe-name span inside the modal body per UI-SPEC Typography: weight 500
-   (Medium — the 2-weight contract), size 1.05rem (Heading role). The span
-   sits inline within the surrounding body text; no display:block — the
-   sentence flows naturally and the heightened weight + size draws the eye
-   to the recipe identity the user is being asked to resume.
-   ============================================================================ */
-.modal.restore-prompt .modal-content p .restore-recipe-name {
-  font-weight: 500;
-  font-size: var(--fs-lg);
-}
-
-/* ============================================================================
    Phase 4 / Plan 04-02 — Unknown-ingredient queue panel + modal
    ----------------------------------------------------------------------------
    Additive ONLY — reuses the shipped .modal overlay scaffold and the
-   primary-CTA blue accent already locked for Approve / Resume editing.
+   primary-CTA blue accent already locked for Approve.
    ONE new geometry token (560px modal width). No new hues — all spacing /
    color tokens inherit from Phase 1/2/3 UI-SPEC. See 04-UI-SPEC.md §Spacing
    Scale, §Color, §Typography, and §Component Inventory for provenance.
@@ -2428,8 +2412,8 @@ textarea {
 
 /* ----- Wide-modal modifier (UI-SPEC §Component Inventory) -----
    Only the width differs from .modal-content at L131-L177; everything else
-   (padding, border-radius, shadow, background) inherits. Settings + restore-
-   prompt modals continue using the original 440px width — this modifier is
+   (padding, border-radius, shadow, background) inherits. Settings and the other
+   small modals continue using the original 440px width — this modifier is
    purely additive. */
 .modal-content.modal-content-wide {
   width: var(--modal-md);
@@ -3381,7 +3365,7 @@ textarea {
 
 /* quick 260625-vsw — the edit-ingredient modal as a raised-card with bands
    (specimen-modal.html .modal-head / .modal-body / .modal-foot). The
-   .modal-content shell (L508, shared with Settings/restore-prompt) becomes a
+   .modal-content shell (L508, shared with Settings) becomes a
    flex column with padding:0 ONLY for this modal (scoped via :has so the other
    modals keep their flat padding); the bands carry their own padding and the
    body scrolls. NO drop shadow (live DESIGN-LANGUAGE §4.3 — separation is
