@@ -23,7 +23,7 @@
 // ===========================================================================
 
 /**
- * SYNCED_SETTING_KEYS — the WHITELIST of the 14 kitchen-global settings that ride
+ * SYNCED_SETTING_KEYS — the WHITELIST of the 15 kitchen-global settings that ride
  * settings.json. This is the ONLY set of keys that can ever be built into / read
  * out of the synced doc.
  *
@@ -50,7 +50,10 @@ export const SYNCED_SETTING_KEYS = Object.freeze([
   'weatherLon',
   'codaExportDocId',
   'codaResidencyTableId',
-  'codaOnboardingTableId'
+  'codaOnboardingTableId',
+  // quick 260820-e9v — the recipe Chat prompt override. Non-secret prompt text,
+  // the same class as the three overrides above.
+  'revisePromptOverride'
 ]);
 
 const SYNCED_SETTING_KEY_SET = new Set(SYNCED_SETTING_KEYS);

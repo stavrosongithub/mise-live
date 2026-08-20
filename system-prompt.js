@@ -36,10 +36,10 @@
 //
 //   REVISE_PROMPT — const string. Phase 27 / RCHAT-02. The CACHED system
 //     block 1 for the recipe Chat pane: revision rules + the ingredient
-//     master, with literal placeholder tokens. NOT exposed in Settings →
-//     Advanced (unlike DEFAULT_PROMPT_TEMPLATE).
+//     master, with literal placeholder tokens. Exposed in Settings →
+//     Advanced as the "Chat prompt" (quick 260820-e9v).
 //
-//   buildRevisePrompt(ingredientMaster, cuisineEnum, proteinEnum) —
+//   buildRevisePrompt(ingredientMaster, cuisineEnum, proteinEnum, templateString) —
 //     function. Substitutes REVISE_PROMPT's tokens; the result is the
 //     cached block-1 string. Byte-stable across calls with equal input.
 //
@@ -547,12 +547,13 @@ Emit ONE JSON object matching the response schema: a reply string and an ops arr
  * @param {Array<{ ingredient_id: number, ingredient_name: string, allergens: string[] }>} ingredientMaster
  * @param {string[]} cuisineEnum — the closed cuisine vocabulary.
  * @param {string[]} proteinEnum — the closed protein vocabulary.
+ * @param {string} [templateString] — the template to substitute into; defaults to REVISE_PROMPT (the operator's Settings → Advanced override is passed here — quick 260820-e9v).
  * @returns {string} the cached block-1 text (no per-turn bytes).
  */
-export function buildRevisePrompt(ingredientMaster, cuisineEnum, proteinEnum) {
+export function buildRevisePrompt(ingredientMaster, cuisineEnum, proteinEnum, templateString = REVISE_PROMPT) {
   const list = (arr) => (Array.isArray(arr) ? arr : []).join(', ');
 
-  let out = REVISE_PROMPT;
+  let out = templateString;
   out = out.split('{ROW_WRITABLE}').join(list(ROW_WRITABLE));
   out = out.split('{HEADER_WRITABLE}').join(list(HEADER_WRITABLE));
   out = out.split('{UNIT_METRIC_ENUM}').join(list(UNIT_METRIC_ENUM));

@@ -4183,7 +4183,7 @@
                     @click="settingsSection = 'data'">Data<small>export · import · reset</small></button>
             <button type="button" class="meal-list-tab"
                     :class="settingsSection === 'advanced' && 'meal-list-tab-active'"
-                    @click="settingsSection = 'advanced'">Advanced<small>prompt · conversions</small></button>
+                    @click="settingsSection = 'advanced'; refreshAdvancedDraftsIfClean()">Advanced<small>prompt · conversions</small></button>
           </nav>
 
           <!-- RIGHT PANEL — one section shown at a time -->
@@ -4676,7 +4676,7 @@
                    API key + model selection; the API-key Clear lives here too. -->
               <div class="settings-danger-zone">
                 <p class="settings-sec-eyebrow">Danger zone</p>
-                <p class="help" style="margin-top:0;">Reset all wipes the system-prompt and conversions overrides back to defaults (keeps your API key and model). Clear removes your saved Anthropic API key. Neither touches your CSV data.</p>
+                <p class="help" style="margin-top:0;">Reset all wipes every override on this page — system prompt, chat prompt, conversions and allergen keywords — back to defaults (keeps your API key and model). Clear removes your saved Anthropic API key. Neither touches your CSV data.</p>
                 <button type="button" @click="resetAllToDefault()">Reset all to default</button>
                 <button type="button" @click="clearApiKey(); shown = {}" :disabled="!apiKey">Clear API key</button>
               </div>
@@ -4691,9 +4691,15 @@
               <h3 class="settings-sec-h">Power-user editors</h3>
               <p class="settings-adv-note">⚠ These edit Mise's extraction behaviour. Unlike the rest of Settings, they save explicitly — edit, then Save.</p>
 
+              <!-- quick 260820-e9v — the textarea binds to a UI-ONLY DRAFT seeded from
+                   (override || bundled default), so the box shows the prompt actually in
+                   force. The :placeholder is now only reachable if a bundled default
+                   failed to load. -->
               <div class="settings-adv-editor">
                 <span class="settings-adv-label">System prompt</span>
-                <textarea x-model="systemPromptOverride"
+                <p class="help">The full recipe-extraction prompt sent to Claude when you import a NEW recipe — including the INSTRUCTION STANDARDIZATION rules that rewrite a recipe's method into the house format.</p>
+                <p class="help" x-text="advancedEditorStatus('systemPrompt')"></p>
+                <textarea x-model="systemPromptDraft"
                           rows="12"
                           :placeholder="defaultSystemPrompt.slice(0, 200) + '…'"></textarea>
                 <div class="advanced-buttons">
@@ -4701,9 +4707,25 @@
                   <button type="button" @click="resetSystemPromptOverride()">Reset to default</button>
                 </div>
               </div>
+              <!-- quick 260820-e9v — fourth editor: the recipe Chat prompt (REVISE_PROMPT).
+                   Sits next to the System prompt because the two prompts belong together;
+                   the two JSON files follow. -->
+              <div class="settings-adv-editor">
+                <span class="settings-adv-label">Chat prompt</span>
+                <p class="help">The prompt behind the <strong>Chat</strong> tab in the recipe editor, where Claude proposes edit intents to an EXISTING recipe — distinct from the System prompt above, which is used when importing a NEW one. Editing it re-bills the cached prompt prefix on the next chat turn; that is expected.</p>
+                <p class="help" x-text="advancedEditorStatus('revisePrompt')"></p>
+                <textarea x-model="revisePromptDraft"
+                          rows="12"
+                          :placeholder="defaultRevisePrompt.slice(0, 200) + '…'"></textarea>
+                <div class="advanced-buttons">
+                  <button type="button" @click="saveRevisePromptOverride()">Save</button>
+                  <button type="button" @click="resetRevisePromptOverride()">Reset to default</button>
+                </div>
+              </div>
               <div class="settings-adv-editor">
                 <span class="settings-adv-label">conversions.json</span>
-                <textarea x-model="conversionsJsonOverride"
+                <p class="help" x-text="advancedEditorStatus('conversions')"></p>
+                <textarea x-model="conversionsDraft"
                           rows="12"
                           :placeholder="defaultConversionsJsonText.slice(0, 200) + '…'"></textarea>
                 <div class="advanced-buttons">
@@ -4717,7 +4739,8 @@
                    override + Save/Reset). -->
               <div class="settings-adv-editor">
                 <span class="settings-adv-label">allergen-keywords.json</span>
-                <textarea x-model="allergenKeywordsOverride"
+                <p class="help" x-text="advancedEditorStatus('allergenKeywords')"></p>
+                <textarea x-model="allergenKeywordsDraft"
                           rows="12"
                           :placeholder="defaultAllergenKeywordsText.slice(0, 200) + '…'"></textarea>
                 <div class="advanced-buttons">

@@ -53,7 +53,7 @@ window.Alpine = Alpine;
 // search runs in <1ms (RESEARCH §Standard Stack).
 import Fuse from 'https://esm.sh/fuse.js@7.3.0';
 import { buildRecipeSchema, buildClassifySchema, buildReviseSchema, assertNoOpenObjects, FSA14, REASON_CODE_ENUM, FLAGGED_FIELD_NAME_ENUM, REVIEW_FLAG_ENUM } from './schema.js';
-import { buildSystemPrompt, DEFAULT_PROMPT_TEMPLATE, buildRevisePrompt, buildRecipeContextBlock } from './system-prompt.js';
+import { buildSystemPrompt, DEFAULT_PROMPT_TEMPLATE, buildRevisePrompt, REVISE_PROMPT, buildRecipeContextBlock } from './system-prompt.js';
 import { generateSalt, buildUserMessage } from './prompt-utils.js';
 // Phase 27 (Plan 27-02) — the PURE chat safety core: whole-proposal rejection,
 // the writable-field allow-list, closed-vocabulary validation, the D-12 paired-
@@ -440,7 +440,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '3fe4a45 2026-08-19';
+const APP_VERSION = '6bc6211 2026-08-20';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -2088,6 +2088,9 @@ Alpine.data('app', () => ({
   //   defaultConversionsJsonText — raw text fetched from ./conversions.json.
   defaultSystemPrompt: '',
   defaultConversionsJsonText: '',
+  // quick 260820-e9v — the bundled default for the recipe Chat prompt (the
+  // REVISE_PROMPT constant from system-prompt.js; a constant, not a fetch).
+  defaultRevisePrompt: '',
   // Phase 4 / Plan 04-04 / D-56 — bundled-default allergen-keyword mapping.
   // Fetched at init() from ./allergen-keywords.json (silent-fail to '' on
   // load error; the currentAllergenKeywords getter fail-opens to []).
@@ -2102,6 +2105,23 @@ Alpine.data('app', () => ({
   // are read at parse time via the getter, not cached at session start; empty
   // string treated as "use the bundled default", not as malformed input).
   allergenKeywordsOverride: localStorage.getItem('recipe_ingest_allergen_keywords_override') ?? '',
+  // quick 260820-e9v — UI-ONLY draft buffer for the Settings -> Advanced "System
+  // prompt" editor. The textarea x-models against THIS, not the override, so the
+  // box can show the EFFECTIVE text (override || bundled default) without a
+  // keystroke implying a saved override. NEVER persisted to localStorage and
+  // NEVER added to SYNCED_SETTING_KEYS / _buildSettingsDoc — it is transient
+  // editor state, not a setting (T-e9v-01).
+  systemPromptDraft: '',
+  // quick 260820-e9v — the recipe Chat prompt override + its UI-only draft. The
+  // override IS synced (a non-secret prompt string, whitelisted alongside the
+  // other three); the draft is NOT.
+  revisePromptOverride: localStorage.getItem('recipe_ingest_revise_prompt_override') ?? '',
+  revisePromptDraft: '',
+  // quick 260820-e9v — the same UI-ONLY draft buffers for the two JSON editors.
+  // Same guarantees: no localStorage slot, not in SYNCED_SETTING_KEYS, not in
+  // _buildSettingsDoc's values map (T-e9v-01).
+  conversionsDraft: '',
+  allergenKeywordsDraft: '',
   // Collapsed by default per D-21 — power-user surface, not in the user's way
   // for the common case.
   advancedOpen: false,
@@ -2112,6 +2132,14 @@ Alpine.data('app', () => ({
   // a page refresh (Pitfall R — override-read-timing).
   get currentSystemPrompt() {
     return this.systemPromptOverride || this.defaultSystemPrompt;
+  },
+
+  // quick 260820-e9v — getter: which chat/revise prompt does the next chat turn
+  // use? Override wins when non-empty; otherwise the bundled REVISE_PROMPT.
+  // A GETTER for the same reason as currentSystemPrompt (Pitfall R): a Save
+  // followed by a chat turn uses the new value WITHOUT a page refresh.
+  get currentRevisePrompt() {
+    return this.revisePromptOverride || this.defaultRevisePrompt;
   },
 
   // Getter: which conversions object does the next Parse use?
@@ -3633,7 +3661,7 @@ Alpine.data('app', () => ({
 
   // quick 260712-i1y — synced kitchen-global settings (settings.json) on the SAME
   // safe OPTIONAL_JSON_FILES LWW rail as suppliers.json / residents_roster.json,
-  // but merged PER-KEY (each of the 14 whitelisted keys carries its own editedAt).
+  // but merged PER-KEY (each of the 15 whitelisted keys carries its own editedAt).
   // `_settingsSnapshotSha` is the cached blob sha (undefined = CREATE on the first
   // push; present = UPDATE thereafter, mirroring _suppliersSnapshotSha). NEVER the
   // fragile meal-plan 3-way merge. `settingsEditedAt` is the device-local per-key
@@ -4096,6 +4124,7 @@ Alpine.data('app', () => ({
     // currentConversions getter returning {}) and the override path remains
     // available.
     this.defaultSystemPrompt = DEFAULT_PROMPT_TEMPLATE;
+    this.defaultRevisePrompt = REVISE_PROMPT;   // quick 260820-e9v — a bundled constant, not a fetch
     try {
       const resp = await fetch('./conversions.json');
       if (!resp.ok) {
@@ -4121,6 +4150,11 @@ Alpine.data('app', () => ({
     } catch (_e) {
       console.warn('allergen-keywords.json load failed');
     }
+
+    // quick 260820-e9v — seed the Settings -> Advanced draft buffers now that every
+    // bundled default is populated, so the editors show their effective text
+    // (override || default) the first time Advanced is opened.
+    this.refreshAdvancedDrafts();
 
     // Phase 1 explicitly does NOT attempt to restore a persisted directory
     // handle. D-15 accepts re-pick-on-refresh; persistence (RESEARCH §5c) is
@@ -5526,7 +5560,7 @@ Alpine.data('app', () => ({
   // touches mealplan-sync.js / meal_plan.json.
 
   /**
-   * _buildSettingsDoc — gather the CURRENT values of the 14 whitelisted synced keys
+   * _buildSettingsDoc — gather the CURRENT values of the 15 whitelisted synced keys
    * from the live Alpine fields into a values-by-key object, then hand it to the pure
    * buildSettingsDoc alongside this.settingsEditedAt (the per-key clock). The values
    * map is assembled key-by-key from named fields — there is deliberately NO secret
@@ -5545,6 +5579,7 @@ Alpine.data('app', () => ({
       systemPromptOverride: this.systemPromptOverride ?? '',
       conversionsJsonOverride: this.conversionsJsonOverride ?? '',
       allergenKeywordsOverride: this.allergenKeywordsOverride ?? '',
+      revisePromptOverride: this.revisePromptOverride ?? '',   // quick 260820-e9v — whitelisted AND here, or it is never pushed
       weatherLocation: this.weatherLocation ?? '',
       weatherLat: this.weatherLat ?? '',
       weatherLon: this.weatherLon ?? '',
@@ -5637,18 +5672,61 @@ Alpine.data('app', () => ({
           localStorage.setItem(PANTRY_SECTIONS_KEY, JSON.stringify(cleaned));
           break;
         }
-        case 'systemPromptOverride':
-          this.systemPromptOverride = String(value ?? '');
-          localStorage.setItem('recipe_ingest_system_prompt_override', this.systemPromptOverride);
+        // quick 260820-e9v — the FOUR advanced overrides are DRAFT-SAFE: cleanliness
+        // is captured BEFORE the assignment (computing it afterwards always reads
+        // dirty and would silently disable the refresh), and only a CLEAN box is
+        // re-seeded — an incoming sync never destroys text the user is typing.
+        // Gap closure WR-01: the lookup and the seed both go through the shared
+        // helpers (_advancedEditorIsClean / refreshAdvancedDrafts) rather than
+        // being hand-rolled here, so adding a fifth editor stays ONE map entry.
+        //
+        // Gap closure WR-03: a winning override value is TRUSTED as already
+        // validated by the origin device — we deliberately do NOT re-run the
+        // save-path validators (they would surface a parseError banner on a value
+        // the user never typed here) — but the 100,000-character DoS cap
+        // (T-e9v-05) is NOT a taste check and is enforced on this side too, so a
+        // tampered or buggy settings.json cannot write an unbounded string into
+        // localStorage. An over-cap value is skipped QUIETLY: `applied = false`
+        // leaves the local value untouched AND leaves the key unstamped, so this
+        // device keeps re-pushing its own good value, and the remaining winners in
+        // the loop still apply. The setItem is wrapped because a QuotaExceededError
+        // would otherwise propagate out of the loop and abandon them.
+        case 'systemPromptOverride': {
+          const incoming = String(value ?? '');
+          if (incoming.length > 100000) { applied = false; break; }   // WR-03 — same cap as the save path
+          const wasClean = this._advancedEditorIsClean('systemPrompt');
+          this.systemPromptOverride = incoming;
+          try { localStorage.setItem('recipe_ingest_system_prompt_override', incoming); } catch (_e) { /* quota: memory state is still correct */ }
+          if (wasClean) this.refreshAdvancedDrafts('systemPrompt');
           break;
-        case 'conversionsJsonOverride':
-          this.conversionsJsonOverride = String(value ?? '');
-          localStorage.setItem('recipe_ingest_conversions_json_override', this.conversionsJsonOverride);
+        }
+        case 'revisePromptOverride': {
+          const incoming = String(value ?? '');
+          if (incoming.length > 100000) { applied = false; break; }   // WR-03 — same cap as the save path
+          const wasClean = this._advancedEditorIsClean('revisePrompt');
+          this.revisePromptOverride = incoming;
+          try { localStorage.setItem('recipe_ingest_revise_prompt_override', incoming); } catch (_e) { /* quota: memory state is still correct */ }
+          if (wasClean) this.refreshAdvancedDrafts('revisePrompt');
           break;
-        case 'allergenKeywordsOverride':
-          this.allergenKeywordsOverride = String(value ?? '');
-          localStorage.setItem('recipe_ingest_allergen_keywords_override', this.allergenKeywordsOverride);
+        }
+        case 'conversionsJsonOverride': {
+          const incoming = String(value ?? '');
+          if (incoming.length > 100000) { applied = false; break; }   // WR-03 — same cap as the save path
+          const wasClean = this._advancedEditorIsClean('conversions');
+          this.conversionsJsonOverride = incoming;
+          try { localStorage.setItem('recipe_ingest_conversions_json_override', incoming); } catch (_e) { /* quota: memory state is still correct */ }
+          if (wasClean) this.refreshAdvancedDrafts('conversions');
           break;
+        }
+        case 'allergenKeywordsOverride': {
+          const incoming = String(value ?? '');
+          if (incoming.length > 100000) { applied = false; break; }   // WR-03 — same cap as the save path
+          const wasClean = this._advancedEditorIsClean('allergenKeywords');
+          this.allergenKeywordsOverride = incoming;
+          try { localStorage.setItem('recipe_ingest_allergen_keywords_override', incoming); } catch (_e) { /* quota: memory state is still correct */ }
+          if (wasClean) this.refreshAdvancedDrafts('allergenKeywords');
+          break;
+        }
         case 'weatherLocation':
           this.weatherLocation = String(value ?? '');
           localStorage.setItem('mise_weather_location', this.weatherLocation);
@@ -7714,6 +7792,160 @@ Alpine.data('app', () => ({
     };
   },
 
+  // ----- Settings: advanced editor drafts (quick 260820-e9v) -----
+  // The four Advanced textareas bind to UI-only DRAFTS seeded from the effective
+  // value (`override || bundled default`) so the box shows what is actually in
+  // force instead of rendering blank until a custom version exists. The three
+  // helpers below are the ONLY expression of the seed/dirty rules — phase-27's
+  // CR-02 lesson is that a rule written in two places drifts apart.
+
+  /**
+   * _advancedSeedValue — THE definition of "the text this editor should show":
+   * the operator's override when there is one, else the bundled default, else
+   * the empty string. Pure. This expression shipped SEVEN times (both refreshers,
+   * the dirty test and the four sync cases hand-rolled it) — exactly the drift
+   * shape phase-27's CR-02 is about, so it now lives here and nowhere else.
+   * @param {string} override @param {string} def
+   * @returns {string}
+   */
+  _advancedSeedValue(override, def) {
+    return (override || def) || '';
+  },
+
+  /**
+   * _advancedDraftIsClean — THE definition of "this editor is not dirty": the
+   * draft still equals the effective value it was seeded from. Pure. EXACT
+   * (untrimmed) comparison so any keystroke, including a trailing space, reads
+   * dirty immediately. The save-time default match is TRIMMED instead, so text
+   * differing from the default only by trailing whitespace reads "Unsaved
+   * changes" and Saving it snaps the box back to the exact default. That
+   * asymmetry is deliberate.
+   * @param {string} draft @param {string} override @param {string} def
+   * @returns {boolean}
+   */
+  _advancedDraftIsClean(draft, override, def) {
+    return (draft ?? '') === this._advancedSeedValue(override, def);
+  },
+
+  /**
+   * _advancedEditors — the single lookup from an editor key to its
+   * { draft, override, def, seed } descriptor. Every helper below resolves
+   * through this, so adding an editor is ONE entry here and nowhere else.
+   * `seed` is the writer for that editor's draft (a plain field assignment
+   * cannot be expressed by the shared loop otherwise).
+   * @returns {Object<string,{draft:string,override:string,def:string,seed:Function}>}
+   */
+  _advancedEditors() {
+    return {
+      systemPrompt: {
+        draft: this.systemPromptDraft,
+        override: this.systemPromptOverride,
+        def: this.defaultSystemPrompt,
+        seed: (v) => { this.systemPromptDraft = v; }
+      },
+      revisePrompt: {
+        draft: this.revisePromptDraft,
+        override: this.revisePromptOverride,
+        def: this.defaultRevisePrompt,
+        seed: (v) => { this.revisePromptDraft = v; }
+      },
+      conversions: {
+        draft: this.conversionsDraft,
+        override: this.conversionsJsonOverride,
+        def: this.defaultConversionsJsonText,
+        seed: (v) => { this.conversionsDraft = v; }
+      },
+      allergenKeywords: {
+        draft: this.allergenKeywordsDraft,
+        override: this.allergenKeywordsOverride,
+        def: this.defaultAllergenKeywordsText,
+        seed: (v) => { this.allergenKeywordsDraft = v; }
+      }
+    };
+  },
+
+  /**
+   * _advancedEditorIsClean — "editor <key> has no unsaved typing", resolved
+   * through the descriptor map so a caller never re-derives the draft/override/
+   * default triple by hand. An unknown key reads clean (nothing to protect).
+   * @param {string} key
+   * @returns {boolean}
+   */
+  _advancedEditorIsClean(key) {
+    const e = this._advancedEditors()[key];
+    if (!e) return true;
+    return this._advancedDraftIsClean(e.draft, e.override, e.def);
+  },
+
+  /**
+   * refreshAdvancedDrafts — UNCONDITIONALLY re-seed advanced drafts from their
+   * effective value.
+   *
+   * WITH a key: re-seed ONLY that editor. This is what a per-editor Save/Reset
+   * means, and the scoping is LOAD-BEARING (gap closure CR-01). The unscoped form
+   * used to run at the end of all EIGHT per-editor handlers, so pressing Save on
+   * the System prompt silently destroyed unsaved typing in the other three boxes
+   * — all four sit stacked on one screen, so that was a two-click path, and the
+   * status line then reported the clobbered state as authoritative. An unknown
+   * key is a no-op.
+   *
+   * WITHOUT a key: re-seed all four. ONLY init() (once the bundled defaults have
+   * been fetched) and resetAllToDefault() (which really does reset all four) may
+   * use that form.
+   *
+   * NOT interchangeable with refreshAdvancedDraftsIfClean(): a just-saved draft
+   * that differs from the default only by trailing whitespace is legitimately
+   * DIRTY and must still snap back to the exact default, so a save handler needs
+   * the UNCONDITIONAL re-seed — of its own editor only.
+   * @param {string} [key] — 'systemPrompt' | 'revisePrompt' | 'conversions' | 'allergenKeywords'
+   */
+  refreshAdvancedDrafts(key) {
+    const editors = this._advancedEditors();
+    const keys = key ? (editors[key] ? [key] : []) : Object.keys(editors);
+    for (const k of keys) {
+      const e = editors[k];
+      e.seed(this._advancedSeedValue(e.override, e.def));
+    }
+  },
+
+  /**
+   * refreshAdvancedDraftsIfClean — per-editor GUARDED re-seed: refresh only the
+   * drafts the user has not typed into. Used on every path that merely OPENS the
+   * Advanced section (and by the settings-pull path), so a modal close+reopen or
+   * an incoming sync can never discard a long prompt the operator is part-way
+   * through typing, while a clean box is always re-seeded and so can never render
+   * blank.
+   */
+  refreshAdvancedDraftsIfClean() {
+    const editors = this._advancedEditors();
+    for (const key of Object.keys(editors)) {
+      const e = editors[key];
+      if (!this._advancedDraftIsClean(e.draft, e.override, e.def)) continue;
+      e.seed(this._advancedSeedValue(e.override, e.def));
+    }
+  },
+
+  /**
+   * advancedEditorStatus — the one-line state of an advanced editor (E9V-02).
+   * Exactly one of FOUR strings, in priority order: dirty, then a non-empty
+   * override, then the load-failure state, else the built-in default.
+   *
+   * Gap closure WR-04: init() fails OPEN when ./conversions.json or
+   * ./allergen-keywords.json cannot be fetched — the default text stays '' and
+   * the box renders blank. Reporting "Using the built-in default" over a blank
+   * box told the operator a default was in force when none had loaded, so the
+   * missing state is now named rather than mislabelled.
+   * @param {string} key — 'systemPrompt' | 'revisePrompt' | 'conversions' | 'allergenKeywords'
+   * @returns {string}
+   */
+  advancedEditorStatus(key) {
+    const e = this._advancedEditors()[key];
+    if (!e) return '';
+    if (!this._advancedDraftIsClean(e.draft, e.override, e.def)) return 'Unsaved changes';
+    if (e.override) return 'Customised';
+    return e.def ? 'Using the built-in default' : 'The built-in default could not be loaded';
+  },
+
   // ----- Settings: advanced overrides (SHELL-03 / D-21 / API-04 / API-06) -----
   // saveSystemPromptOverride — validate non-empty + length-sane, then persist
   // to localStorage. Empty values are refused (with a plain-language hint to
@@ -7722,7 +7954,7 @@ Alpine.data('app', () => ({
   // an accidental paste of a huge buffer shouldn't poison every Parse.
   saveSystemPromptOverride() {
     this.parseErrorDetail = '';   // quick 260618-jr7 — this banner reuses parseError; drop stale API detail
-    const v = this.systemPromptOverride ?? '';
+    const v = this.systemPromptDraft ?? '';   // quick 260820-e9v — the box binds to the draft now
     if (!v.trim()) {
       this.parseError = 'The system prompt cannot be empty. Use "Reset this one" to restore the default.';
       return;
@@ -7731,9 +7963,22 @@ Alpine.data('app', () => ({
       this.parseError = `The system prompt is too long (${v.length} characters; the limit is 100,000). Trim it down and try Save again.`;
       return;
     }
-    localStorage.setItem('recipe_ingest_system_prompt_override', v);
+    // quick 260820-e9v — LOAD-BEARING: this handler must now assign the override
+    // ITSELF. It never used to, because x-model had already written it; with the
+    // textarea bound to the draft, skipping this would leave currentSystemPrompt
+    // serving the pre-edit value after a Save that looked successful.
+    // Text trimmed-identical to the bundled default CLEARS the override so the
+    // setting keeps TRACKING the built-in rather than freezing today's copy.
+    if (v.trim() === (this.defaultSystemPrompt || '').trim()) {
+      this.systemPromptOverride = '';
+      localStorage.removeItem('recipe_ingest_system_prompt_override');
+    } else {
+      this.systemPromptOverride = v;
+      localStorage.setItem('recipe_ingest_system_prompt_override', v);
+    }
     this.parseError = '';
     this.stampSetting('systemPromptOverride'); // quick 260712-i1y — synced (success only)
+    this.refreshAdvancedDrafts('systemPrompt');              // quick 260820-e9v — re-normalise the box
   },
 
   resetSystemPromptOverride() {
@@ -7741,6 +7986,42 @@ Alpine.data('app', () => ({
     localStorage.removeItem('recipe_ingest_system_prompt_override');
     this.parseError = '';
     this.stampSetting('systemPromptOverride'); // quick 260712-i1y — synced (reset -> empty)
+    this.refreshAdvancedDrafts('systemPrompt');              // quick 260820-e9v — repopulate with the default, never blank
+  },
+
+  // quick 260820-e9v — the recipe Chat prompt override. An exact structural mirror
+  // of the System-prompt pair above (same empty refusal, same 100k DoS cap, same
+  // default-match-clears-the-override branch, same stamp + re-seed); only the two
+  // validation messages differ, so they name the chat prompt.
+  saveRevisePromptOverride() {
+    this.parseErrorDetail = '';   // quick 260618-jr7 — this banner reuses parseError; drop stale API detail
+    const v = this.revisePromptDraft ?? '';
+    if (!v.trim()) {
+      this.parseError = 'The chat prompt cannot be empty. Use "Reset to default" to restore the default.';
+      return;
+    }
+    if (v.length > 100000) {
+      this.parseError = `The chat prompt is too long (${v.length} characters; the limit is 100,000). Trim it down and try Save again.`;
+      return;
+    }
+    if (v.trim() === (this.defaultRevisePrompt || '').trim()) {
+      this.revisePromptOverride = '';
+      localStorage.removeItem('recipe_ingest_revise_prompt_override');
+    } else {
+      this.revisePromptOverride = v;
+      localStorage.setItem('recipe_ingest_revise_prompt_override', v);
+    }
+    this.parseError = '';
+    this.stampSetting('revisePromptOverride');
+    this.refreshAdvancedDrafts('revisePrompt');
+  },
+
+  resetRevisePromptOverride() {
+    this.revisePromptOverride = '';
+    localStorage.removeItem('recipe_ingest_revise_prompt_override');
+    this.parseError = '';
+    this.stampSetting('revisePromptOverride');
+    this.refreshAdvancedDrafts('revisePrompt');
   },
 
   // saveConversionsOverride — JSON.parse must succeed AND yield a plain object
@@ -7750,7 +8031,7 @@ Alpine.data('app', () => ({
   // points the user at the most-likely cause (// comments — Pitfall T).
   saveConversionsOverride() {
     this.parseErrorDetail = '';   // quick 260618-jr7 — this banner reuses parseError; drop stale API detail
-    const v = this.conversionsJsonOverride ?? '';
+    const v = this.conversionsDraft ?? '';   // quick 260820-e9v — the box binds to the draft now
     if (!v.trim()) {
       // Empty input → treat as reset (Pitfall S).
       this.resetConversionsOverride();
@@ -7778,9 +8059,19 @@ Alpine.data('app', () => ({
       this.parseError = "That's not a JSON object. Make sure it starts with { and ends with }.";
       return;
     }
-    localStorage.setItem('recipe_ingest_conversions_json_override', v);
+    // quick 260820-e9v — assign the override HERE (x-model no longer does it), and
+    // clear it when the text is trimmed-identical to the bundled default so the
+    // setting keeps TRACKING conversions.json rather than freezing today's copy.
+    if (v.trim() === (this.defaultConversionsJsonText || '').trim()) {
+      this.conversionsJsonOverride = '';
+      localStorage.removeItem('recipe_ingest_conversions_json_override');
+    } else {
+      this.conversionsJsonOverride = v;
+      localStorage.setItem('recipe_ingest_conversions_json_override', v);
+    }
     this.parseError = '';
     this.stampSetting('conversionsJsonOverride'); // quick 260712-i1y — synced (success only)
+    this.refreshAdvancedDrafts('conversions');                 // quick 260820-e9v — re-normalise the box
   },
 
   resetConversionsOverride() {
@@ -7788,6 +8079,7 @@ Alpine.data('app', () => ({
     localStorage.removeItem('recipe_ingest_conversions_json_override');
     this.parseError = '';
     this.stampSetting('conversionsJsonOverride'); // quick 260712-i1y — synced (reset -> empty)
+    this.refreshAdvancedDrafts('conversions');                 // quick 260820-e9v — repopulate with the default, never blank
   },
 
   // Phase 4 / Plan 04-05 / D-56 — save the allergen-keywords.json override.
@@ -7800,7 +8092,7 @@ Alpine.data('app', () => ({
   // refresh (Pitfall R hot-reload).
   saveAllergenKeywordsOverride() {
     this.parseErrorDetail = '';   // quick 260618-jr7 — this banner reuses parseError; drop stale API detail
-    const v = this.allergenKeywordsOverride ?? '';
+    const v = this.allergenKeywordsDraft ?? '';   // quick 260820-e9v — the box binds to the draft now
     if (!v.trim()) {
       // Empty input → treat as reset (Pitfall S — symmetric with conversions).
       this.resetAllergenKeywordsOverride();
@@ -7847,12 +8139,22 @@ Alpine.data('app', () => ({
         }
       }
     }
-    // Stage-2 validated — persist + re-read into in-memory cache so the
-    // currentAllergenKeywords getter sees the new value without a refresh.
-    localStorage.setItem('recipe_ingest_allergen_keywords_override', v);
-    this.allergenKeywordsOverride = localStorage.getItem('recipe_ingest_allergen_keywords_override') ?? '';
+    // Stage-2 validated — persist. quick 260820-e9v: the old line here re-read the
+    // value back OUT of localStorage into the in-memory var; that is now WRONG,
+    // because on the default-match branch the key has just been REMOVED and the
+    // read-back would blank the value the user just saved. Assign the override
+    // var directly instead — the getter reads the in-memory var, so the hot-reload
+    // property the read-back existed to protect (Pitfall R) is preserved.
+    if (v.trim() === (this.defaultAllergenKeywordsText || '').trim()) {
+      this.allergenKeywordsOverride = '';
+      localStorage.removeItem('recipe_ingest_allergen_keywords_override');
+    } else {
+      this.allergenKeywordsOverride = v;
+      localStorage.setItem('recipe_ingest_allergen_keywords_override', v);
+    }
     this.parseError = '';
     this.stampSetting('allergenKeywordsOverride'); // quick 260712-i1y — synced (success only)
+    this.refreshAdvancedDrafts('allergenKeywords');                  // quick 260820-e9v — re-normalise the box
   },
 
   resetAllergenKeywordsOverride() {
@@ -7860,18 +8162,28 @@ Alpine.data('app', () => ({
     localStorage.removeItem('recipe_ingest_allergen_keywords_override');
     this.parseError = '';
     this.stampSetting('allergenKeywordsOverride'); // quick 260712-i1y — synced (reset -> empty)
+    this.refreshAdvancedDrafts('allergenKeywords');                  // quick 260820-e9v — repopulate with the default, never blank
   },
 
   // resetAllToDefault — D-21 explicitly preserves the API key and the model
-  // dropdown. Only the prompt + conversions overrides are wiped. The native
-  // window.confirm prompt matches the user's expectation that "reset all" is
-  // a recoverable but destructive-to-tinkering action.
+  // dropdown; every ADVANCED editor override is wiped. The native window.confirm
+  // prompt matches the user's expectation that "reset all" is a recoverable but
+  // destructive-to-tinkering action.
+  //
+  // Gap closure WR-02: this used to reset 2 of 4. The allergen-keywords override
+  // was excluded from the start and the Chat prompt editor inherited the same
+  // omission, so a button labelled "Reset all to default" left a customised chat
+  // prompt — a SYNCED value that changes chat behaviour on every device — quietly
+  // in force. All four now reset, and the confirm text names what it really does.
   resetAllToDefault() {
-    if (!confirm('Reset the system prompt and conversions to their defaults? Your API key and model selection are not affected.')) {
+    if (!confirm('Reset the system prompt, chat prompt, conversions and allergen keywords to their defaults? Your API key and model selection are not affected.')) {
       return;
     }
     this.resetSystemPromptOverride();
+    this.resetRevisePromptOverride();
     this.resetConversionsOverride();
+    this.resetAllergenKeywordsOverride();
+    this.refreshAdvancedDrafts();   // quick 260820-e9v — the whole-map form is correct HERE: all four were just reset
   },
 
   // ----- Pre-Parse cost estimate (API-07 / Plan 02-04) -----
@@ -8429,6 +8741,11 @@ Alpine.data('app', () => ({
       // shows a light confirmation of the saved place without re-geocoding.
       this.weatherLocationDraft = this.weatherLocation;
       this.weatherLocationStatus = this.weatherLocation ? ('✓ ' + this.weatherLocation) : '';
+      // quick 260820-e9v — re-seed the Advanced editor drafts, but only the CLEAN
+      // ones: a close+reopen must never discard a prompt the operator is part-way
+      // through typing, while a clean box is always refreshed so it can never
+      // render blank.
+      this.refreshAdvancedDraftsIfClean();
       this.settingsOpen = true;
     }
   },
@@ -15893,7 +16210,12 @@ Alpine.data('app', () => ({
    * PAYLOAD SHAPE (the rationale, so the body below can stay short):
    *
    *   block 1 / cachedPrefix — buildRevisePrompt: revision rules + the compact
-   *     ingredient master. NO per-turn bytes, ever (see callReviseLLM's breakpoint
+   *     ingredient master. The rules text is the operator's Settings → Advanced
+   *     "Chat prompt" override when one is set, else the bundled REVISE_PROMPT
+   *     (quick 260820-e9v) — an override is exactly as byte-stable within a session
+   *     as the constant, so the cache prefix property is unchanged; editing it
+   *     re-bills the prefix once on the next turn.
+   *     NO per-turn bytes, ever (see callReviseLLM's breakpoint
    *     comment). Its cuisine/protein enums come from `effectiveVocab`, the same
    *     resolution the parse / classify / estimate call sites use: buildReviseSchema
    *     THROWS on an empty enum, and `this.cuisineVocab` is legitimately `[]` on a
@@ -15971,7 +16293,7 @@ Alpine.data('app', () => ({
       // each piece is the way it is. Inside the try so an assembly failure surfaces
       // as a transcript error turn rather than an unhandled rejection.
       const vocab = effectiveVocab({ cuisines: this.cuisineVocab, proteins: this.proteinVocab });
-      const cachedPrefix = buildRevisePrompt(this.ingredientMaster, vocab.cuisines, vocab.proteins);
+      const cachedPrefix = buildRevisePrompt(this.ingredientMaster, vocab.cuisines, vocab.proteins, this.currentRevisePrompt);
       const salt = generateSalt();
       const recipeBlock = buildRecipeContextBlock({
         form: cloneForm(this.form),
