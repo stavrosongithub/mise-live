@@ -454,6 +454,28 @@ export function isServingsTaggedRecipesHeader(columns) {
 }
 
 /**
+ * RECIPES_COLUMN_RENAMES — household reset slice 2 (2026-10-04): the two
+ * recipes.csv columns that dropped their "_20" suffix (recipes no longer all
+ * serve 20). [oldName, newName] pairs; migrateRecipesRows renames in place.
+ */
+export const RECIPES_COLUMN_RENAMES = Object.freeze([
+  ['instructions_20', 'instructions'],
+  ['ingredients_20', 'ingredients']
+]);
+
+/**
+ * isRenamedRecipesHeader — the third recipes.csv gate (household reset slice 2):
+ * true iff the header carries NONE of the old "_20" column names. AND-ed with the
+ * other recipes gates wherever "is recipes.csv fully migrated?" is asked.
+ *
+ * @param {string[]} columns
+ * @returns {boolean}
+ */
+export function isRenamedRecipesHeader(columns) {
+  return Array.isArray(columns) && !RECIPES_COLUMN_RENAMES.some(([oldName]) => columns.includes(oldName));
+}
+
+/**
  * migrateRecipesRows — mechanical, no-LLM, ADDITIVE backfill of the live
  * recipes.csv to carry the three classification columns cuisine, protein, and
  * class_needs_review (phase 25 / D-12 / CLASS-01). D-12 is explicit: the Migrate
@@ -486,7 +508,17 @@ export function migrateRecipesRows(rows, oldColumns) {
   const hadFlag = cols.includes('class_needs_review');
   // Household reset (2026-10-04): source_servings rides the same pass.
   const hadServings = cols.includes('source_servings');
-  const newColumns = cols.slice();
+  // Household reset slice 2 (2026-10-04): rename ingredients_20 → ingredients and
+  // instructions_20 → instructions IN PLACE (same column position, cell copied
+  // verbatim). Refuses when a file somehow carries BOTH the old and the new name —
+  // merging two columns is a judgement call, never a mechanical one.
+  for (const [oldName, newName] of RECIPES_COLUMN_RENAMES) {
+    if (cols.includes(oldName) && cols.includes(newName)) {
+      throw new Error(`recipes.csv has both "${oldName}" and "${newName}" columns — Migrate can't merge them. Nothing was changed.`);
+    }
+  }
+  const renameTo = new Map(RECIPES_COLUMN_RENAMES);
+  const newColumns = cols.map(c => renameTo.get(c) || c);
   if (!hadCuisine) newColumns.push('cuisine');
   if (!hadProtein) newColumns.push('protein');
   if (!hadFlag) newColumns.push('class_needs_review');
@@ -497,7 +529,7 @@ export function migrateRecipesRows(rows, oldColumns) {
     // Copy every original column cell verbatim FIRST (byte-faithful; existing
     // cells / column order preserved — DSAFE-02 / T-25-05).
     for (const col of cols) {
-      out[col] = r[col] != null ? r[col] : '';
+      out[renameTo.get(col) || col] = r[col] != null ? r[col] : '';
     }
     // BLANK backfill, NO heuristic (D-12): Migrate only adds columns blank; the
     // LLM fill is a separate op. blank cuisine/protein = "no specific cuisine /
@@ -561,8 +593,8 @@ export function detectCsvConventions(text) {
   // 2026-06-08 debug-fix (merge-rowcount-off-by-one): detect the TRUE row
   // terminator, not the dominant newline BYTE. The previous code counted every
   // \r\n vs every lone \n across the whole text — including the many bare-LF
-  // newlines embedded INSIDE quoted multiline fields (instructions_20,
-  // ingredients_20, prep, notes). On a real v2 recipes.csv those embedded LFs
+  // newlines embedded INSIDE quoted multiline fields (instructions,
+  // ingredients, prep, notes). On a real v2 recipes.csv those embedded LFs
   // vastly outnumber the CRLF row terminators (observed: ~2722 LF vs ~112 CRLF),
   // so the byte-count picked newline='\n'. appendLiveCsv then unparsed the
   // appended rows joined by \n, but verifyAppend re-parses with PapaParse, which

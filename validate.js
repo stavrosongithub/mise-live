@@ -117,8 +117,8 @@ const RecipeHeaderSchema = v.object({
   name:             v.nullable(v.string()),
   main_side_salad:  v.nullable(v.string()),
   prep:             v.nullable(v.string()),
-  instructions_20:  v.nullable(v.string()),
-  ingredients_20:   v.nullable(v.string()),
+  instructions:  v.nullable(v.string()),
+  ingredients:   v.nullable(v.string()),
   // HARD REJECT — must be either null or a URL-shaped string.
   // D-20: non-fixable → red inline label, Approve still works.
   source:           v.nullable(v.pipe(v.string(), v.url())),

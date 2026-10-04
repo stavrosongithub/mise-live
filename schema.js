@@ -77,6 +77,59 @@ export const UNIT_VOLUMETRIC_ENUM = ['whole', 'tsp', 'tbsp', 'cup'];
 export const ROLE_ENUM = ['required', 'optional', 'garnish', 'to_taste'];
 
 // ----------------------------------------------------------------------------
+// Household reset slice 2 (2026-10-04) — the schema-version guard
+// ----------------------------------------------------------------------------
+// Every column name THIS version of the app understands, per CSV (current names
+// plus the legacy names a not-yet-migrated file may still carry). The row writers
+// start each captured column blank and fill only the names they know, so a save
+// into a file holding a column NOT on this list would silently blank it. A file
+// with an unknown column was therefore written by a NEWER Mise: pushToRemote
+// refuses the save and asks the user to refresh the page.
+//
+// ⚠️ When you add or rename a CSV column, add the new name here IN THE SAME
+// CHANGE — otherwise this app refuses its own migration's output. The column
+// becomes the "version marker": an older app sees a name it doesn't know.
+export const KNOWN_CSV_COLUMNS = Object.freeze({
+  'recipes.csv': Object.freeze([
+    'recipe_id', 'name', 'main/side/salad', 'main_side_salad', 'prep_notes', 'prep',
+    'instructions', 'ingredients', 'source', 'max_servings', 'source_servings',
+    'popularity', 'difficulty', 'last_made', 'serve_with', 'popularity_notes',
+    'difficulty_notes', 'allergens', 'cuisine', 'protein', 'class_needs_review',
+    // legacy (renamed by Migrate in slice 2)
+    'instructions_20', 'ingredients_20'
+  ]),
+  'recipe_ingredients.csv': Object.freeze([
+    'recipe_id', 'line_order', 'ingredient_id', 'ingredient_name',
+    'quantity_metric', 'unit_metric', 'quantity_volumetric', 'unit_volumetric',
+    'section', 'prep_note', 'role', 'raw_text', 'flag_fix_me',
+    // legacy (role booleans, pre-v2 quantity columns)
+    'is_optional', 'is_garnish', 'is_to_taste', 'canonical_name',
+    'unit', 'quantity', 'quantity_min', 'quantity_max'
+  ]),
+  'ingredients.csv': Object.freeze([
+    'ingredient_id', 'ingredient_name', 'allergens', '1st_link', '1st_pack_size',
+    '1st_pack_unit', '2nd_link', '2nd_pack_size', '2nd_pack_unit', 'supplier',
+    'shopping_unit', 'scale_category', 'pantry_staple', 'pantry_section',
+    'pack_units', 'pack_unit_label', 'regular', 'regular_qty_per_person'
+  ])
+});
+
+/**
+ * unknownCsvColumns — the columns of `filename` this app version does not know.
+ * [] for a file outside KNOWN_CSV_COLUMNS (e.g. residents_allergens.csv) — the
+ * guard covers the three recipe-database CSVs only.
+ *
+ * @param {string} filename
+ * @param {string[]} columns
+ * @returns {string[]}
+ */
+export function unknownCsvColumns(filename, columns) {
+  const known = KNOWN_CSV_COLUMNS[filename];
+  if (!known || !Array.isArray(columns)) return [];
+  return columns.filter(c => !known.includes(c));
+}
+
+// ----------------------------------------------------------------------------
 // Phase 27 / RCHAT-06 — the writable-field allow-lists for the Chat feature
 // ----------------------------------------------------------------------------
 // These are CLOSED VOCABULARIES, so they are filed here with the other closed
@@ -101,7 +154,7 @@ export const ROLE_ENUM = ['required', 'optional', 'garnish', 'to_taste'];
 //                       `ingredient_id` changes; never model-set.
 //   head `allergens`  — DERIVED from the rows (`derivedAllergens`), so an
 //                       ingredient swap updates it for free.
-//   head `ingredients_20` — unwritable and un-derived by deliberate decision
+//   head `ingredients` — unwritable and un-derived by deliberate decision
 //                       (SPEC out-of-scope; the staleness is accepted).
 //   `recipe_id`       — allocated locally; never in the form at all.
 // (Also absent, for the same "not the model's business" reason: `source`,
@@ -121,7 +174,7 @@ export const ROW_WRITABLE = Object.freeze([
 export const HEADER_WRITABLE = Object.freeze([
   'name',
   'main_side_salad',
-  'instructions_20',
+  'instructions',
   'prep',
   'serve_with',
   'max_servings',
@@ -170,7 +223,7 @@ export const FLAGGED_FIELD_NAME_ENUM = [
 // quick 260618-ihr (Workstream B) — closed enum for the parse-only
 // header.review_flags judgement-call codes (SPEC §4.3). One code per
 // recipe_import_spec.md §12 judgement call the model can make while
-// standardizing instructions_20 / prep. PARSE-ONLY (D2): review_flags is
+// standardizing instructions / prep. PARSE-ONLY (D2): review_flags is
 // NEVER serialized to any CSV (toHeaderCsvRow is column-driven and has no
 // review_flags column), and never persists past Approve. Keep in lock-step
 // with REVIEW_FLAG_LABELS in app.js and the REVIEW FLAGS section of
@@ -239,8 +292,8 @@ export function buildRecipeSchema(masterIds, cuisineEnum, proteinEnum) {
           'name',
           'main_side_salad',
           'prep',
-          'instructions_20',
-          'ingredients_20',
+          'instructions',
+          'ingredients',
           'source',
           'max_servings',
           'source_servings',
@@ -260,8 +313,8 @@ export function buildRecipeSchema(masterIds, cuisineEnum, proteinEnum) {
           main_side_salad:  { type: 'string' },
           // `prep` is FREE-TEXT; maps to the disk `prep_notes` column — see file header.
           prep:             { type: 'string' },
-          instructions_20:  { type: 'string' },
-          ingredients_20:   { type: 'string' },
+          instructions:  { type: 'string' },
+          ingredients:   { type: 'string' },
           source:           { anyOf: [{ type: 'string', format: 'uri' }, { type: 'null' }] },
           max_servings:     { anyOf: [{ type: 'integer' }, { type: 'null' }] },
           // Household reset (2026-10-04) — how many servings the recipe, AS WRITTEN,
@@ -395,7 +448,7 @@ export function buildRecipeSchema(masterIds, cuisineEnum, proteinEnum) {
  * buildClassifySchema — Phase 25 / CLASS-03 (D-09/D-11/D-17). The DEDICATED LEAN
  * multi-recipe classification schema for the bulk backfill. This is deliberately
  * NOT `buildRecipeSchema` (which ships the full 30KB parse extraction contract):
- * the backfill sends only name + ingredients_20 + type per recipe and wants only
+ * the backfill sends only name + ingredients + type per recipe and wants only
  * a cuisine/protein array back, keyed by recipe_id.
  *
  * Shape: `{ results: [ { recipe_id: integer, cuisine: [enum], protein: [enum] } ] }`.

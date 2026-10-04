@@ -5802,18 +5802,18 @@
         </label>
         <label class="schema-label c12">
           Instructions
-          <textarea rows="8" x-model="form.header.instructions_20" :disabled="editorDisabled"></textarea>
+          <textarea rows="8" x-model="form.header.instructions" :disabled="editorDisabled"></textarea>
           <!-- D-3 TEXT SYNC = none — maintained separately, never regenerated. -->
           <span class="help">Maintained separately — not auto-generated from the ingredient rows.</span>
         </label>
         <!-- quick-260618-biu — hidden in the MANAGER editor (editingRecipeId !== null),
              shown in the PARSE editor. x-cloak prevents a flash before Alpine evaluates x-show.
-             The textarea x-model binding is untouched — ingredients_20 still serializes to recipes.csv.
+             The textarea x-model binding is untouched — ingredients still serializes to recipes.csv.
              quick 260627-q7x — the showHeaderIngredients20 gate is KEPT verbatim; it now lives
              inside the More-fields disclosure (still parse-only). -->
         <label class="schema-label c12" x-show="showHeaderIngredients20" x-cloak>
           Ingredients
-          <textarea rows="6" x-model="form.header.ingredients_20" :disabled="editorDisabled"></textarea>
+          <textarea rows="6" x-model="form.header.ingredients" :disabled="editorDisabled"></textarea>
           <span class="help">Maintained separately — not auto-generated from the ingredient rows.</span>
         </label>
         <label class="schema-label c6">

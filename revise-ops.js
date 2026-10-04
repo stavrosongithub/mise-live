@@ -87,7 +87,7 @@ export const FIELD_LABELS = Object.freeze({
   // --- header, writable (10) ---
   name:                 'Name',
   main_side_salad:      'Type',
-  instructions_20:      'Instructions',
+  instructions:      'Instructions',
   prep:                 'Prep',
   serve_with:           'Serve with',
   max_servings:         'Max servings',
@@ -108,7 +108,7 @@ export const FIELD_LABELS = Object.freeze({
   raw_text:             'Recipe text',
   line_order:           'Line order',
   allergens:            'Allergens',
-  ingredients_20:       'Ingredients summary',
+  ingredients:       'Ingredients summary',
   ingredient_name:      'Ingredient name'
 });
 
@@ -390,7 +390,7 @@ function validateHeaderValue(field, value, cuisineEnum, proteinEnum) {
       return { ok: true, value: members };
     }
     default:
-      // name / main_side_salad / instructions_20 / prep / serve_with — free text.
+      // name / main_side_salad / instructions / prep / serve_with — free text.
       return { ok: true, value: isBlank(value) ? '' : String(value) };
   }
 }
@@ -414,7 +414,7 @@ function validateHeaderValue(field, value, cuisineEnum, proteinEnum) {
  *
  * Fields this function must NEVER write, anywhere: `recipe_id`,
  * `header.allergens` (derived from the rows by app.js's `derivedAllergens`
- * getter, so an ingredient swap updates it for free), `header.ingredients_20`,
+ * getter, so an ingredient swap updates it for free), `header.ingredients`,
  * row `raw_text` (verbatim source provenance — the real write path in app.js
  * derives it), row `line_order` (except `blankRow`'s own assignment on an add),
  * `ingredient_name` (re-derived from the master, never model-set), `flag_fix_me`,

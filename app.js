@@ -52,7 +52,7 @@ window.Alpine = Alpine;
 // D-55 auto-resolve cascade after Add-new. 235-entry master is trivially small;
 // search runs in <1ms (RESEARCH §Standard Stack).
 import Fuse from 'https://esm.sh/fuse.js@7.3.0';
-import { buildRecipeSchema, buildClassifySchema, buildReviseSchema, assertNoOpenObjects, FSA14, REASON_CODE_ENUM, FLAGGED_FIELD_NAME_ENUM, REVIEW_FLAG_ENUM } from './schema.js';
+import { buildRecipeSchema, buildClassifySchema, buildReviseSchema, assertNoOpenObjects, unknownCsvColumns, FSA14, REASON_CODE_ENUM, FLAGGED_FIELD_NAME_ENUM, REVIEW_FLAG_ENUM } from './schema.js';
 import { buildSystemPrompt, DEFAULT_PROMPT_TEMPLATE, buildRevisePrompt, REVISE_PROMPT, buildRecipeContextBlock } from './system-prompt.js';
 import { generateSalt, buildUserMessage } from './prompt-utils.js';
 // Phase 27 (Plan 27-02) — the PURE chat safety core: whole-proposal rejection,
@@ -81,7 +81,7 @@ import { estimateParseCost } from './count.js';
 // meal-plan getters need (scaleRow folds in scaled_quantity_metric/volumetric).
 import { factor, scaleRow, classifyIngredientCategory, isValidScaleCategory, SCALE_CATEGORIES } from './scale.js';
 // Phase 06 (Plan 06-02) — pure, browser-free cook-artifact logic (D-07/D-10/D-16).
-// splitInstructionSteps turns standardized instructions_20 into step-groups;
+// splitInstructionSteps turns standardized instructions into step-groups;
 // orderEntriesByType applies the main->side->salad->other dish sort. Both are
 // unit-tested under scripts/cook-artifact.test.mjs (scale.js precedent).
 import { splitInstructionSteps, orderEntriesByType } from './cook-artifact.js';
@@ -180,6 +180,8 @@ import {
   // household reset (2026-10-04) — the second recipes.csv additive-column gate
   // (source_servings, backfilled '20'); rides the same Migrate pass.
   isServingsTaggedRecipesHeader,
+  // household reset slice 2 — the third recipes.csv gate (the "_20" rename).
+  isRenamedRecipesHeader,
   migrateRecipesRows
 } from './merge.js';
 // quick 260612-abt — IndexedDB persistence substrate (replaces FSA folder handle).
@@ -443,7 +445,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '1efdded 2026-10-04';
+const APP_VERSION = 'ebc47c9 2026-10-04';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -783,7 +785,7 @@ async function callLLM({ apiKey, model, systemPrompt, userMessage, schema }) {
  * call shape (output_config.format, assertNoOpenObjects pre-flight, stop_reason
  * refusal) but is deliberately SEPARATE from the heavy parse call — the caller
  * passes a tiny system prompt + a per-chunk `{recipes:[{recipe_id,name,
- * ingredients_20,type}]}` user message + the small buildClassifySchema, NOT the
+ * ingredients,type}]}` user message + the small buildClassifySchema, NOT the
  * 30KB master parse payload (Pitfall #4).
  *
  * The one behavioural difference from callLLM: a `max_tokens` stop is treated as
@@ -1138,6 +1140,12 @@ function extractErrorDetail(e) {
  * @param {Array<string>} capturedColumns
  * @returns {object} — keyed exactly by `capturedColumns`.
  */
+// Household reset slice 2 — a saved custom prompt may predate the "_20" column
+// rename; map the old field names to the new ones (no-op on '' / null).
+function renameLegacyPromptFields(text) {
+  return text ? String(text).replace(/\binstructions_20\b/g, 'instructions').replace(/\bingredients_20\b/g, 'ingredients') : text;
+}
+
 function toHeaderCsvRow(formHeader, recipeId, capturedColumns) {
   // Detect the literal `main/side/salad` column (with slash) — Pitfall E.
   const hasSlashColumn = capturedColumns.includes('main/side/salad');
@@ -1196,8 +1204,13 @@ function toHeaderCsvRow(formHeader, recipeId, capturedColumns) {
     // `prep_notes`, but the in-memory/form/schema key is `prep` (boundary-
     // translated like `main/side/salad`, see below). Keying it `prep` here
     // would silently drop it (the disk column isn't `prep`) → blank prep_notes.
-    instructions_20:  formHeader.instructions_20 ?? '',
-    ingredients_20:   formHeader.ingredients_20 ?? '',
+    // Household reset slice 2 — the "_20" suffix is gone. BOTH spellings are
+    // mapped so a save into a not-yet-migrated file (old names) keeps the text
+    // instead of blanking it; only the column the file actually has is written.
+    instructions:     formHeader.instructions ?? '',
+    ingredients:      formHeader.ingredients ?? '',
+    instructions_20:  formHeader.instructions ?? '',
+    ingredients_20:   formHeader.ingredients ?? '',
     source:           formHeader.source ?? '',
     max_servings:     csvNumber(formHeader.max_servings),
     // household reset (2026-10-04) — MANDATORY map entry (the documented `prep`
@@ -2147,7 +2160,9 @@ Alpine.data('app', () => ({
   // GETTER so settings-save followed by a Parse uses the new value WITHOUT
   // a page refresh (Pitfall R — override-read-timing).
   get currentSystemPrompt() {
-    return this.systemPromptOverride || this.defaultSystemPrompt;
+    // Slice 2: a custom prompt saved before the "_20" rename still names the old
+    // fields — translate at use time so it matches the response schema.
+    return renameLegacyPromptFields(this.systemPromptOverride) || this.defaultSystemPrompt;
   },
 
   // quick 260820-e9v — getter: which chat/revise prompt does the next chat turn
@@ -2155,7 +2170,7 @@ Alpine.data('app', () => ({
   // A GETTER for the same reason as currentSystemPrompt (Pitfall R): a Save
   // followed by a chat turn uses the new value WITHOUT a page refresh.
   get currentRevisePrompt() {
-    return this.revisePromptOverride || this.defaultRevisePrompt;
+    return renameLegacyPromptFields(this.revisePromptOverride) || this.defaultRevisePrompt;
   },
 
   // Getter: which conversions object does the next Parse use?
@@ -2614,7 +2629,7 @@ Alpine.data('app', () => ({
   // (at 20 servings)" textarea. Mirrors the editorDisabled discriminator so
   // the shared template stays unforked: true in the PARSE editor
   // (editingRecipeId === null) → show; false in the MANAGER editor → hide.
-  // Purely visual — form.header.ingredients_20 is untouched and still
+  // Purely visual — form.header.ingredients is untouched and still
   // serializes to recipes.csv on save (read by name, not by visibility).
   get showHeaderIngredients20() {
     return this.editingRecipeId === null;
@@ -4381,7 +4396,9 @@ Alpine.data('app', () => ({
       // household reset (2026-10-04) — also light up when recipes.csv lacks
       // source_servings (a file already classified but not yet servings-tagged;
       // the recurring additive-column lesson — AND-in, never replace the gate).
-      || !isServingsTaggedRecipesHeader(recipes.columns || []);
+      || !isServingsTaggedRecipesHeader(recipes.columns || [])
+      // household reset slice 2 — and when the old "_20" column names remain.
+      || !isRenamedRecipesHeader(recipes.columns || []);
 
     // Phase 4 / Plan 04-02 — D-54 session counter seed + Fuse instance init
     // (ported from the old pickCsvFolder). maxIngredientIdAtSessionStart is the
@@ -5154,6 +5171,17 @@ Alpine.data('app', () => ({
     if (!(this.userName ?? '').trim()) {
       const e = new Error('Set your name in Settings to save to the shared database.');
       e.isPushNameMissing = true;
+      throw e;
+    }
+    // (1b) Household reset slice 2 — the schema-version guard. A column this app
+    // doesn't know means a NEWER Mise migrated the file; our row writers would
+    // blank it. Refuse (no PUT) and ask for a refresh. See KNOWN_CSV_COLUMNS.
+    const unknown = unknownCsvColumns(filename, record && record.columns);
+    if (unknown.length > 0) {
+      const e = new Error(
+        `This copy of Mise is out of date — refresh the page, then redo your change. (${filename} has a column this version doesn't know: ${unknown.join(', ')}.)`
+      );
+      e.isSchemaTooNew = true;
       throw e;
     }
     // (2) Read fresh cfg per call (never cache it) — mirrors pullFromRemote.
@@ -7481,12 +7509,18 @@ Alpine.data('app', () => ({
           ? "The recipe was saved, but its ingredient links weren't — someone else changed the file. Refresh, then re-save."
           : e.isPushVerifyMismatch
             ? "The recipe was saved, but the read-back of its ingredient links didn't match — please re-check and re-save."
-            : e.isPushNameMissing
+            : (e.isPushNameMissing || e.isSchemaTooNew)
               ? (e.message || 'Set your name in Settings to save to the shared database.')
               : "The recipe was saved, but its ingredient links couldn't be pushed to the shared database — try again.";
       // Phase 16: name the file that actually landed (carried on the error by the
       // orchestrator); fall back to recipes.csv for the established recipe pair.
       this.pushConflictOffer = { reason, kind: 'partialSave', filesWritten: e.partialSaveFilesWritten || ['recipes.csv'] };
+      return true;
+    }
+    // Slice 2 schema-version guard — like the name block, it never PUT. Reuses
+    // the nameMissing kind (a plain "fix this, then re-save" banner, no Refresh).
+    if (e.isSchemaTooNew) {
+      this.pushConflictOffer = { reason: e.message, kind: 'nameMissing' };
       return true;
     }
     // Missing-name block (D-07) — surfaces before status branches (it never PUT).
@@ -8995,8 +9029,8 @@ Alpine.data('app', () => ({
       name: '',
       main_side_salad: '',
       prep: '',
-      instructions_20: '',
-      ingredients_20: '',
+      instructions: '',
+      ingredients: '',
       // source is v.nullable(v.url()) — an EMPTY string ('') fails the URL
       // check and hard-errors, but null (= "no source") passes. The edit flow
       // tolerates '' only because it renders-not-blocks (D-20); since the new
@@ -13215,13 +13249,13 @@ Alpine.data('app', () => ({
     // cook-sheet paths cannot drift in how they build the model's INPUT.
     const headerById = this._recipeHeaderMap(recipes);
 
-    // D-17 gate: blank instructions_20 (empty/whitespace-only) is distinct from
+    // D-17 gate: blank instructions (empty/whitespace-only) is distinct from
     // "has text but doesn't split into steps" (D-16, handled in _buildCookModel).
     // Name the offending dishes and confirm() before producing the artifact.
     const blankDishes = [];
     for (const entry of (Array.isArray(group.entries) ? group.entries : [])) {
       const header = headerById.get(parseInt(entry.recipe_id, 10));
-      const instr = header ? String(header.instructions_20 ?? '') : '';
+      const instr = header ? String(header.instructions ?? header.instructions_20 ?? '') : '';
       if (instr.trim() === '') {
         blankDishes.push((header && header.name) || entry.name || `Recipe ${entry.recipe_id}`);
       }
@@ -13330,7 +13364,7 @@ Alpine.data('app', () => ({
       // getFile RESOLVES WITH null for an absent record — it does not throw
       // (csvStore.js: `if (!rec) return null`). Without this guard a missing
       // recipes.csv produced an empty header map, so every dish fell back to {},
-      // instructions_20 read as '' and the copy silently contained dish names and
+      // instructions read as '' and the copy silently contained dish names and
       // ingredients with NO METHOD for any dish — reported as "Copied ✓"
       // (re-review RR-W4). Silently-wrong output is worse than a named failure.
       if (!recipes) {
@@ -13430,7 +13464,7 @@ Alpine.data('app', () => ({
    * Amounts use the D-12 verbatim formula copied from index.html ~L1632 (metric
    * leads; volumetric shown in parens only when BOTH present). Header fields are
    * read from the DISK row (so disk column names: prep_notes / serve_with /
-   * instructions_20 — NOT the in-memory `prep` key). Planning metadata (popularity,
+   * instructions — NOT the in-memory `prep` key). Planning metadata (popularity,
    * difficulty, last_made, source, *_notes) is deliberately SUPPRESSED.
    *
    * dayKey is group.key VERBATIM — the 'YYYY-MM-DD' date string for scheduled days
@@ -13488,7 +13522,7 @@ Alpine.data('app', () => ({
         ? groupOrder
         : [{ heading: null, itemIndexes: ingredients.map((_, i) => i) }];
 
-      const instructionGroups = splitInstructionSteps(String(header.instructions_20 ?? ''));
+      const instructionGroups = splitInstructionSteps(String(header.instructions ?? header.instructions_20 ?? ''));
       const stepCount = instructionGroups.reduce((n, g) => n + (Array.isArray(g.steps) ? g.steps.length : 0), 0);
 
       return {
@@ -13790,8 +13824,8 @@ Alpine.data('app', () => ({
       // Disk column is `prep_notes` (legacy files may use `prep`); the editor
       // binds the in-memory key `prep` — boundary-translated like main_side_salad.
       prep: diskRow.prep_notes ?? diskRow.prep ?? '',
-      instructions_20: diskRow.instructions_20 ?? '',
-      ingredients_20: diskRow.ingredients_20 ?? '',
+      instructions: diskRow.instructions ?? diskRow.instructions_20 ?? '',
+      ingredients: diskRow.ingredients ?? diskRow.ingredients_20 ?? '',
       source: diskRow.source ?? '',
       max_servings: diskRow.max_servings === '' || diskRow.max_servings == null ? null : Number(diskRow.max_servings),
       source_servings: diskRow.source_servings === '' || diskRow.source_servings == null ? null : Number(diskRow.source_servings),
@@ -16055,7 +16089,7 @@ Alpine.data('app', () => ({
 
   /**
    * _classifyChunk — Phase 25 / CLASS-03 (D-09/D-17). Run ONE lean Sonnet
-   * classify call over a chunk of recipe rows. Sends ONLY name + ingredients_20 +
+   * classify call over a chunk of recipe rows. Sends ONLY name + ingredients +
    * type per recipe (NOT the master / conversions / 30KB parse system prompt),
    * with the small buildClassifySchema grammar-constrained to the CURRENT synced
    * vocab (resolved via effectiveVocab so it is always non-empty). Belt-and-braces:
@@ -16073,7 +16107,7 @@ Alpine.data('app', () => ({
     const items = recipeRows.map((r) => ({
       recipe_id: parseInt(r.recipe_id, 10),
       name: r.name ?? '',
-      ingredients_20: r.ingredients_20 ?? '',
+      ingredients: r.ingredients ?? r.ingredients_20 ?? '',
       type: r['main/side/salad'] ?? r['main_side_salad'] ?? ''
     }));
 
@@ -16906,6 +16940,13 @@ Alpine.data('app', () => ({
       this.parseError = 'Import your CSVs first.';
       return;
     }
+    // Slice 2: connected but read-only (offline / last pull failed) — refuse up
+    // front. A local-only migrate here could not be pushed and would be wiped by
+    // the next pull (the bug this slice fixes).
+    if (this.githubConnected && this.githubToken && this.readOnlyMode) {
+      this.parseError = "Can't migrate while the shared database is unreachable — reconnect (or refresh the page), then press Migrate.";
+      return;
+    }
     this.merging = true;
     this.parseError = '';
     this.lastMigrationSummary = null;
@@ -16966,7 +17007,8 @@ Alpine.data('app', () => ({
         // household reset (2026-10-04): AND-in the source_servings gate so a file
         // already carrying cuisine/protein/class_needs_review still gains it, and
         // the post-write verify requires BOTH gates.
-        isMigratedFn: cols => isClassifiedRecipesHeader(cols) && isServingsTaggedRecipesHeader(cols),
+        // Slice 2: AND-in the rename gate (no ingredients_20 / instructions_20 left).
+        isMigratedFn: cols => isClassifiedRecipesHeader(cols) && isServingsTaggedRecipesHeader(cols) && isRenamedRecipesHeader(cols),
         transformFn: migrateRecipesRows
       }));
 
@@ -16984,7 +17026,12 @@ Alpine.data('app', () => ({
         this.merging = false;
         return;
       }
-      this.parseError = `Couldn't migrate your data: ${(e && e.message) || 'unknown error'}.`;
+      // Slice 2: a shared-repo push failure (GhError family / HTTP status) gets the
+      // token-safe friendly copy; our own errors (collision, name missing, verify
+      // mismatch, schema-too-new) carry safe messages of their own.
+      const fromGitHub = e && ((typeof e.name === 'string' && e.name.startsWith('Gh')) || typeof e.status === 'number');
+      const why = fromGitHub ? this.githubFriendlyError(e) : ((e && e.message) || 'unknown error');
+      this.parseError = `Couldn't migrate your data: ${why} Files already migrated stay migrated; press Migrate again to finish the rest.`;
       this.merging = false;
     }
   },
@@ -17461,6 +17508,27 @@ Alpine.data('app', () => ({
         this.mergeRestoreOffer = { reason: e.message, filesWritten: [filename] };
       }
       throw e;
+    }
+
+    // 8. Household reset slice 2 (2026-10-04) — push the migrated file to the
+    //    SHARED repo. Before this, Migrate only rewrote the local cache, which the
+    //    next boot pull (remote-wins) silently overwrote with the un-migrated
+    //    remote — so no migration since multiplayer ever reached the shared data.
+    //    Same funnel as every other save: SHA-locked PUT (a stale cache 409s),
+    //    GET-back verify, and on ANY failure the cache is reverted to `current`.
+    //    Not connected at all = a local-only store; nothing to push (unchanged).
+    if (this.githubConnected && this.githubToken) {
+      await this._pushFileAfterCacheWrite({
+        filename,
+        columns: newColumns,
+        sha: current && current.meta && current.meta.sha,
+        newRows,
+        hasBOM,
+        newline,
+        headerCheckFn: isMigratedFn,
+        message: this.buildCommitMessage({ action: 'migrate', objectKind: 'schema of', title: filename }),
+        preEditRecord: current
+      });
     }
 
     // 9. Per-file success result. The disk migration_report_<ts>.csv is no longer
