@@ -9,11 +9,12 @@
 // test (scripts/scale.test.mjs) import it unchanged. Do NOT add a browser/CDN
 // import here or the Node test stops working.
 //
-// DOMAIN (grounding D-07): every recipe in the project is pre-normalized to a
-// FIXED 20 servings. quantity_metric (g/ml) is ALWAYS populated at 20 servings;
+// DOMAIN (D-07, SUPERSEDED 2026-10-04): recipes USED to be pre-normalized to a
+// fixed 20 servings. Each recipe now carries its own `source_servings` and its
+// stored quantities are at THAT size. quantity_metric (g/ml) is always populated;
 // quantity_volumetric + unit_volumetric (whole / tsp / tbsp / cup) are OPTIONAL.
 // To scale a recipe to N target servings we multiply every quantity by
-// factor = N / 20.
+// factor = N / source_servings (the legacy fixed-20 case is source_servings = 20).
 //
 // ----------------------------------------------------------------------------
 // THE null-factor CONVENTION (pin it, reuse it everywhere):
@@ -153,21 +154,30 @@ export function effectiveFactor(factor, strength) {
 }
 
 /**
- * factor(targetServings) — the multiplier to scale a fixed-20-servings recipe
- * to `targetServings`. Returns targetServings / 20 ONLY when targetServings is
- * a finite number strictly greater than 0. For blank ('' / null / undefined),
- * 0, negative, or NaN it returns `null` (the no-scaling-possible sentinel —
- * see the convention above). Never returns NaN.
+ * factor(targetServings, sourceServings = 20) — the multiplier to scale a recipe
+ * stored at `sourceServings` to `targetServings`. Returns target / source ONLY
+ * when BOTH are finite numbers strictly greater than 0. For blank ('' / null /
+ * undefined), 0, negative, or NaN in EITHER it returns `null` (the
+ * no-scaling-possible sentinel — see the convention above). Never returns NaN.
+ * `sourceServings` defaults to 20 only when OMITTED (legacy fixed-20 callers).
  *
  * @param {number|string|null|undefined} targetServings
+ * @param {number|string|null=} sourceServings
  * @returns {number|null}
  */
-export function factor(targetServings) {
+export function factor(targetServings, sourceServings = 20) {
   // Number('') === 0, Number(null) === 0, Number(undefined) === NaN — coerce
   // then gate on finite-and-positive so all the no-scaling cases collapse to null.
   const n = Number(targetServings);
   if (!Number.isFinite(n) || n <= 0) return null;
-  return n / 20;
+  // Household reset (2026-10-04) — the recipe's OWN servings. The default only
+  // fires when the arg is OMITTED (undefined), preserving the legacy fixed-20
+  // behaviour for old callers/tests. An explicit null / '' / 0 / negative source
+  // (a recipe whose "serves N" was never filled in) is NOT defaulted to 20 — it
+  // collapses to the no-scaling null, never a guessed factor.
+  const s = Number(sourceServings);
+  if (!Number.isFinite(s) || s <= 0) return null;
+  return n / s;
 }
 
 /**

@@ -177,6 +177,9 @@ import {
   // transform). cuisine + protein + class_needs_review ride one Migrate pass;
   // the gate is keyed on cuisine.
   isClassifiedRecipesHeader,
+  // household reset (2026-10-04) — the second recipes.csv additive-column gate
+  // (source_servings, backfilled '20'); rides the same Migrate pass.
+  isServingsTaggedRecipesHeader,
   migrateRecipesRows
 } from './merge.js';
 // quick 260612-abt — IndexedDB persistence substrate (replaces FSA folder handle).
@@ -440,7 +443,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = '05eda73 2026-10-03';
+const APP_VERSION = '1efdded 2026-10-04';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -1197,6 +1200,10 @@ function toHeaderCsvRow(formHeader, recipeId, capturedColumns) {
     ingredients_20:   formHeader.ingredients_20 ?? '',
     source:           formHeader.source ?? '',
     max_servings:     csvNumber(formHeader.max_servings),
+    // household reset (2026-10-04) — MANDATORY map entry (the documented `prep`
+    // footgun: a captured column absent from this map is written always-blank and
+    // every edit is silently dropped).
+    source_servings:  csvNumber(formHeader.source_servings),
     popularity:       csvNumber(formHeader.popularity),
     difficulty:       csvNumber(formHeader.difficulty),
     last_made:        formHeader.last_made ?? '',
@@ -1974,6 +1981,15 @@ Alpine.data('app', () => ({
   servingsPerResidentSideDraft: '',
   servingsPerResidentSalad: (() => { const v = parseFloat(localStorage.getItem('servings_per_resident_salad')); return Number.isFinite(v) ? v : 0.5; })(),
   servingsPerResidentSaladDraft: '',
+
+  // Household reset (2026-10-04) — the starting portion number for a newly planned
+  // dish (replaces the old fixed 4 / the roster headcount suggestion). A positive
+  // whole number, default 2, user-customisable in Settings → Planning, SYNCED via
+  // the settings.json per-key LWW rails (key `householdSize`). The per-dish box
+  // stays the only portion number; this only seeds it. String Draft sibling is
+  // re-seeded on Settings open and persisted on @change (saveHouseholdSize).
+  householdSize: (() => { const v = parseInt(localStorage.getItem('household_size'), 10); return Number.isFinite(v) && v >= 1 ? v : 2; })(),
+  householdSizeDraft: '',
 
   settingsOpen: false,
 
@@ -4361,7 +4377,11 @@ Alpine.data('app', () => ({
       // FIRST recipes.csv additive migration, D-16). `recipes` is the parsed
       // record read at the top of loadFromStore; protein + class_needs_review
       // ride the same Migrate pass, gated on the cuisine column.
-      || !isClassifiedRecipesHeader(recipes.columns || []);
+      || !isClassifiedRecipesHeader(recipes.columns || [])
+      // household reset (2026-10-04) — also light up when recipes.csv lacks
+      // source_servings (a file already classified but not yet servings-tagged;
+      // the recurring additive-column lesson — AND-in, never replace the gate).
+      || !isServingsTaggedRecipesHeader(recipes.columns || []);
 
     // Phase 4 / Plan 04-02 — D-54 session counter seed + Fuse instance init
     // (ported from the old pickCsvFolder). maxIngredientIdAtSessionStart is the
@@ -5574,6 +5594,7 @@ Alpine.data('app', () => ({
       servingsPerResidentMain: this.servingsPerResidentMain,
       servingsPerResidentSide: this.servingsPerResidentSide,
       servingsPerResidentSalad: this.servingsPerResidentSalad,
+      householdSize: this.householdSize,
       scaleStrengths: JSON.stringify(this.scaleStrengths),
       pantrySections: JSON.stringify(this.pantrySections),
       systemPromptOverride: this.systemPromptOverride ?? '',
@@ -5640,6 +5661,16 @@ Alpine.data('app', () => ({
               String(n)
             );
           } else { applied = false; } // never store NaN — skip this key
+          break;
+        }
+        case 'householdSize': {
+          // Defensive per T-i1y-03: a positive whole number only, capped at 1000;
+          // anything else is skipped (never store NaN / 0 / a fraction).
+          const n = Math.round(Number(value));
+          if (Number.isFinite(n) && n >= 1 && n <= 1000) {
+            this.householdSize = n;
+            localStorage.setItem('household_size', String(n));
+          } else { applied = false; }
           break;
         }
         case 'scaleStrengths': {
@@ -6650,7 +6681,8 @@ Alpine.data('app', () => ({
   scaleNoteText(entry, group) {
     const s = this.suggestedServingsFor(entry, group);
     if (s) return `Suggested: ${s.servings} servings`;
-    if (this.factorOrNull(entry.servings) !== null) return `scaled 20 → ${entry.servings} servings · ×${Math.round(entry.servings / 20 * 100) / 100}`;
+    const src = this.sourceServingsFor(entry.recipe_id);
+    if (this.factorOrNull(entry.servings, entry.recipe_id) !== null) return `scaled ${src} → ${entry.servings} servings · ×${Math.round(entry.servings / src * 100) / 100}`;
     return '';
   },
 
@@ -7691,6 +7723,20 @@ Alpine.data('app', () => ({
     apply(this.servingsPerResidentSideDraft, 'servingsPerResidentSide', 'servings_per_resident_side', 'servingsPerResidentSide');
     apply(this.servingsPerResidentSaladDraft, 'servingsPerResidentSalad', 'servings_per_resident_salad', 'servingsPerResidentSalad');
     this.settingsOpen = false;
+  },
+
+  // saveHouseholdSize — household reset (2026-10-04). Persist the household-size
+  // draft: accept ONLY a positive whole number (1..1000) — on accept assign the field,
+  // write localStorage and stamp the synced key; on reject leave the persisted value
+  // untouched and snap the draft back to it (never store NaN / 0 / a fraction).
+  saveHouseholdSize() {
+    const n = Math.round(parseFloat(this.householdSizeDraft));
+    if (Number.isFinite(n) && n >= 1 && n <= 1000) {
+      this.householdSize = n;
+      localStorage.setItem('household_size', String(n));
+      this.stampSetting('householdSize'); // synced: bump clock + push (best-effort)
+    }
+    this.householdSizeDraft = String(this.householdSize);
   },
 
   // ----- Settings: scaling strengths (quick 260612-dr4) -----
@@ -8735,6 +8781,7 @@ Alpine.data('app', () => ({
       this.servingsPerResidentMainDraft = String(this.servingsPerResidentMain);
       this.servingsPerResidentSideDraft = String(this.servingsPerResidentSide);
       this.servingsPerResidentSaladDraft = String(this.servingsPerResidentSalad);
+      this.householdSizeDraft = String(this.householdSize);
       // quick 260712-c44 — seed the weather-location draft (LOAD-BEARING, same
       // reason as the coda/github drafts: persistence is on @blur, so without
       // re-seeding reopening Settings would show a stale blank). The status line
@@ -8958,6 +9005,7 @@ Alpine.data('app', () => ({
       // (source ?? '') → still writes a blank cell to disk.
       source: null,
       max_servings: null,
+      source_servings: null,
       popularity: null,
       difficulty: null,
       last_made: '',
@@ -9231,6 +9279,10 @@ Alpine.data('app', () => ({
         type: r['main/side/salad'] ?? r['main_side_salad'] ?? '',
         // quick 260618-e1z — additive picker fields (null-coercion mirrors the editor header read).
         max_servings: (r.max_servings === '' || r.max_servings == null) ? null : Number(r.max_servings),
+        // household reset (2026-10-04) — the servings the recipe's stored quantities
+        // are written for. null (blank/missing/garbage) = "not filled in": the meal
+        // plan cannot scale that recipe and shows a hint rather than a guessed factor.
+        source_servings: (r.source_servings === '' || r.source_servings == null || !(Number(r.source_servings) > 0)) ? null : Number(r.source_servings),
         last_made: r.last_made ?? '',
         difficulty: (r.difficulty === '' || r.difficulty == null) ? null : Number(r.difficulty),
         // Phase 25 (CLASS-05) — cuisine/protein arrays (TOLERANT split /[;,]/ per D-13:
@@ -9625,7 +9677,8 @@ Alpine.data('app', () => ({
       recipe_id: rid,
       name: meta ? meta.name : '',
       type: meta ? meta.type : '',
-      servings: 4,
+      // Household reset (2026-10-04) — start at the household-size setting (default 2).
+      servings: this.householdSize,
       // quick 260615-dap — cards default COLLAPSED (head only). Per-card toggle
       // flips this independently. Persisted in the minimal localStorage projection.
       collapsed: true,
@@ -9633,13 +9686,11 @@ Alpine.data('app', () => ({
       // quick 260621-amm — now seeded from the day-targeted add (defaults to '').
       date: (typeof date === 'string') ? date : ''
     };
-    // quick 260712-f06 — auto-seed servings to the advisory suggested amount
-    // (headcount × per-type multiplier) instead of the fixed 4, reusing the SAME
-    // computation as the card note / click-to-apply. suggestedServingsFor returns
-    // null for Unscheduled (date ''), roster-not-loaded, or non-Main/Side/Salad —
-    // in which case the entry keeps servings: 4.
-    const suggestion = this.suggestedServingsFor(entry, { key: entry.date });
-    if (suggestion) entry.servings = suggestion.servings;
+    // quick 260712-f06 auto-seeded servings from the roster headcount here. REMOVED in
+    // the household reset (2026-10-04): the per-dish box is the ONLY portion number and
+    // the household-size setting seeds it, so a loaded roster must not override it. The
+    // advisory "Suggested: N" line + click-to-apply are untouched (and go dormant with
+    // the other house features).
     this.mealPlan.push(entry);
     // quick 260615-dap — explicit persist (plan-check WARNING: Alpine $watch is
     // unreliable on nested array-element mutations, so we persist directly on
@@ -11595,7 +11646,17 @@ Alpine.data('app', () => ({
    * servings number" hint in that case instead of these rows.
    */
   scaledRowsFor(entry) {
-    const f = factor(entry && entry.servings);
+    // household reset (2026-10-04) — scale from the recipe's OWN servings, not a
+    // fixed 20. A recipe with no source_servings yields a null factor → originals
+    // pass through (never NaN, never a guessed factor) and the card shows a hint.
+    // Household reset code review (2026-10-04) — THE ONE ENFORCEMENT POINT: a dish that
+    // cannot be scaled (blank portion box, OR a recipe with no source_servings) yields NO
+    // rows. Before this, a null factor passed the STORED (unscaled) amounts through, and
+    // the shopping list, the day tray and the cook sheet all summed them as if correct.
+    // combinedShoppingList reports the skipped dishes in `unscaled` so they are never
+    // dropped silently; the meal-plan card shows its own hint (scaleBlockReason).
+    if (this.scaleBlockReason(entry) !== '') return [];
+    const f = factor(entry && entry.servings, this.sourceServingsFor(entry && entry.recipe_id));
     const src = (entry && this.mealPlanGrouped[entry.recipe_id]) || [];
     // quick 260612-dr4 — pass the per-category strength map so seasoning/leavening
     // scale sub-linearly and fixed items stay at base. combinedShoppingList sums
@@ -11726,8 +11787,38 @@ Alpine.data('app', () => ({
    * servings so the template can show a "set a servings number" hint instead of
    * rendering NaN amounts.
    */
-  factorOrNull(servings) {
-    return factor(servings);
+  factorOrNull(servings, recipeId) {
+    // household reset (2026-10-04) — pass the recipe's own servings when a recipe id
+    // is given. With NO recipe id (legacy caller) the fixed-20 default still applies.
+    if (recipeId === undefined) return factor(servings);
+    return factor(servings, this.sourceServingsFor(recipeId));
+  },
+
+  /**
+   * sourceServingsFor — household reset (2026-10-04). The number of servings the
+   * recipe's stored quantities are written for (recipes.csv `source_servings`), read
+   * from the browse list. null when the recipe is unknown or the cell is blank/
+   * invalid ("not filled in") — the caller then gets a null scale factor.
+   */
+  sourceServingsFor(recipeId) {
+    const rid = Number(recipeId);
+    const list = Array.isArray(this.recipeList) ? this.recipeList : [];
+    const meta = list.find(r => r.recipe_id === rid);
+    return meta ? meta.source_servings : null;
+  },
+
+  /**
+   * scaleBlockReason — household reset (2026-10-04). Why a planned dish can't be
+   * scaled right now: 'servings' (the dish's own portion box is blank/0/negative —
+   * checked via factor()'s default source, which is irrelevant because a bad TARGET
+   * is null whatever the source),
+   * 'source' (the RECIPE has no "serves N" number yet), or '' (scalable). Drives the
+   * two different hints on the meal-plan card.
+   */
+  scaleBlockReason(entry) {
+    if (factor(entry && entry.servings) === null) return 'servings';
+    if (this.sourceServingsFor(entry && entry.recipe_id) === null) return 'source';
+    return '';
   },
 
   /**
@@ -11783,6 +11874,7 @@ Alpine.data('app', () => ({
     //   metricByUnit: Map<unit, total>, wholeTotal, missingWhole:bool }.
     const acc = new Map();
     const unknown = new Map(); // name -> true (dedup by name)
+    const unscaled = [];       // household reset — dishes skipped because they can't be scaled
     // quick 260628-v0i — ids that got a RECIPE-derived contribution into `acc` (the loop
     // below), so each emitted line can be tagged source:'recipe' vs source:'manual'
     // (regulars/ad-hoc only). Drives the provenance-aware remove + the strikethrough gate.
@@ -11836,6 +11928,10 @@ Alpine.data('app', () => ({
       // (trayForDay) use a separate path and are deliberately untouched.
       if (!this.isDayInOrderScope(this._dayKeyForEntry(entry))) continue;
       const entryName = entry.name || '(unnamed)'; // quick 260707-mvi — resolved once per entry (mirrors app.js 5231 / index.html fallback)
+      // Household reset code review — an unscalable dish contributes nothing (scaledRowsFor
+      // returns []); record it so the list can say it was NOT counted.
+      const blockReason = this.scaleBlockReason(entry);
+      if (blockReason !== '') unscaled.push({ name: entryName, reason: blockReason, date: this._dayKeyForEntry(entry) });
       const rows = this.scaledRowsFor(entry);
       for (const row of rows) {
         const iid = row.ingredient_id;
@@ -11985,6 +12081,7 @@ Alpine.data('app', () => ({
 
     return {
       lines,
+      unscaled,
       unknown: [...unknown.keys()].map(nm => ({ ingredient_name: nm, recipeNames: namesByName.has(nm) ? [...namesByName.get(nm)] : [] })), // recipeNames: quick 260707-mvi
       checkStock
     };
@@ -13697,6 +13794,7 @@ Alpine.data('app', () => ({
       ingredients_20: diskRow.ingredients_20 ?? '',
       source: diskRow.source ?? '',
       max_servings: diskRow.max_servings === '' || diskRow.max_servings == null ? null : Number(diskRow.max_servings),
+      source_servings: diskRow.source_servings === '' || diskRow.source_servings == null ? null : Number(diskRow.source_servings),
       popularity: diskRow.popularity === '' || diskRow.popularity == null ? null : Number(diskRow.popularity),
       difficulty: diskRow.difficulty === '' || diskRow.difficulty == null ? null : Number(diskRow.difficulty),
       last_made: diskRow.last_made ?? '',
@@ -16865,7 +16963,10 @@ Alpine.data('app', () => ({
       // guards the whole-file rewrite byte-faithfully (DSAFE-02 / T-25-04/05).
       files.push(await this._migrateOneFile({
         filename: 'recipes.csv',
-        isMigratedFn: isClassifiedRecipesHeader,
+        // household reset (2026-10-04): AND-in the source_servings gate so a file
+        // already carrying cuisine/protein/class_needs_review still gains it, and
+        // the post-write verify requires BOTH gates.
+        isMigratedFn: cols => isClassifiedRecipesHeader(cols) && isServingsTaggedRecipesHeader(cols),
         transformFn: migrateRecipesRows
       }));
 

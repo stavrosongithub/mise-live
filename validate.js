@@ -123,6 +123,8 @@ const RecipeHeaderSchema = v.object({
   // D-20: non-fixable → red inline label, Approve still works.
   source:           v.nullable(v.pipe(v.string(), v.url())),
   max_servings:     v.nullable(v.integer()),
+  // Household reset (2026-10-04) — the recipe's own servings; null = not stated.
+  source_servings:  v.nullable(v.integer()),
   // popularity / difficulty are NOT range-checked here — Stage 1 already
   // clamped them. Re-checking in Stage 2 would surface a stale hardError
   // every time Stage 1 succeeded, defeating the auto-fix UX.

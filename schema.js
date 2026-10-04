@@ -21,8 +21,9 @@
 //     array-nullability sugar with HTTP 400).
 //   - `recipe_id` is DELIBERATELY OMITTED — allocated locally at Approve
 //     (RESEARCH §3 footnote, Pitfall I).
-//   - `source_servings` is DELIBERATELY OMITTED — the user pre-scales every
-//     recipe to 20 servings before pasting (D-07, permanent project decision).
+//   - `source_servings` WAS deliberately omitted while every recipe was pre-scaled
+//     to a fixed 20 servings (D-07). D-07 was SUPERSEDED 2026-10-04 (household
+//     reset): recipes now keep their own size and `source_servings` is extracted.
 //
 // SCHEMA-VS-REQUIREMENTS DIVERGENCE — `prep` is free-text:
 //   The live `recipes.csv` column is `prep_notes`, holding free-text like
@@ -242,6 +243,7 @@ export function buildRecipeSchema(masterIds, cuisineEnum, proteinEnum) {
           'ingredients_20',
           'source',
           'max_servings',
+          'source_servings',
           'popularity',
           'difficulty',
           'last_made',
@@ -262,6 +264,10 @@ export function buildRecipeSchema(masterIds, cuisineEnum, proteinEnum) {
           ingredients_20:   { type: 'string' },
           source:           { anyOf: [{ type: 'string', format: 'uri' }, { type: 'null' }] },
           max_servings:     { anyOf: [{ type: 'integer' }, { type: 'null' }] },
+          // Household reset (2026-10-04) — how many servings the recipe, AS WRITTEN,
+          // serves (the stored quantities are at THIS size). null when the pasted text
+          // does not say; never guessed (blank is flagged for the user to fill in).
+          source_servings:  { anyOf: [{ type: 'integer' }, { type: 'null' }] },
           popularity:       { anyOf: [{ type: 'integer' }, { type: 'null' }] },
           difficulty:       { anyOf: [{ type: 'integer' }, { type: 'null' }] },
           last_made:        { anyOf: [{ type: 'string', format: 'date' }, { type: 'null' }] },

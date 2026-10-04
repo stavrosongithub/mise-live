@@ -438,6 +438,22 @@ export function isClassifiedRecipesHeader(columns) {
 }
 
 /**
+ * isServingsTaggedRecipesHeader — single-column gate for the household-reset
+ * recipes.csv migration (2026-10-04): the additive `source_servings` column
+ * (the number of servings the recipe's stored quantities are written for;
+ * replaces the old fixed-20 rule, D-07). Independent of the classification gate
+ * above — the two are AND-ed together wherever "is recipes.csv fully migrated?"
+ * is asked (schemaMigrationNeeded + the Migrate isMigratedFn), per the recurring
+ * additive-column lesson (a file already carrying cuisine must STILL gain this).
+ *
+ * @param {string[]} columns
+ * @returns {boolean}
+ */
+export function isServingsTaggedRecipesHeader(columns) {
+  return Array.isArray(columns) && columns.includes('source_servings');
+}
+
+/**
  * migrateRecipesRows — mechanical, no-LLM, ADDITIVE backfill of the live
  * recipes.csv to carry the three classification columns cuisine, protein, and
  * class_needs_review (phase 25 / D-12 / CLASS-01). D-12 is explicit: the Migrate
@@ -448,7 +464,8 @@ export function isClassifiedRecipesHeader(columns) {
  * name-heuristic.
  *
  *   newColumns: a COPY of oldColumns with cuisine, protein, class_needs_review
- *               APPENDED at the end, each ONLY when absent (additive; nothing is
+ *               (and, since 2026-10-04, source_servings — backfilled '20', not
+ *               blank, see below) APPENDED at the end, each ONLY when absent (additive; nothing is
  *               spliced/replaced — byte-faithful order preserved, DSAFE-02).
  *   newRows:    each input row copied verbatim (every oldColumns cell FIRST),
  *               then each absent new column set to '' (blank).
@@ -467,10 +484,13 @@ export function migrateRecipesRows(rows, oldColumns) {
   const hadCuisine = cols.includes('cuisine');
   const hadProtein = cols.includes('protein');
   const hadFlag = cols.includes('class_needs_review');
+  // Household reset (2026-10-04): source_servings rides the same pass.
+  const hadServings = cols.includes('source_servings');
   const newColumns = cols.slice();
   if (!hadCuisine) newColumns.push('cuisine');
   if (!hadProtein) newColumns.push('protein');
   if (!hadFlag) newColumns.push('class_needs_review');
+  if (!hadServings) newColumns.push('source_servings');
 
   const newRows = (rows || []).map(r => {
     const out = {};
@@ -493,6 +513,15 @@ export function migrateRecipesRows(rows, oldColumns) {
     }
     if (!hadFlag) {
       out.class_needs_review = '';
+    }
+    // source_servings is the ONE column that is NOT backfilled blank: every recipe
+    // that exists BEFORE this migration was stored at the fixed 20 servings (D-07),
+    // so those rows are tagged '20' (quantities untouched). Gated on the column
+    // being ABSENT — once it exists, a deliberately-blank cell (an import whose
+    // "serves N" was not stated and is flagged for the user) is NEVER re-filled
+    // with 20 by a later Migrate run.
+    if (!hadServings) {
+      out.source_servings = '20';
     }
     return out;
   });

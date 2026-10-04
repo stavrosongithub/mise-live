@@ -1300,6 +1300,12 @@ label select {
   letter-spacing: normal;
   text-transform: none;
 }
+/* Household reset (2026-10-04) — the recipe "Serves" field when it is blank: the
+   recipe can't be scaled yet. Amber ground only (token), same family as the other
+   missing-data cues. (0,2,1) specificity beats the shared `label input[type=number]`. */
+.schema-label input.field-missing {
+  background: var(--warn-bg);
+}
 .schema-label > .help,
 .schema-label > .validation-warning,
 .schema-label > .validation-error,

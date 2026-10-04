@@ -87,7 +87,7 @@ export const FIELD_LABELS = Object.freeze({
   // --- header, writable (10) ---
   name:                 'Name',
   main_side_salad:      'Type',
-  instructions_20:      'Instructions (at 20 servings)',
+  instructions_20:      'Instructions',
   prep:                 'Prep',
   serve_with:           'Serve with',
   max_servings:         'Max servings',

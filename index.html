@@ -362,7 +362,7 @@
                   x-model="rawText"
                   :readonly="approved"
                   @blur="estimateTokenCost()"
-                  placeholder="Paste recipe (pre-scaled to 20 servings)"></textarea>
+                  placeholder="Paste a recipe, at whatever size it was written for (include how many it serves)"></textarea>
         <!-- REVIEW-07 / D-29..D-31 / UI-SPEC Option C — review-mode left pane.
              Renders ONLY after parse (form.header truthy). The textarea above
              is hidden; this <pre> shows the raw paste line-by-line, each line
@@ -2906,10 +2906,14 @@
             <div class="meal-plan-recipe-body">
             <!-- GUARD: blank/0/negative servings (factor === null) -> hint, not NaN. -->
             <p class="meal-plan-hint"
-               x-show="factorOrNull(entry.servings) === null"
+               x-show="scaleBlockReason(entry) === 'servings'"
                x-cloak>Set a servings number to scale this recipe.</p>
+            <!-- Household reset (2026-10-04): the RECIPE itself has no "serves N" yet. -->
+            <p class="meal-plan-hint"
+               x-show="scaleBlockReason(entry) === 'source'"
+               x-cloak>This recipe has no "serves" number yet, so it can't be scaled. Open the recipe and enter how many it serves.</p>
 
-            <template x-if="factorOrNull(entry.servings) !== null">
+            <template x-if="scaleBlockReason(entry) === ''">
               <div class="meal-plan-rows">
                 <!-- GUARD: recipe with no ingredient rows. -->
                 <p class="meal-plan-hint"
@@ -3179,6 +3183,20 @@
             </ul>
           </div>
         </template>
+
+        <!-- Household reset code review (2026-10-04) — dishes that could NOT be scaled
+             (no portion number, or the recipe has no "serves" number) contribute NOTHING
+             to this list; name them so a short order is never silent. -->
+        <div class="shopping-unknown" x-show="combinedShoppingList.unscaled.length > 0" x-cloak>
+          <p class="shopping-caveat">⚠ Not counted in this list (can't be scaled yet):</p>
+          <ul class="shopping-list-items">
+            <template x-for="(u, i) in combinedShoppingList.unscaled" :key="i">
+              <li class="shopping-list-item">
+                <span class="shopping-name" x-text="u.name + (u.reason === 'source' ? ' — recipe has no \'serves\' number' : ' — no portion number set')"></span>
+              </li>
+            </template>
+          </ul>
+        </div>
 
         <!-- Couldn't-combine bucket: unknown / blank ingredient_id (never dropped). -->
         <div class="shopping-unknown" x-show="combinedShoppingList.unknown.length > 0" x-cloak>
@@ -4485,6 +4503,19 @@
               <p class="settings-sec-eyebrow">Planning preferences</p>
               <h3 class="settings-sec-h">How the plan suggests and scales</h3>
 
+              <!-- Household reset (2026-10-04) — the starting portion number for a newly
+                   planned dish. Auto-saved on @change via saveHouseholdSize (synced). -->
+              <fieldset class="scaling-settings">
+                <legend>Household size<span class="settings-saved" x-show="savedTick === 'household'" x-cloak>Saved ✓</span></legend>
+                <label>
+                  People
+                  <input type="number" min="1" step="1"
+                         x-model="householdSizeDraft"
+                         @change="saveHouseholdSize(); tick('household')" />
+                </label>
+                <p class="help">how many portions a newly added dish starts at — you can change each dish's number in the meal plan</p>
+              </fieldset>
+
               <!-- quick 260620-rm6 — advisory suggested-servings multipliers
                    (Main/Side/Salad). Auto-saved on @change via saveServingsConfig;
                    settingsOpen re-asserted (batch handler closes on save). -->
@@ -5663,6 +5694,15 @@
           </template>
         </label>
         <label class="schema-label c2">
+          Serves
+          <!-- Household reset (2026-10-04) — how many servings the quantities below are
+               written for. Drives meal-plan scaling (target / this). Blank = the recipe
+               cannot be scaled yet; import leaves it blank when the text doesn't say. -->
+          <input type="number" step="1" min="1" x-model.number="form.header.source_servings" :disabled="editorDisabled"
+                 :class="{ 'field-missing': !(form.header.source_servings > 0) }" />
+          <span class="help" x-show="!(form.header.source_servings > 0)" x-cloak>Not set — this recipe can't be scaled in the meal plan until you enter how many it serves.</span>
+        </label>
+        <label class="schema-label c2">
           Max servings
           <!-- 03-REVIEW CR-03 — step="1" so the spinner constrains to integers. -->
           <input type="number" step="1" x-model.number="form.header.max_servings" :disabled="editorDisabled" />
@@ -5761,7 +5801,7 @@
           <textarea rows="2" x-model="form.header.prep" :disabled="editorDisabled"></textarea>
         </label>
         <label class="schema-label c12">
-          Instructions (at 20 servings)
+          Instructions
           <textarea rows="8" x-model="form.header.instructions_20" :disabled="editorDisabled"></textarea>
           <!-- D-3 TEXT SYNC = none — maintained separately, never regenerated. -->
           <span class="help">Maintained separately — not auto-generated from the ingredient rows.</span>
@@ -5772,7 +5812,7 @@
              quick 260627-q7x — the showHeaderIngredients20 gate is KEPT verbatim; it now lives
              inside the More-fields disclosure (still parse-only). -->
         <label class="schema-label c12" x-show="showHeaderIngredients20" x-cloak>
-          Ingredients (at 20 servings)
+          Ingredients
           <textarea rows="6" x-model="form.header.ingredients_20" :disabled="editorDisabled"></textarea>
           <span class="help">Maintained separately — not auto-generated from the ingredient rows.</span>
         </label>
