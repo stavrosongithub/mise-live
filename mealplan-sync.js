@@ -46,12 +46,16 @@ export const SHARED_MAP_FIELDS = ['cooksByDay', 'dayLeftovers', 'prepDoneByDay',
 // The entry fields that ride the shared doc (NO `collapsed` — that is view-state).
 // Lunches (2026-10-06): `meal` is OPTIONAL — present ONLY as 'lunch'; absent = dinner.
 // Every pre-lunches entry therefore projects byte-identically (no spurious merge diffs).
-export const SHARED_ENTRY_FIELDS = ['id', 'recipe_id', 'date', 'servings', 'meal'];
+export const SHARED_ENTRY_FIELDS = ['id', 'recipe_id', 'date', 'servings', 'meal', 'leftoverOf'];
 
-// withMeal — copy an entry's meal tag onto a projected entry: { meal: 'lunch' } for a
-// lunch, nothing at all for dinner (the default). The ONE place that rule lives.
+// withMeal — copy an entry's optional tags onto a projected entry. The ONE place
+// these rules live:
+//  - meal: { meal: 'lunch' } for a lunch, nothing at all for dinner (the default).
+//  - leftoverOf (leftovers, 2026-10-06): the id of the earlier dish this one is
+//    leftovers of; absent = a freshly cooked dish (the default).
 export function withMeal(projected, e) {
   if (e && e.meal === 'lunch') projected.meal = 'lunch';
+  if (e && typeof e.leftoverOf === 'string' && e.leftoverOf) projected.leftoverOf = e.leftoverOf;
   return projected;
 }
 
@@ -82,7 +86,7 @@ export function emptySharedPlanDoc() {
 /**
  * projectSharedPlanDoc — PURE projection of raw plan state into the synced
  * document (SPEC #1). Prunes per-entry `collapsed` (view-state) from each entry;
- * carries only the 4 SHARED entry fields; copies the keyed maps + adHocExtras +
+ * carries only the SHARED_ENTRY_FIELDS (+ withMeal's optional tags); copies the keyed maps + adHocExtras +
  * orderScopeRange. Defensive: a non-array entries / non-object map coerces to the
  * empty default for that field so a malformed live state never produces a doc
  * that fails the shapeCheck.

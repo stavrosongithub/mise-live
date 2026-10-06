@@ -446,7 +446,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'd68e216 2026-10-06';
+const APP_VERSION = 'f9b3039 2026-10-06';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -466,6 +466,9 @@ const MEAL_PLAN_BASE_KEY = 'recipe_ingest_meal_plan_base';
 // (locked decision 3). Purely presentational: no data model, no persistence.
 const FRIDGE_LIFE_DAYS = 3;
 const BIN_VISIBLE_DAYS = 3;
+// Leftovers (2026-10-06) — how many days back the Add picker's "Leftovers of…"
+// section looks for dishes. Past FRIDGE_LIFE_DAYS it still lists them, with a warning.
+const LEFTOVER_PICK_DAYS = 6;
 
 // Hardcoded short recipe shown when the user clicks the dev-only Load Example
 // button. Already framed as scaled-to-20-servings (D-07). Trivial to remove.
@@ -3941,6 +3944,9 @@ Alpine.data('app', () => ({
   // ⋯ toggle and the @click.outside handler (guarded on group.key). MUST NOT be added
   // to _persistMealPlanUi/_restoreMealPlanUi.
   swapPickerOpenFor: '',
+  // Leftovers (2026-10-06) — id of the dish whose Remove is asking what to do with
+  // its leftovers ('' = none). Transient view state, never synced.
+  removeAskFor: '',
   // quick 260607-anu — transient one-time-migration result banner. Shapes:
   // { migrated, rowCount, backfillCount } | { alreadyMigrated:true }. A verify
   // failure surfaces via the informational mergeRestoreOffer (putFile auto-revert).
@@ -6487,22 +6493,12 @@ Alpine.data('app', () => ({
   binToBinFor(group) {
     const dayKey = group && typeof group.key === 'string' ? group.key : '';
     if (!dayKey) return []; // '' (Unscheduled) / no key → nothing to bin.
-    // Whole days between two 'YYYY-MM-DD' via LOCAL midnight (matches _stepDayKey/
-    // _dayLabel — no toISOString). Returns null on malformed either side.
-    const dayDiff = (fromKey, toKey) => {
-      const fp = String(fromKey).split('-');
-      const tp = String(toKey).split('-');
-      if (fp.length !== 3 || tp.length !== 3) return null;
-      const fy = Number(fp[0]), fm = Number(fp[1]), fd = Number(fp[2]);
-      const ty = Number(tp[0]), tm = Number(tp[1]), td = Number(tp[2]);
-      if (![fy, fm, fd, ty, tm, td].every(Number.isFinite)) return null;
-      const from = new Date(fy, fm - 1, fd); // LOCAL midnight
-      const to = new Date(ty, tm - 1, td);
-      return Math.round((to - from) / 86400000); // whole days (DST-safe via round)
-    };
+    // Whole days via LOCAL midnight — shared with the leftovers fridge warning.
+    const dayDiff = (fromKey, toKey) => this._daysBetween(fromKey, toKey);
     const out = [];
     for (const entry of this.pastEntries) {
       if ((entry.type || '').trim().toLowerCase() !== 'main') continue; // strict dinner only
+      if (this.isLeftover(entry)) continue; // only freshly cooked dishes start a fridge clock
       const binDate = this._stepDayKey(entry.date, FRIDGE_LIFE_DAYS);
       if (binDate === '') continue; // malformed cooked date → skip
       const daysOver = dayDiff(binDate, dayKey);
@@ -6713,6 +6709,7 @@ Alpine.data('app', () => ({
    */
   suggestedServingsFor(entry, group) {
     if (!this.houseMode) return null; // household reset slice 3 — headcount suggestions are house-only
+    if (this.isLeftover(entry)) return null; // leftover portions aren't headcount-driven
     const base = this.headcountForDate(group && group.key);
     if (base === null) return null;
     // quick 260621-lft — scale the suggestion to the EFFECTIVE headcount so a cooking
@@ -6740,8 +6737,15 @@ Alpine.data('app', () => ({
   scaleNoteText(entry, group) {
     const s = this.suggestedServingsFor(entry, group);
     if (s) return `Suggested: ${s.servings} servings`;
+    if (this.isLeftover(entry)) return '';
     const src = this.sourceServingsFor(entry.recipe_id);
-    if (this.factorOrNull(entry.servings, entry.recipe_id) !== null) return `scaled ${src} → ${entry.servings} servings · ×${Math.round(entry.servings / src * 100) / 100}`;
+    if (this.factorOrNull(entry.servings, entry.recipe_id) !== null) {
+      const cook = this.cookServingsFor(entry);
+      const extra = cook - Number(entry.servings);
+      // Leftovers — say the cook amount grew, so the bigger quantities aren't a surprise.
+      if (extra > 0) return `cook ${cook} (${entry.servings} + ${extra} leftovers) · ×${Math.round(cook / src * 100) / 100}`;
+      return `scaled ${src} → ${entry.servings} servings · ×${Math.round(entry.servings / src * 100) / 100}`;
+    }
     return '';
   },
 
@@ -9751,7 +9755,7 @@ Alpine.data('app', () => ({
    * crypto.randomUUID id, servings 4, collapsed true); only the seeded date value
    * differs, set through the existing _persistMealPlan path. NO new persisted fields.
    */
-  addToMealPlanForDate(recipe_id, date, meal) {
+  addToMealPlanForDate(recipe_id, date, meal, leftoverOf) {
     const rid = Number(recipe_id);
     const meta = this.recipeList.find(r => r.recipe_id === rid);
     const entry = {
@@ -9772,6 +9776,8 @@ Alpine.data('app', () => ({
     };
     // Lunches (2026-10-06) — tag lunch dishes only; no tag = dinner (the default).
     if (meal === 'lunch') entry.meal = 'lunch';
+    // Leftovers (2026-10-06) — a leftover dish links back to its source dish.
+    if (typeof leftoverOf === 'string' && leftoverOf) entry.leftoverOf = leftoverOf;
     // quick 260712-f06 auto-seeded servings from the roster headcount here. REMOVED in
     // the household reset (2026-10-04): the per-dish box is the ONLY portion number and
     // the household-size setting seeds it, so a loaded roster must not override it. The
@@ -9901,7 +9907,133 @@ Alpine.data('app', () => ({
     if (!entry) return;
     if (meal === 'lunch') entry.meal = 'lunch';
     else delete entry.meal;
+    this._clearBrokenLeftoverLinks();
     this._persistMealPlan();
+  },
+
+  // --- Leftovers (2026-10-06) -------------------------------------------------
+  // A leftover is a dish with entry.leftoverOf = the id of an EARLIER freshly
+  // cooked dish (its "source"). It adds nothing to shopping / prep / the tray; its
+  // portions are added to the source's cook amount instead (cookServingsFor, read by
+  // scaledRowsFor — so shopping, tray and cook sheet all follow). A link that no
+  // longer holds (source gone, source itself a leftover, source not earlier) reads
+  // as a normal fresh dish.
+  // Sortable meal position: 'YYYY-MM-DD#0' for lunch, '#1' for dinner; '' = no date.
+  _mealOrder(entry) {
+    const d = entry && typeof entry.date === 'string' ? entry.date : '';
+    return d ? `${d}#${entry.meal === 'lunch' ? 0 : 1}` : '';
+  },
+  leftoverSourceFor(entry) {
+    if (!entry || typeof entry.leftoverOf !== 'string' || !entry.leftoverOf) return null;
+    const src = (Array.isArray(this.mealPlan) ? this.mealPlan : []).find(e => e.id === entry.leftoverOf);
+    if (!src) return null;
+    const a = this._mealOrder(src), b = this._mealOrder(entry);
+    if (!a || !b || a >= b) return null;
+    // A source that is itself a working leftover can't be a source (pick the original).
+    // A stale link on the source (e.g. left by sync) is ignored the same way everywhere.
+    // Recursion ends: each step moves strictly earlier.
+    if (this.leftoverSourceFor(src)) return null;
+    return src;
+  },
+  isLeftover(entry) {
+    return this.leftoverSourceFor(entry) !== null;
+  },
+  leftoversOf(entry) {
+    if (!entry || !entry.id) return [];
+    return (Array.isArray(this.mealPlan) ? this.mealPlan : []).filter(e => {
+      if (e.leftoverOf !== entry.id) return false;
+      const s = this.leftoverSourceFor(e);
+      return !!s && s.id === entry.id;
+    });
+  },
+  // The amount to COOK: the dish's own servings + every leftover's portions. A
+  // blank/invalid own number is passed through untouched so scaling still blocks.
+  cookServingsFor(entry) {
+    const own = entry && entry.servings;
+    if (factor(own) === null) return own;
+    let total = Number(own);
+    for (const l of this.leftoversOf(entry)) {
+      const n = Number(l.servings);
+      if (Number.isFinite(n) && n > 0) total += n;
+    }
+    return total;
+  },
+  // "from Monday, 05/10 · Dinner", or '' when not a leftover.
+  leftoverFromText(entry) {
+    const src = this.leftoverSourceFor(entry);
+    if (!src) return '';
+    return `from ${this._dayLabel(src.date) || src.date} · ${this.mealName(src.meal)}`;
+  },
+  // Gentle warning once a leftover is planned past the fridge life of its source.
+  leftoverTooOld(entry) {
+    const src = this.leftoverSourceFor(entry);
+    if (!src) return false;
+    const days = this._daysBetween(src.date, entry.date);
+    return days !== null && days > FRIDGE_LIFE_DAYS;
+  },
+  // Whole days between two 'YYYY-MM-DD' keys (LOCAL midnight, DST-safe). null if malformed.
+  _daysBetween(fromKey, toKey) {
+    const p = (k) => { const x = String(k).split('-').map(Number); return (x.length === 3 && x.every(Number.isFinite)) ? new Date(x[0], x[1] - 1, x[2]) : null; };
+    const a = p(fromKey), b = p(toKey);
+    if (!a || !b) return null;
+    return Math.round((b - a) / 86400000);
+  },
+  // A swap / meal switch can put a leftover at or before its source: it then
+  // becomes a normal fresh dish for good (grill Q11), not just while out of order.
+  _clearBrokenLeftoverLinks() {
+    for (const e of (Array.isArray(this.mealPlan) ? this.mealPlan : [])) {
+      if (e.leftoverOf && !this.isLeftover(e)) delete e.leftoverOf;
+    }
+  },
+  // The Add picker's "Leftovers of…" list: freshly cooked dishes EARLIER than the
+  // target meal, up to LEFTOVER_PICK_DAYS back, newest first.
+  get leftoverCandidates() {
+    const date = this.mealPlanPickerTargetDate;
+    if (!date) return [];
+    const target = this._mealOrder({ date, meal: this.mealPlanPickerTargetMeal });
+    const oldest = this._stepDayKey(date, -LEFTOVER_PICK_DAYS);
+    return (Array.isArray(this.mealPlan) ? this.mealPlan : [])
+      .filter(e => typeof e.date === 'string' && e.date >= oldest
+        && this._mealOrder(e) !== '' && this._mealOrder(e) < target && !this.isLeftover(e))
+      .sort((x, y) => (this._mealOrder(y) > this._mealOrder(x) ? 1 : -1))
+      .map(e => {
+        const days = this._daysBetween(e.date, date);
+        return {
+          id: e.id,
+          name: e.name || '(unnamed)',
+          when: `${this._dayLabel(e.date) || e.date} · ${this.mealName(e.meal)}`,
+          tooOld: days !== null && days > FRIDGE_LIFE_DAYS,
+          // Already added to THIS meal — the picker stays open, so stop a double add.
+          added: this.mealPlan.some(x => x.leftoverOf === e.id && x.date === date
+            && (x.meal === 'lunch') === (this.mealPlanPickerTargetMeal === 'lunch'))
+        };
+      });
+  },
+  get fridgeLifeDays() {
+    return FRIDGE_LIFE_DAYS;
+  },
+  addLeftoverFromPicker(sourceId) {
+    const c = this.leftoverCandidates.find(x => x.id === sourceId);
+    if (!c || c.added) return;
+    const src = this.mealPlan.find(e => e.id === sourceId);
+    if (!src) return;
+    this.addToMealPlanForDate(src.recipe_id, this.mealPlanPickerTargetDate, this.mealPlanPickerTargetMeal, src.id);
+  },
+  // Remove: a dish with leftovers asks first (grill Q12); others go straight away.
+  askRemoveFromMealPlan(entry) {
+    if (!entry) return;
+    if (this.leftoversOf(entry).length > 0) { this.removeAskFor = entry.id; return; }
+    this.removeFromMealPlan(entry.id);
+  },
+  // mode 'delete' = remove the leftovers too; 'keep' = keep them as fresh dishes.
+  removeWithLeftovers(entry, mode) {
+    if (!entry) return;
+    for (const l of this.leftoversOf(entry)) {
+      if (mode === 'delete') this.removeFromMealPlan(l.id);
+      else delete l.leftoverOf;
+    }
+    this.removeAskFor = '';
+    this.removeFromMealPlan(entry.id);
   },
   // quick 260712-c44 — the Add-Recipe modal's single weather read. Returns null
   // (line hidden) when there's no target day, no location, the fetch failed, or the
@@ -10089,6 +10221,7 @@ Alpine.data('app', () => ({
     });
     if (!changed) return; // nothing on either day — don't churn the sync
     this.mealPlan = next;
+    this._clearBrokenLeftoverLinks();
     this._persistMealPlan();
   },
 
@@ -10120,7 +10253,7 @@ Alpine.data('app', () => ({
         // GitHub pull) and then visibly jumped. openMealPlan's reconcile is still
         // AUTHORITATIVE and refreshes type from recipeList; this only fills the
         // window. It CANNOT reach the shared document: projectSharedPlanDoc
-        // (mealplan-sync.js) builds each synced entry from the four-field
+        // (mealplan-sync.js) builds each synced entry from the
         // SHARED_ENTRY_FIELDS whitelist and ignores everything else — asserted by
         // S5 in scripts/mealplan-order.test.mjs against the real function.
         type: e.type
@@ -11793,7 +11926,9 @@ Alpine.data('app', () => ({
     // combinedShoppingList reports the skipped dishes in `unscaled` so they are never
     // dropped silently; the meal-plan card shows its own hint (scaleBlockReason).
     if (this.scaleBlockReason(entry) !== '') return [];
-    const f = factor(entry && entry.servings, this.sourceServingsFor(entry && entry.recipe_id));
+    // Leftovers — nothing to buy or cook; the source dish carries the portions.
+    if (this.isLeftover(entry)) return [];
+    const f = factor(this.cookServingsFor(entry), this.sourceServingsFor(entry && entry.recipe_id));
     const src = (entry && this.mealPlanGrouped[entry.recipe_id]) || [];
     // quick 260612-dr4 — pass the per-category strength map so seasoning/leavening
     // scale sub-linearly and fixed items stay at base. combinedShoppingList sums
@@ -11906,6 +12041,7 @@ Alpine.data('app', () => ({
     const seen = new Set();
     const out = [];
     for (const entry of list) {
+      if (this.isLeftover(entry)) continue; // leftovers need no prep
       // Coerce to the numeric key written by _rebuildMealPlanGrouped.
       const rid = parseInt(entry.recipe_id, 10);
       if (Number.isNaN(rid) || seen.has(rid)) continue;
@@ -11953,6 +12089,7 @@ Alpine.data('app', () => ({
    * two different hints on the meal-plan card.
    */
   scaleBlockReason(entry) {
+    if (this.isLeftover(entry)) return ''; // leftovers are never scaled
     if (factor(entry && entry.servings) === null) return 'servings';
     if (this.sourceServingsFor(entry && entry.recipe_id) === null) return 'source';
     return '';
@@ -12012,6 +12149,7 @@ Alpine.data('app', () => ({
     const acc = new Map();
     const unknown = new Map(); // name -> true (dedup by name)
     const unscaled = [];       // household reset — dishes skipped because they can't be scaled
+    const leftoversElsewhere = []; // leftovers whose (not yet cooked) source is shopped in ANOTHER order
     // quick 260628-v0i — ids that got a RECIPE-derived contribution into `acc` (the loop
     // below), so each emitted line can be tagged source:'recipe' vs source:'manual'
     // (regulars/ad-hoc only). Drives the provenance-aware remove + the strikethrough gate.
@@ -12069,6 +12207,12 @@ Alpine.data('app', () => ({
       // returns []); record it so the list can say it was NOT counted.
       const blockReason = this.scaleBlockReason(entry);
       if (blockReason !== '') unscaled.push({ name: entryName, reason: blockReason, date: this._dayKeyForEntry(entry) });
+      // Leftovers — the portions are bought with the source dish. Say so when that
+      // happens in a different order (it may already be placed), so it's never silent.
+      const loSrc = this.leftoverSourceFor(entry);
+      if (loSrc && !this._entryIsPast(loSrc) && !this.isDayInOrderScope(this._dayKeyForEntry(loSrc))) {
+        leftoversElsewhere.push({ name: entryName, from: this.leftoverFromText(entry) });
+      }
       const rows = this.scaledRowsFor(entry);
       for (const row of rows) {
         const iid = row.ingredient_id;
@@ -12220,6 +12364,7 @@ Alpine.data('app', () => ({
     return {
       lines,
       unscaled,
+      leftoversElsewhere,
       unknown: [...unknown.keys()].map(nm => ({ ingredient_name: nm, recipeNames: namesByName.has(nm) ? [...namesByName.get(nm)] : [] })), // recipeNames: quick 260707-mvi
       checkStock
     };
@@ -13631,10 +13776,27 @@ Alpine.data('app', () => ({
       const instructionGroups = splitInstructionSteps(String(header.instructions ?? header.instructions_20 ?? ''));
       const stepCount = instructionGroups.reduce((n, g) => n + (Array.isArray(g.steps) ? g.steps.length : 0), 0);
 
+      // Leftovers — no shopping/cooking: a reheat line, no ingredients or method.
+      if (this.isLeftover(entry)) {
+        return {
+          recipeId: entry.recipe_id,
+          name: `Leftovers: ${name}`,
+          servings: entry.servings,
+          leftover: true,
+          leftoverFrom: this.leftoverFromText(entry),
+          prepNote: '',
+          serveWith: String(header.serve_with ?? '').trim(),
+          ingredients: [],
+          ingredientGroups: [{ heading: null, itemIndexes: [] }],
+          instructionGroups: [],
+          hasSteps: false,
+          note: String(this.dayNotes[(group.mealKey != null ? group.mealKey : group.key) + '::' + entry.recipe_id] || '')
+        };
+      }
       return {
         recipeId: entry.recipe_id,
         name,
-        servings: entry.servings,
+        servings: this.cookServingsFor(entry),
         prepNote: String(header.prep_notes ?? '').trim(),
         serveWith: String(header.serve_with ?? '').trim(),
         ingredients, // D-12 scaled cooking amounts (frozen strings, D-05)

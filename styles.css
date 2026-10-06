@@ -6966,3 +6966,26 @@ a.meal-plan-shop-search {
   border-color: var(--color-ink-muted);
   background: transparent;
 }
+
+/* Leftovers (2026-10-06) — the dish tag, the Remove question, the picker section. */
+.meal-plan-leftover-tag {
+  font-size: var(--fs-xs);
+  color: var(--color-accent);
+  background: var(--color-accent-tint);
+  border-radius: var(--radius-control);
+  padding: 0.1rem 0.4rem;
+  white-space: nowrap;
+}
+.meal-plan-leftover-tag.meal-plan-leftover-old { color: var(--warn-text); }
+.meal-plan-remove-ask {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: var(--fs-sm);
+  margin-top: 0.3rem;
+}
+.picker-leftovers { margin-bottom: 0.75rem; }
+.picker-leftovers-head { font-size: var(--fs-md); margin: 0 0 0.3rem; }
+.picker-leftovers-old { font-size: var(--fs-xs); color: var(--warn-text); white-space: nowrap; }

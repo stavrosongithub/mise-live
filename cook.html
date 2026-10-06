@@ -773,6 +773,16 @@
         sec.appendChild(dn);
       }
 
+      // Leftovers (2026-10-06) — nothing to cook: a reheat line instead of method/ingredients.
+      if (d.leftover) {
+        var lo = document.createElement('p');
+        lo.className = 'no-steps';
+        lo.textContent = 'Leftovers — reheat' + (d.leftoverFrom ? ' (' + d.leftoverFrom + ')' : '') + '.';
+        sec.appendChild(lo);
+        host.appendChild(sec);
+        return;
+      }
+
       // Two-column body (Overview): METHOD column (left) + INGREDIENTS column
       // (right, a sticky card). The head above (name/servings/prep-ahead) stays
       // full-width. A dish with no ingredients renders the method column only,
@@ -871,6 +881,7 @@
     var SEQUENCE = (function buildSequence() {
       var seq = [];
       DATA.dishes.forEach(function (d, dishIdx) {
+        if (d.leftover) return; // leftovers: nothing to cook, no wizard card
         if (!d.hasSteps) {
           // D-16: Overview-only dish — single pointer card, no synthesized steps.
           seq.push({ dishIdx: dishIdx, dishName: d.name, kind: 'overview-only' });
@@ -932,6 +943,7 @@
     jumpSelect.id = 'wizard-jump-select';
     jumpSelect.className = 'wizard-jump-select';
     DATA.dishes.forEach(function (d, dishIdx) {
+      if (d.leftover) return; // no wizard card to jump to
       var opt = document.createElement('option');
       opt.value = String(dishIdx);
       opt.textContent = d.name;

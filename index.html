@@ -2747,7 +2747,7 @@
                 <span class="meal-plan-meal-label" x-text="mg.mealLabel"></span>
                 <span class="meal-plan-meal-dishes"
                       x-show="dayCollapsedByDay[group.key] !== false && mg.entries.length > 0" x-cloak
-                      x-text="mg.entries.map(e => e.name || '(unnamed)').join(', ')"></span>
+                      x-text="mg.entries.map(e => (isLeftover(e) ? 'Leftovers: ' : '') + (e.name || '(unnamed)')).join(', ')"></span>
                 <span class="meal-plan-meal-tools">
                   <!-- (moved from the day header — quick 260621-sjs / 260627-iy8) Prep shows
                        only when a dish in THIS meal has recipe-level prep_notes. -->
@@ -2853,6 +2853,11 @@
                      (specimen `.entry-name`): no underline, truncates rather than wraps.
                      Still a clickable button (openEditRecipe unchanged) — just restyled. -->
                 <button type="button" class="meal-plan-recipe-link" @click="openEditRecipe(entry.recipe_id)" :title="'Edit ' + (entry.name || 'recipe')" x-text="entry.name || '(unnamed)'"></button>
+                <!-- Leftovers (2026-10-06) — tag + where it comes from; amber past the fridge life. -->
+                <span class="meal-plan-leftover-tag" x-show="isLeftover(entry)" x-cloak
+                      :class="{ 'meal-plan-leftover-old': leftoverTooOld(entry) }"
+                      :title="leftoverTooOld(entry) ? 'Planned more than ' + fridgeLifeDays + ' days after it was cooked — check it is still good.' : ''"
+                      x-text="(leftoverTooOld(entry) ? '⚠︎ ' : '') + 'Leftovers ' + leftoverFromText(entry)"></span>
                 <!-- quick 260712-at6 — PER-DISH NOTE (Option B). A small underlined "note" link
                      that turns bold "✎ note" when a note is set; clicking toggles an inline input.
                      The note VALUE rides the SAME synced dayNotes map under the composite key
@@ -2881,7 +2886,7 @@
                      by the inline mono lbl; the input's x-model.number / type / gate are
                      byte-identical. quick 260618-ahg gate (Upcoming-only) preserved. -->
                 <label class="meal-plan-servings" x-show="mealPlanTab === 'upcoming'" x-cloak>
-                  <span class="meal-plan-serves-lbl">serves</span>
+                  <span class="meal-plan-serves-lbl" x-text="isLeftover(entry) ? 'portions' : 'serves'"></span>
                   <input type="number" min="0" step="1"
                          x-model.number="entry.servings">
                   <!-- F9 — suggested-servings moved INSIDE the inline control, beside the
@@ -2915,7 +2920,14 @@
                         @click="setEntryMeal(entry, entry.meal === 'lunch' ? 'dinner' : 'lunch')"
                         x-text="entry.meal === 'lunch' ? '→ dinner' : '→ lunch'"></button>
                 <button type="button" class="manager-edit-btn meal-plan-remove-btn"
-                        @click="removeFromMealPlan(entry.id)">Remove</button>
+                        @click="askRemoveFromMealPlan(entry)">Remove</button>
+                <!-- Leftovers (2026-10-06) — removing a dish that has leftovers asks first (grill Q12). -->
+                <div class="meal-plan-remove-ask" x-show="removeAskFor === entry.id" x-cloak>
+                  <span x-text="'This dish has ' + leftoversOf(entry).length + ' leftover meal' + (leftoversOf(entry).length === 1 ? '' : 's') + ' planned.'"></span>
+                  <button type="button" class="manager-edit-btn" @click="removeWithLeftovers(entry, 'delete')">Delete them too</button>
+                  <button type="button" class="manager-edit-btn" @click="removeWithLeftovers(entry, 'keep')">Keep them as fresh dishes</button>
+                  <button type="button" class="manager-edit-btn" @click="removeAskFor = ''">Cancel</button>
+                </div>
                 <!-- F9 (quick 260625-itm) — the suggested-servings note (quick 260620-rm6 /
                      -sg9) was RELOCATED INTO the inline serves control above (beside the
                      input), keeping both x-if branches + their handlers verbatim. It no
@@ -2937,7 +2949,9 @@
                  x-show="scaleBlockReason(entry) === 'source'"
                  x-cloak>This recipe has no "serves" number yet, so it can't be scaled. Open the recipe and enter how many it serves.</p>
 
-              <template x-if="scaleBlockReason(entry) === ''">
+              <!-- Leftovers (2026-10-06) — nothing to buy or cook here. -->
+              <p class="meal-plan-hint" x-show="isLeftover(entry)" x-cloak>Leftovers — nothing to buy. These portions are added to the original dish's cook amount.</p>
+              <template x-if="scaleBlockReason(entry) === '' && !isLeftover(entry)">
                 <div class="meal-plan-rows">
                   <!-- GUARD: recipe with no ingredient rows. -->
                   <p class="meal-plan-hint"
@@ -3220,6 +3234,19 @@
             <template x-for="(u, i) in combinedShoppingList.unscaled" :key="i">
               <li class="shopping-list-item">
                 <span class="shopping-name" x-text="u.name + (u.reason === 'source' ? ' — recipe has no \'serves\' number' : ' — no portion number set')"></span>
+              </li>
+            </template>
+          </ul>
+        </div>
+
+        <!-- Leftovers (2026-10-06) — leftovers whose original dish is bought in a different
+             order: their portions are on THAT order, not this one. -->
+        <div class="shopping-unknown" x-show="combinedShoppingList.leftoversElsewhere.length > 0" x-cloak>
+          <p class="shopping-caveat">ⓘ Leftovers bought with their original dish in another order:</p>
+          <ul class="shopping-list-items">
+            <template x-for="(u, i) in combinedShoppingList.leftoversElsewhere" :key="i">
+              <li class="shopping-list-item">
+                <span class="shopping-name" x-text="u.name + ' — ' + u.from"></span>
               </li>
             </template>
           </ul>
@@ -3910,6 +3937,27 @@
               Couldn't read the allergy note for <span x-text="pickerResidentAllergens.unmatchedText"></span> — check manually.
             </p>
           </div>
+        </div>
+        <!-- Leftovers (2026-10-06, grill Q10) — "Leftovers of…": dishes planned EARLIER
+             than this meal (up to LEFTOVER_PICK_DAYS back). Adding one makes a leftover
+             dish (portions = household size) and grows the original's cook amount. -->
+        <div class="picker-leftovers" x-show="leftoverCandidates.length > 0" x-cloak>
+          <h3 class="picker-leftovers-head">Leftovers of…</h3>
+          <ul class="meal-plan-pick-list">
+            <template x-for="c in leftoverCandidates" :key="c.id">
+              <li class="meal-plan-pick-row">
+                <span class="manager-name" x-text="c.name"></span>
+                <span class="manager-shopping-unit" x-text="c.when"></span>
+                <span class="picker-leftovers-old" x-show="c.tooOld" x-cloak
+                      :title="'More than ' + fridgeLifeDays + ' days old by this meal — check it is still good.'"
+                      x-text="'⚠︎ over ' + fridgeLifeDays + ' days'"></span>
+                <button type="button" class="manager-edit-btn"
+                        :disabled="c.added"
+                        @click="addLeftoverFromPicker(c.id)"
+                        x-text="c.added ? 'Added ✓' : 'Add leftovers'"></button>
+              </li>
+            </template>
+          </ul>
         </div>
         <!-- ============ RECIPE PICKER (the single shared copy) ============ -->
         <!-- quick 260620-fn6 — Option A: search-first + Filters disclosure.
