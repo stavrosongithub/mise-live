@@ -446,7 +446,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'f9b3039 2026-10-06';
+const APP_VERSION = 'cbdee80 2026-10-06';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -466,9 +466,9 @@ const MEAL_PLAN_BASE_KEY = 'recipe_ingest_meal_plan_base';
 // (locked decision 3). Purely presentational: no data model, no persistence.
 const FRIDGE_LIFE_DAYS = 3;
 const BIN_VISIBLE_DAYS = 3;
-// Leftovers (2026-10-06) — how many days back the Add picker's "Leftovers of…"
-// section looks for dishes. Past FRIDGE_LIFE_DAYS it still lists them, with a warning.
-const LEFTOVER_PICK_DAYS = 6;
+// Leftovers (2026-10-07) — how many later meals a dish's "Make extra for…" offers:
+// 2 meals a day × FRIDGE_LIFE_DAYS, so every choice is still within fridge life.
+const EXTRA_MEAL_SLOTS = 2 * FRIDGE_LIFE_DAYS;
 
 // Hardcoded short recipe shown when the user clicks the dev-only Load Example
 // button. Already framed as scaled-to-20-servings (D-07). Trivial to remove.
@@ -3947,6 +3947,8 @@ Alpine.data('app', () => ({
   // Leftovers (2026-10-06) — id of the dish whose Remove is asking what to do with
   // its leftovers ('' = none). Transient view state, never synced.
   removeAskFor: '',
+  // Leftovers (2026-10-07) — id of the dish whose "Make extra for…" chips are open ('' = none).
+  extraPickerFor: '',
   // quick 260607-anu — transient one-time-migration result banner. Shapes:
   // { migrated, rowCount, backfillCount } | { alreadyMigrated:true }. A verify
   // failure surfaces via the informational mergeRestoreOffer (putFile auto-revert).
@@ -6743,8 +6745,8 @@ Alpine.data('app', () => ({
       const cook = this.cookServingsFor(entry);
       const extra = cook - Number(entry.servings);
       // Leftovers — say the cook amount grew, so the bigger quantities aren't a surprise.
-      if (extra > 0) return `cook ${cook} (${entry.servings} + ${extra} leftovers) · ×${Math.round(cook / src * 100) / 100}`;
-      return `scaled ${src} → ${entry.servings} servings · ×${Math.round(entry.servings / src * 100) / 100}`;
+      if (extra > 0) return `recipe serves ${src} · making ${cook}: ${entry.servings} + ${extra} leftovers (×${Math.round(cook / src * 100) / 100})`;
+      return `recipe serves ${src} · making ${entry.servings} (×${Math.round(entry.servings / src * 100) / 100})`;
     }
     return '';
   },
@@ -9985,43 +9987,58 @@ Alpine.data('app', () => ({
       if (e.leftoverOf && !this.isLeftover(e)) delete e.leftoverOf;
     }
   },
-  // The Add picker's "Leftovers of…" list: freshly cooked dishes EARLIER than the
-  // target meal, up to LEFTOVER_PICK_DAYS back, newest first.
-  get leftoverCandidates() {
-    const date = this.mealPlanPickerTargetDate;
-    if (!date) return [];
-    const target = this._mealOrder({ date, meal: this.mealPlanPickerTargetMeal });
-    const oldest = this._stepDayKey(date, -LEFTOVER_PICK_DAYS);
-    return (Array.isArray(this.mealPlan) ? this.mealPlan : [])
-      .filter(e => typeof e.date === 'string' && e.date >= oldest
-        && this._mealOrder(e) !== '' && this._mealOrder(e) < target && !this.isLeftover(e))
-      .sort((x, y) => (this._mealOrder(y) > this._mealOrder(x) ? 1 : -1))
-      .map(e => {
-        const days = this._daysBetween(e.date, date);
-        return {
-          id: e.id,
-          name: e.name || '(unnamed)',
-          when: `${this._dayLabel(e.date) || e.date} · ${this.mealName(e.meal)}`,
-          tooOld: days !== null && days > FRIDGE_LIFE_DAYS,
-          // Already added to THIS meal — the picker stays open, so stop a double add.
-          added: this.mealPlan.some(x => x.leftoverOf === e.id && x.date === date
-            && (x.meal === 'lunch') === (this.mealPlanPickerTargetMeal === 'lunch'))
-        };
-      });
+  // "Make extra for…" (2026-10-07 — replaces the Add picker's long "Leftovers of…"
+  // list): the EXTRA_MEAL_SLOTS meals after a freshly cooked dish, keeping only the
+  // ones on a day the plan shows (today onwards, inside windowDayKeys) — so a dish
+  // already on the Past tab can still feed today's lunch, and nothing lands off-screen.
+  // Each slot carries the ids of this dish's leftovers already planned there.
+  extraMealSlotsFor(entry) {
+    if (!entry || this.isLeftover(entry) || !this._mealOrder(entry)) return [];
+    const mine = this.leftoversOf(entry);
+    const shown = new Set(this.windowDayKeys);
+    const slots = [];
+    let date = entry.date, meal = entry.meal === 'lunch' ? 'lunch' : 'dinner';
+    for (let i = 0; i < EXTRA_MEAL_SLOTS; i++) {
+      if (meal === 'lunch') meal = 'dinner';
+      else { meal = 'lunch'; date = this._stepDayKey(date, 1); }
+      if (!date) break;
+      if (!shown.has(date)) continue;
+      const ids = mine.filter(l => l.date === date && (l.meal === 'lunch') === (meal === 'lunch')).map(l => l.id);
+      slots.push({ key: `${date}#${meal}`, date, meal, label: `${this._shortWeekday(date)} ${meal}`, leftoverIds: ids });
+    }
+    return slots;
+  },
+  // This dish's leftovers that no chip shows (planned further out by a swap or the
+  // old picker) — named under the chips so the cook amount is never unexplained.
+  extraElsewhereFor(entry) {
+    const inSlots = new Set(this.extraMealSlotsFor(entry).flatMap(s => s.leftoverIds));
+    return this.leftoversOf(entry).filter(l => !inSlots.has(l.id))
+      .map(l => `${this._shortWeekday(l.date)} ${this.mealName(l.meal).toLowerCase()}`);
+  },
+  // Chip click: plan a leftover of this dish at that meal, or take it away again
+  // (every copy there — two devices can tick the same chip before they sync).
+  toggleExtraFor(entry, slot) {
+    if (!entry || !slot) return;
+    if (slot.leftoverIds.length) slot.leftoverIds.forEach(id => this.removeFromMealPlan(id));
+    else this.addToMealPlanForDate(entry.recipe_id, slot.date, slot.meal, entry.id);
+  },
+  toggleExtraPicker(entry) {
+    this.removeAskFor = '';
+    this.extraPickerFor = this.extraPickerFor === entry.id ? '' : entry.id;
+  },
+  // 'Tue' for a 'YYYY-MM-DD' key (LOCAL midnight), '' if malformed.
+  _shortWeekday(key) {
+    const x = String(key).split('-').map(Number);
+    if (x.length !== 3 || !x.every(Number.isFinite)) return '';
+    return new Date(x[0], x[1] - 1, x[2]).toLocaleDateString(undefined, { weekday: 'short' });
   },
   get fridgeLifeDays() {
     return FRIDGE_LIFE_DAYS;
   },
-  addLeftoverFromPicker(sourceId) {
-    const c = this.leftoverCandidates.find(x => x.id === sourceId);
-    if (!c || c.added) return;
-    const src = this.mealPlan.find(e => e.id === sourceId);
-    if (!src) return;
-    this.addToMealPlanForDate(src.recipe_id, this.mealPlanPickerTargetDate, this.mealPlanPickerTargetMeal, src.id);
-  },
   // Remove: a dish with leftovers asks first (grill Q12); others go straight away.
   askRemoveFromMealPlan(entry) {
     if (!entry) return;
+    this.extraPickerFor = '';
     if (this.leftoversOf(entry).length > 0) { this.removeAskFor = entry.id; return; }
     this.removeFromMealPlan(entry.id);
   },

@@ -2615,8 +2615,8 @@
                            that has dishes, built from its mealGroupsFor sub-group. -->
                       <template x-for="mg in mealGroupsFor(group).filter(m => m.entries.length > 0)" :key="mg.meal">
                         <div class="meal-plan-menu-meal">
+                      <!-- 2026-10-07 — no longer House-mode-only: the household uses it too. -->
                       <button type="button" class="meal-plan-menu-item" role="menuitem"
-                              x-show="houseMode"
                               :disabled="anyModalOpen"
                               @click="generateCookArtifact(mg); dayMenuOpenFor = ''" x-text="'Cook ' + mg.meal"></button>
                       <!-- quick 260811-duh — "Copy meal plan": the plaintext twin of
@@ -2919,8 +2919,29 @@
                         :title="entry.meal === 'lunch' ? 'Move to dinner' : 'Move to lunch'"
                         @click="setEntryMeal(entry, entry.meal === 'lunch' ? 'dinner' : 'lunch')"
                         x-text="entry.meal === 'lunch' ? '→ dinner' : '→ lunch'"></button>
+                <!-- Leftovers (2026-10-07) — "Make extra for…": cook more of this dish and eat it
+                     at a later meal. Opens a row of chips (the next few meals); each chip adds or
+                     removes a leftover of this dish there. -->
+                <button type="button" class="manager-edit-btn meal-plan-extra-btn"
+                        x-show="extraMealSlotsFor(entry).length > 0 || leftoversOf(entry).length > 0" x-cloak
+                        :aria-expanded="extraPickerFor === entry.id"
+                        @click="toggleExtraPicker(entry)"
+                        x-text="leftoversOf(entry).length ? 'extra for ' + leftoversOf(entry).length + ' meal' + (leftoversOf(entry).length === 1 ? '' : 's') : 'make extra…'"></button>
                 <button type="button" class="manager-edit-btn meal-plan-remove-btn"
                         @click="askRemoveFromMealPlan(entry)">Remove</button>
+                <div class="meal-plan-extra-pick" x-show="extraPickerFor === entry.id" x-cloak>
+                  <span>Leftovers for:</span>
+                  <template x-for="s in extraMealSlotsFor(entry)" :key="s.key">
+                    <button type="button" class="manager-edit-btn meal-plan-extra-chip"
+                            :class="{ 'is-on': s.leftoverIds.length > 0 }"
+                            :aria-pressed="s.leftoverIds.length > 0"
+                            @click="toggleExtraFor(entry, s)"
+                            x-text="(s.leftoverIds.length ? '✓ ' : '') + s.label"></button>
+                  </template>
+                  <span class="meal-plan-hint" x-show="extraElsewhereFor(entry).length > 0" x-cloak
+                        x-text="'Also planned: ' + extraElsewhereFor(entry).join(', ') + ' (remove it from that day)'"></span>
+                  <button type="button" class="manager-edit-btn" @click="extraPickerFor = ''">Done</button>
+                </div>
                 <!-- Leftovers (2026-10-06) — removing a dish that has leftovers asks first (grill Q12). -->
                 <div class="meal-plan-remove-ask" x-show="removeAskFor === entry.id" x-cloak>
                   <span x-text="'This dish has ' + leftoversOf(entry).length + ' leftover meal' + (leftoversOf(entry).length === 1 ? '' : 's') + ' planned.'"></span>
@@ -3938,27 +3959,6 @@
             </p>
           </div>
         </div>
-        <!-- Leftovers (2026-10-06, grill Q10) — "Leftovers of…": dishes planned EARLIER
-             than this meal (up to LEFTOVER_PICK_DAYS back). Adding one makes a leftover
-             dish (portions = household size) and grows the original's cook amount. -->
-        <div class="picker-leftovers" x-show="leftoverCandidates.length > 0" x-cloak>
-          <h3 class="picker-leftovers-head">Leftovers of…</h3>
-          <ul class="meal-plan-pick-list">
-            <template x-for="c in leftoverCandidates" :key="c.id">
-              <li class="meal-plan-pick-row">
-                <span class="manager-name" x-text="c.name"></span>
-                <span class="manager-shopping-unit" x-text="c.when"></span>
-                <span class="picker-leftovers-old" x-show="c.tooOld" x-cloak
-                      :title="'More than ' + fridgeLifeDays + ' days old by this meal — check it is still good.'"
-                      x-text="'⚠︎ over ' + fridgeLifeDays + ' days'"></span>
-                <button type="button" class="manager-edit-btn"
-                        :disabled="c.added"
-                        @click="addLeftoverFromPicker(c.id)"
-                        x-text="c.added ? 'Added ✓' : 'Add leftovers'"></button>
-              </li>
-            </template>
-          </ul>
-        </div>
         <!-- ============ RECIPE PICKER (the single shared copy) ============ -->
         <!-- quick 260620-fn6 — Option A: search-first + Filters disclosure.
              SEARCH (full width) · PRIMARY row (Type chips left / Sort right) ·
@@ -4601,7 +4601,7 @@
                          @change="saveHouseMode($event.target.checked); tick('houseMode')" />
                   Show the community-house features
                 </label>
-                <p class="help">residents roster (Coda), cooks rota, “Cook lunch / dinner”, suggested servings from headcount, leftovers days, resident allergen checks and Regulars. Off hides them — nothing is deleted.</p>
+                <p class="help">residents roster (Coda), cooks rota, suggested servings from headcount, leftovers days, resident allergen checks and Regulars. Off hides them — nothing is deleted.</p>
               </fieldset>
 
               <!-- quick 260620-rm6 — advisory suggested-servings multipliers
