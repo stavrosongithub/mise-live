@@ -4815,27 +4815,57 @@ textarea {
   padding: 0 0.9rem 0.7rem;
   overflow: visible;
 }
-/* quick 260627-joq — TRULY EMPTY day (group.entries.length === 0 → .meal-plan-day-empty):
-   render JUST the petrol header band. The cooks line, allergen banner, and day body are
-   already entries-gated, so the only things to suppress are the body whitespace + the
-   expand caret. A run of empty days then stacks ~80% tighter than the 0.9rem populated-day
-   gap. Populated days never carry the class, so they are untouched. Tokens only. */
-.meal-plan-day-group.meal-plan-day-empty {
-  padding-bottom: 0;                  /* drop the 0.7rem card bottom-padding */
-}
-.meal-plan-day-group.meal-plan-day-empty .meal-plan-day-header-row {
-  margin-bottom: 0;                   /* drop the 0.5rem gap below the band */
-  border-bottom: none;                /* no body to separate from */
-  border-radius: var(--radius-card);  /* round ALL four corners — the band IS the card */
-}
+/* quick 260627-joq — TRULY EMPTY day (group.entries.length === 0 → .meal-plan-day-empty).
+   Lunches (2026-10-06): an empty day now still shows its Lunch + Dinner rows (each with
+   an Add), so the old "header band only" squeeze (rounded band, no bottom padding, tight
+   stacking) is gone. Only the caret stays hidden — an empty day has no cards to expand. */
 .meal-plan-day-group.meal-plan-day-empty .meal-plan-day-caret {
   display: none;                      /* nothing to expand */
 }
-/* Tighten the gap ONLY between an empty day and another empty day that immediately
-   follows it (:has), so the LAST empty before a populated day keeps the normal 0.9rem. */
-.meal-plan-day-group.meal-plan-day-empty:has(+ .meal-plan-day-group.meal-plan-day-empty) {
-  margin-bottom: 0.18rem;             /* 0.9rem − 80% */
+/* Lunches (2026-10-06) — the two MEAL ROWS inside each day. A mono uppercase label
+   (same voice as .meal-plan-typegroup-label), the collapsed-day dish names, and the
+   meal's own Prep / Add pushed right. A hairline separates lunch from dinner. */
+.meal-plan-meal + .meal-plan-meal {
+  border-top: 1px solid var(--color-border);
+  margin-top: 0.4rem;
 }
+.meal-plan-meal-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding-top: 0.4rem;
+  min-height: 2rem;
+}
+.meal-plan-meal-label {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+  flex: 0 0 4.2rem;
+}
+.meal-plan-meal-dishes {
+  font-size: var(--fs-sm);
+  color: var(--color-ink);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.meal-plan-meal-tools {
+  margin-left: auto;
+  display: flex;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+.meal-plan-meal .meal-plan-day-note { margin: 0.35rem 0 0.25rem; }
+/* the switch sits beside Remove (only Remove takes the auto margin that pushes right) */
+.meal-plan-recipe-head .meal-plan-meal-switch { margin-left: 0; font-size: var(--fs-xs); }
+/* Lunches — the head now holds one more control; give the dish NAME a 12rem flex-basis
+   so, when the row is short of room, the controls wrap to a second line instead of the
+   name collapsing to "P…" (min-width:0 alone let it shrink to nothing). */
+.meal-plan-meal .meal-plan-recipe-head .meal-plan-recipe-link { flex: 1 1 12rem; }
 /* quick 260728-bum — TODAY'S day card (index.html binds .meal-plan-day-today when
    group.key === todayStr; the group.key && guard keeps Unscheduled inert). LOCKED
    Option D = exactly two marks: a 4px accent bar down the left edge + the mono date

@@ -2549,33 +2549,14 @@
                       :title="dayAllergenStatus(group).state === 'conflict' ? 'Allergen conflict — review' : (dayAllergenStatus(group).state === 'cant-check' ? 'Allergens not checked' : 'Allergen review needed')"
                       :aria-label="dayAllergenStatus(group).state === 'conflict' ? 'Allergen conflict — review' : (dayAllergenStatus(group).state === 'cant-check' ? 'Allergens not checked' : 'Allergen review needed')"
                       @click="openAllergenModal(group.key)"></button>
-              <!-- quick 260621-sjs — per-day PREP button. Gate is on
-                   prepForDay(group.entries).length > 0 (NOT group.entries.length): per
-                   the locked decision Prep is HIDDEN on days where no scheduled recipe
-                   has a non-blank recipe-level prep_notes. Scope is recipe-level
-                   prep_notes ONLY (recipes.csv). phase 09-08 (D24) — now OPENS A MODAL
-                   (openPrepModal) instead of an inline collapse; prep text stays x-text
-                   (NEVER x-html) in the modal body (T-sjs-01). F6 — .daybtn.prep accent hint. -->
-              <button type="button" class="manager-edit-btn meal-plan-daybtn meal-plan-daybtn-prep meal-plan-prep-header"
-                      x-show="mealPlanTab === 'upcoming' && prepForDay(group.entries).length > 0" x-cloak
-                      @click="openPrepModal(group.key)"
-                      :class="{ 'meal-plan-daybtn-prep-done': prepDoneByDay[group.key] === true }"
-                      :title="'Prep for ' + group.label">Prep</button>
-              <!-- quick 260621-amm — per-day Add affordance. Opens the focused picker
-                   modal pre-targeted to THIS day (group.key). On the Upcoming tab only.
-                   group.key is '' for the Unscheduled group. F6 — relabelled "Add"
-                   (was "+ Add recipe"), now a ghost .meal-plan-daybtn; @click/x-show/:title
-                   unchanged. -->
-              <button type="button" class="manager-edit-btn meal-plan-daybtn meal-plan-add-recipe-btn"
-                      x-show="mealPlanTab === 'upcoming'" x-cloak
-                      :title="'Add a recipe to ' + group.label"
-                      @click="openPickerForDate(group.key)">Add</button>
+              <!-- Lunches (2026-10-06) — the per-day Prep + Add buttons MOVED onto the
+                   Lunch / Dinner meal rows below (one each per meal). -->
               <!-- phase 09-08 / PORT-04 (D24) — per-day TRAY button now OPENS A MODAL
                    (openTrayModal) instead of toggling an inline collapse section. Same
                    gate (UPCOMING days WITH entries). The modal shell + body live ONCE
                    below, outside the day x-for, resolved via trayModalGroup. -->
               <button type="button" class="manager-edit-btn meal-plan-daybtn meal-plan-tray-header"
-                      x-show="mealPlanTab === 'upcoming' && group.entries.length > 0" x-cloak
+                      x-show="houseMode && mealPlanTab === 'upcoming' && group.entries.length > 0" x-cloak
                       @click="openTrayModal(group.key)"
                       :title="'Tray for ' + group.label">Tray</button>
               <!-- quick 260621-lft — per-day LEFTOVERS toggle. Visible ONLY on EMPTY
@@ -2630,10 +2611,14 @@
                        unchanged (just wrapped in the entries gate). -->
                   <template x-if="group.entries.length > 0">
                     <div class="meal-plan-menu-actions">
+                      <!-- Lunches (2026-10-06) — Cook / Copy are PER MEAL: one pair for each meal
+                           that has dishes, built from its mealGroupsFor sub-group. -->
+                      <template x-for="mg in mealGroupsFor(group).filter(m => m.entries.length > 0)" :key="mg.meal">
+                        <div class="meal-plan-menu-meal">
                       <button type="button" class="meal-plan-menu-item" role="menuitem"
                               x-show="houseMode"
                               :disabled="anyModalOpen"
-                              @click="generateCookArtifact(group); dayMenuOpenFor = ''">Cook this day</button>
+                              @click="generateCookArtifact(mg); dayMenuOpenFor = ''" x-text="'Cook ' + mg.meal"></button>
                       <!-- quick 260811-duh — "Copy meal plan": the plaintext twin of
                            "Cook this day", copied to the clipboard. Two non-obvious choices:
                            (1) unlike Cook this day it deliberately does NOT set
@@ -2651,10 +2636,12 @@
                            Reuses .meal-plan-menu-item — no new CSS, no new token. -->
                       <button type="button" class="meal-plan-menu-item" role="menuitem"
                               :disabled="anyModalOpen"
-                              @click="copyCookPlaintext(group)"
-                              x-text="cookCopyCopiedFor === group.key ? 'Copied ✓' : (cookCopyFailedFor === group.key ? 'Copy failed' : 'Copy meal plan')"></button>
+                              @click="copyCookPlaintext(mg)"
+                              x-text="cookCopyCopiedFor === mg.mealKey ? 'Copied ✓' : (cookCopyFailedFor === mg.mealKey ? 'Copy failed' : 'Copy ' + mg.meal + ' plan')"></button>
+                        </div>
+                      </template>
                       <!-- quick 260707-lyk — Swap dishes with… reveals a sub-list of other
-                           upcoming days; picking one swaps the dinner DISHES (re-dates entries). -->
+                           upcoming days; picking one swaps ALL the day's dishes, lunch + dinner (re-dates entries; grill Q9). -->
                       <button type="button" class="meal-plan-menu-item" role="menuitem"
                               :disabled="anyModalOpen"
                               @click="swapPickerOpenFor = swapPickerOpenFor === group.key ? '' : group.key">Swap dishes with…</button>
@@ -2747,252 +2734,288 @@
                 <p class="help">Up to 3 cooks.</p>
               </div>
             </div>
-            <!-- quick 260712-at6 — DAY NOTE authoring (Option A, no modal). Always visible on
-                 the day (OUTSIDE the collapse template) so a note can never hide. Three states:
-                 add-bar (no note + editor closed) → editor (textarea + Save) → at-rest petrol
-                 chip (note set + editor closed, click-to-edit). The note VALUE lives in the
-                 synced dayNotes[group.key]; `dayNoteEditorFor` tracks which day's editor is open;
-                 `draft` (a per-day Alpine local) is the scratch textarea value seeded on open. All
-                 note text is rendered via x-text / bound value only (never as raw HTML), so a note
-                 can never inject markup. Gated to Upcoming (authoring affordance). -->
-            <div class="meal-plan-day-note" x-data="{ draft: '' }"
-                 x-show="mealPlanTab === 'upcoming' && group.key !== '' && dayCollapsedByDay[group.key] === false" x-cloak>
-              <!-- State 1: no note + editor closed → dashed add-bar -->
-              <button type="button" class="meal-plan-day-note-add"
-                      x-show="!dayNotes[group.key] && dayNoteEditorFor !== group.key"
-                      @click="draft = dayNotes[group.key] || ''; dayNoteEditorFor = group.key; $nextTick(() => $refs.dayNoteInput && $refs.dayNoteInput.focus())">📝&nbsp; Add a note for this day</button>
-              <!-- State 2: editor open → textarea + hint + Save. x-ref is scoped to this
-                   day's x-data local, so a static name resolves per-day. -->
-              <div class="meal-plan-day-note-editor" x-show="dayNoteEditorFor === group.key" x-cloak>
-                <textarea class="meal-plan-day-note-textarea"
-                          x-model="draft"
-                          x-ref="dayNoteInput"
-                          placeholder="e.g. Two extra guests at lunch — stretch the mains. Barbara is off dairy today."
-                          @keydown.meta.enter.prevent="setDayNote(group.key, draft); dayNoteEditorFor = ''"
-                          @keydown.ctrl.enter.prevent="setDayNote(group.key, draft); dayNoteEditorFor = ''"></textarea>
-                <div class="meal-plan-day-note-row">
-                  <span class="meal-plan-day-note-hint">Shows on the chefs' Cook sheet · ⌘↵ to save</span>
-                  <button type="button" class="meal-plan-day-note-save"
-                          @click="setDayNote(group.key, draft); dayNoteEditorFor = ''">Save note</button>
+            <!-- Lunches (2026-10-06) — the day's two MEAL ROWS, lunch then dinner, both
+                 always shown on Upcoming (Past shows only meals that have dishes). Each
+                 row = label + its own Prep / Add buttons, then the meal's note and (when
+                 the day is expanded) its dish cards. `mg` is a mealGroupsFor sub-group:
+                 { meal, mealLabel, key: day key, mealKey, label, entries }. A collapsed
+                 day lists each meal's dish names on the row instead of the cards. -->
+            <template x-for="mg in mealGroupsFor(group)" :key="mg.meal">
+            <div class="meal-plan-meal" :class="'meal-plan-meal-' + mg.meal"
+                 x-show="mealPlanTab === 'upcoming' || mg.entries.length > 0">
+              <div class="meal-plan-meal-head">
+                <span class="meal-plan-meal-label" x-text="mg.mealLabel"></span>
+                <span class="meal-plan-meal-dishes"
+                      x-show="dayCollapsedByDay[group.key] !== false && mg.entries.length > 0" x-cloak
+                      x-text="mg.entries.map(e => e.name || '(unnamed)').join(', ')"></span>
+                <span class="meal-plan-meal-tools">
+                  <!-- (moved from the day header — quick 260621-sjs / 260627-iy8) Prep shows
+                       only when a dish in THIS meal has recipe-level prep_notes. -->
+                  <button type="button" class="manager-edit-btn meal-plan-daybtn meal-plan-daybtn-prep meal-plan-prep-header"
+                          x-show="mealPlanTab === 'upcoming' && prepForDay(mg.entries).length > 0" x-cloak
+                          @click="openPrepModal(mg.mealKey)"
+                          :class="{ 'meal-plan-daybtn-prep-done': prepDoneByDay[mg.mealKey] === true }"
+                          :title="'Prep for ' + mg.label">Prep</button>
+                  <button type="button" class="manager-edit-btn meal-plan-daybtn meal-plan-add-recipe-btn"
+                          x-show="mealPlanTab === 'upcoming'" x-cloak
+                          :title="'Add a recipe to ' + mg.label"
+                          @click="openPickerForDate(group.key, mg.meal)">Add</button>
+                </span>
+              </div>
+              <!-- quick 260712-at6 — DAY NOTE authoring (Option A, no modal). Always visible on
+                   the day (OUTSIDE the collapse template) so a note can never hide. Three states:
+                   add-bar (no note + editor closed) → editor (textarea + Save) → at-rest petrol
+                   chip (note set + editor closed, click-to-edit). The note VALUE lives in the
+                   synced dayNotes[mg.mealKey]; `dayNoteEditorFor` tracks which day's editor is open;
+                   `draft` (a per-day Alpine local) is the scratch textarea value seeded on open. All
+                   note text is rendered via x-text / bound value only (never as raw HTML), so a note
+                   can never inject markup. Gated to Upcoming (authoring affordance). -->
+              <div class="meal-plan-day-note" x-data="{ draft: '' }"
+                   x-show="mealPlanTab === 'upcoming' && group.key !== '' && dayCollapsedByDay[group.key] === false" x-cloak>
+                <!-- State 1: no note + editor closed → dashed add-bar -->
+                <button type="button" class="meal-plan-day-note-add"
+                        x-show="!dayNotes[mg.mealKey] && dayNoteEditorFor !== mg.mealKey"
+                        @click="draft = dayNotes[mg.mealKey] || ''; dayNoteEditorFor = mg.mealKey; $nextTick(() => $refs.dayNoteInput && $refs.dayNoteInput.focus())">📝&nbsp; Add a note for <span x-text="mg.meal"></span></button>
+                <!-- State 2: editor open → textarea + hint + Save. x-ref is scoped to this
+                     day's x-data local, so a static name resolves per-day. -->
+                <div class="meal-plan-day-note-editor" x-show="dayNoteEditorFor === mg.mealKey" x-cloak>
+                  <textarea class="meal-plan-day-note-textarea"
+                            x-model="draft"
+                            x-ref="dayNoteInput"
+                            placeholder="e.g. Two extra guests at lunch — stretch the mains. Barbara is off dairy today."
+                            @keydown.meta.enter.prevent="setDayNote(mg.mealKey, draft); dayNoteEditorFor = ''"
+                            @keydown.ctrl.enter.prevent="setDayNote(mg.mealKey, draft); dayNoteEditorFor = ''"></textarea>
+                  <div class="meal-plan-day-note-row">
+                    <span class="meal-plan-day-note-hint">Shows on the chefs' Cook sheet · ⌘↵ to save</span>
+                    <button type="button" class="meal-plan-day-note-save"
+                            @click="setDayNote(mg.mealKey, draft); dayNoteEditorFor = ''">Save note</button>
+                  </div>
+                </div>
+                <!-- State 3: note set + editor closed → at-rest petrol chip (click-to-edit) -->
+                <div class="meal-plan-day-note-chip"
+                     x-show="dayNotes[mg.mealKey] && dayNoteEditorFor !== mg.mealKey" x-cloak
+                     @click="draft = dayNotes[mg.mealKey] || ''; dayNoteEditorFor = mg.mealKey; $nextTick(() => $refs.dayNoteInput && $refs.dayNoteInput.focus())"
+                     :title="'Edit note for ' + mg.label">
+                  <span class="meal-plan-day-note-chip-k">Note</span>
+                  <span class="meal-plan-day-note-chip-v" x-text="dayNotes[mg.mealKey]"></span>
                 </div>
               </div>
-              <!-- State 3: note set + editor closed → at-rest petrol chip (click-to-edit) -->
-              <div class="meal-plan-day-note-chip"
-                   x-show="dayNotes[group.key] && dayNoteEditorFor !== group.key" x-cloak
-                   @click="draft = dayNotes[group.key] || ''; dayNoteEditorFor = group.key; $nextTick(() => $refs.dayNoteInput && $refs.dayNoteInput.focus())"
-                   :title="'Edit note for ' + group.label">
-                <span class="meal-plan-day-note-chip-k">Note</span>
-                <span class="meal-plan-day-note-chip-v" x-text="dayNotes[group.key]"></span>
-              </div>
-            </div>
-            <!-- quick 260620-gi4 — at-a-glance day subtitle: per-day headcount (from
-                 the cached Coda roster) + recipes grouped by type. ALWAYS visible
-                 (outside the collapse template); shown in both Upcoming and Past.
-                 `help` inherits the muted color/size. Rendered as ONE flat x-for over
-                 daySubtitleSegments so the dot separator is INDEX-GATED (i > 0) — a
-                 hidden headcount can't leave a stray leading dot (the headcount
-                 segment is omitted from the array entirely when absent). Read-only. -->
-            <!-- (Round-2 quick 260625-itm — the day subtitle/headcount moved UP into the
-                 header band; see .meal-plan-day-header-row above.) -->
-            <!-- quick 260620-esf — collapsible day REGION: recipe cards + tray body
-                 render only when the day is EXPANDED (=== false). -->
-            <template x-if="dayCollapsedByDay[group.key] === false">
-            <div class="meal-plan-day-body">
-            <!-- quick 260819-d92 — the dish loop renders in FIXED TYPE ORDER
-                 (Main, Side, Salad, any other non-blank type, blank-typed LAST)
-                 instead of the order the dishes were added, so the operator can
-                 read the day's shape top-to-bottom. orderedDayEntries returns a
-                 new array of THE SAME entry references, so every dish control
-                 below still acts on the dish the operator clicked. STORED and
-                 SYNCED order are untouched — this is display-only, there is no
-                 write path. Multiple dishes of a type and none of a type are
-                 both fine; nothing is deduped, dropped, added or renamed. -->
-            <template x-for="(entry, i) in orderedDayEntries(group.entries)" :key="entry.id">
-          <div class="meal-plan-entry-block">
-            <!-- F7 (quick 260625-itm) — mono uppercase typegroup label (specimen
-                 `.typegroup-label`) heads each TYPE group within a day. Rendered as a
-                 GROUP-BREAK header: shown only for the FIRST dish of each type run.
-                 quick 260819-d92 — the break test now runs against the type-ORDERED
-                 array via startsDayTypeGroupAt, and is CASE/WHITESPACE-INSENSITIVE, so
-                 a day holding both `Main` and lowercase `main` shows ONE "MAIN" label
-                 rather than two adjacent ones (the CSS uppercases the text, so a
-                 case-sensitive test looked like a duplicate). It is handed the
-                 unordered entries on purpose — the helper orders them internally, so
-                 the label can never be computed against a different order than the
-                 loop. Blank-typed dishes get no label (unchanged). Still driven purely
-                 by entry.type for the TEXT (CSS uppercases it — data not mutated) and
-                 still does not touch :key. -->
-            <template x-if="startsDayTypeGroupAt(group.entries, i)">
-              <p class="meal-plan-typegroup-label" x-text="entry.type"></p>
-            </template>
-          <div class="meal-plan-recipe">
-            <div class="meal-plan-recipe-head">
-              <!-- quick 260615-dap — collapse/expand toggle. Head (title + servings +
-                   Remove + scale-note) stays ALWAYS visible; only the body below
-                   renders on !entry.collapsed. Caret reflects state. Persists on toggle. -->
-              <button type="button" class="manager-edit-btn"
-                      @click="entry.collapsed = !entry.collapsed; _persistMealPlan()"
-                      :title="(entry.collapsed ? 'Expand ' : 'Collapse ') + (entry.name || 'recipe')"
-                      x-text="entry.collapsed ? '▸' : '▾'"></button>
-              <!-- F10 (quick 260625-itm) — entry name is a plain petrol single-line name
-                   (specimen `.entry-name`): no underline, truncates rather than wraps.
-                   Still a clickable button (openEditRecipe unchanged) — just restyled. -->
-              <button type="button" class="meal-plan-recipe-link" @click="openEditRecipe(entry.recipe_id)" :title="'Edit ' + (entry.name || 'recipe')" x-text="entry.name || '(unnamed)'"></button>
-              <!-- quick 260712-at6 — PER-DISH NOTE (Option B). A small underlined "note" link
-                   that turns bold "✎ note" when a note is set; clicking toggles an inline input.
-                   The note VALUE rides the SAME synced dayNotes map under the composite key
-                   `group.key + '::' + entry.recipe_id`. `open`/`draft` are a per-entry Alpine local
-                   (transient). Enter/blur commits via setDishNote; text via bound value only (never raw HTML).
-                   The input wraps to its own line (flex-basis:100%) so it never breaks the head row. -->
-              <span class="meal-plan-dish-note" x-data="{ open: false, draft: '' }"
-                    x-show="mealPlanTab === 'upcoming'" x-cloak>
-                <button type="button"
-                        class="meal-plan-dish-note-btn"
-                        :class="{ 'has': !!dayNotes[group.key + '::' + entry.recipe_id] }"
-                        @click="open = !open; if (open) { draft = dayNotes[group.key + '::' + entry.recipe_id] || ''; $nextTick(() => $refs.dishNoteInput && $refs.dishNoteInput.focus()) }"
-                        x-text="dayNotes[group.key + '::' + entry.recipe_id] ? '✎ note' : 'note'"></button>
-                <span class="meal-plan-dish-note-editor" x-show="open" x-cloak>
-                  <input type="text" class="meal-plan-dish-note-input"
-                         x-ref="dishNoteInput"
-                         x-model="draft"
-                         placeholder="Tweak for this dish…"
-                         @keydown.enter.prevent="setDishNote(group.key, entry.recipe_id, draft); open = false"
-                         @blur="setDishNote(group.key, entry.recipe_id, draft); open = false">
-                </span>
-              </span>
-              <!-- F8/F9 (quick 260625-itm) — the servings control is now INLINE (specimen
-                   `.serving-control`): a mono `serves` lbl + the number input + the
-                   suggest-sub, all on one line. The "Servings" stacked label is replaced
-                   by the inline mono lbl; the input's x-model.number / type / gate are
-                   byte-identical. quick 260618-ahg gate (Upcoming-only) preserved. -->
-              <label class="meal-plan-servings" x-show="mealPlanTab === 'upcoming'" x-cloak>
-                <span class="meal-plan-serves-lbl">serves</span>
-                <input type="number" min="0" step="1"
-                       x-model.number="entry.servings">
-                <!-- F9 — suggested-servings moved INSIDE the inline control, beside the
-                     input. Both x-if branches + their handlers (suggestedServingsFor /
-                     scaleNoteText / applySuggestedServings) are preserved. The clickable
-                     branch's visible text is the tight specimen "suggested N" (reads the
-                     SAME suggestedServingsFor getter — no new logic); the title still uses
-                     scaleNoteText (unchanged output). The non-clickable fallback stays a
-                     quiet span. -->
-                <template x-if="suggestedServingsFor(entry, group)">
+              <!-- quick 260620-gi4 — at-a-glance day subtitle: per-day headcount (from
+                   the cached Coda roster) + recipes grouped by type. ALWAYS visible
+                   (outside the collapse template); shown in both Upcoming and Past.
+                   `help` inherits the muted color/size. Rendered as ONE flat x-for over
+                   daySubtitleSegments so the dot separator is INDEX-GATED (i > 0) — a
+                   hidden headcount can't leave a stray leading dot (the headcount
+                   segment is omitted from the array entirely when absent). Read-only. -->
+              <!-- (Round-2 quick 260625-itm — the day subtitle/headcount moved UP into the
+                   header band; see .meal-plan-day-header-row above.) -->
+              <!-- quick 260620-esf — collapsible day REGION: recipe cards + tray body
+                   render only when the day is EXPANDED (=== false). -->
+              <template x-if="dayCollapsedByDay[group.key] === false">
+              <div class="meal-plan-day-body">
+              <!-- quick 260819-d92 — the dish loop renders in FIXED TYPE ORDER
+                   (Main, Side, Salad, any other non-blank type, blank-typed LAST)
+                   instead of the order the dishes were added, so the operator can
+                   read the day's shape top-to-bottom. orderedDayEntries returns a
+                   new array of THE SAME entry references, so every dish control
+                   below still acts on the dish the operator clicked. STORED and
+                   SYNCED order are untouched — this is display-only, there is no
+                   write path. Multiple dishes of a type and none of a type are
+                   both fine; nothing is deduped, dropped, added or renamed. -->
+              <template x-for="(entry, i) in orderedDayEntries(mg.entries)" :key="entry.id">
+            <div class="meal-plan-entry-block">
+              <!-- F7 (quick 260625-itm) — mono uppercase typegroup label (specimen
+                   `.typegroup-label`) heads each TYPE group within a day. Rendered as a
+                   GROUP-BREAK header: shown only for the FIRST dish of each type run.
+                   quick 260819-d92 — the break test now runs against the type-ORDERED
+                   array via startsDayTypeGroupAt, and is CASE/WHITESPACE-INSENSITIVE, so
+                   a day holding both `Main` and lowercase `main` shows ONE "MAIN" label
+                   rather than two adjacent ones (the CSS uppercases the text, so a
+                   case-sensitive test looked like a duplicate). It is handed the
+                   unordered entries on purpose — the helper orders them internally, so
+                   the label can never be computed against a different order than the
+                   loop. Blank-typed dishes get no label (unchanged). Still driven purely
+                   by entry.type for the TEXT (CSS uppercases it — data not mutated) and
+                   still does not touch :key. -->
+              <template x-if="startsDayTypeGroupAt(mg.entries, i)">
+                <p class="meal-plan-typegroup-label" x-text="entry.type"></p>
+              </template>
+            <div class="meal-plan-recipe">
+              <div class="meal-plan-recipe-head">
+                <!-- quick 260615-dap — collapse/expand toggle. Head (title + servings +
+                     Remove + scale-note) stays ALWAYS visible; only the body below
+                     renders on !entry.collapsed. Caret reflects state. Persists on toggle. -->
+                <button type="button" class="manager-edit-btn"
+                        @click="entry.collapsed = !entry.collapsed; _persistMealPlan()"
+                        :title="(entry.collapsed ? 'Expand ' : 'Collapse ') + (entry.name || 'recipe')"
+                        x-text="entry.collapsed ? '▸' : '▾'"></button>
+                <!-- F10 (quick 260625-itm) — entry name is a plain petrol single-line name
+                     (specimen `.entry-name`): no underline, truncates rather than wraps.
+                     Still a clickable button (openEditRecipe unchanged) — just restyled. -->
+                <button type="button" class="meal-plan-recipe-link" @click="openEditRecipe(entry.recipe_id)" :title="'Edit ' + (entry.name || 'recipe')" x-text="entry.name || '(unnamed)'"></button>
+                <!-- quick 260712-at6 — PER-DISH NOTE (Option B). A small underlined "note" link
+                     that turns bold "✎ note" when a note is set; clicking toggles an inline input.
+                     The note VALUE rides the SAME synced dayNotes map under the composite key
+                     `group.key + '::' + entry.recipe_id`. `open`/`draft` are a per-entry Alpine local
+                     (transient). Enter/blur commits via setDishNote; text via bound value only (never raw HTML).
+                     The input wraps to its own line (flex-basis:100%) so it never breaks the head row. -->
+                <span class="meal-plan-dish-note" x-data="{ open: false, draft: '' }"
+                      x-show="mealPlanTab === 'upcoming'" x-cloak>
                   <button type="button"
-                          class="meal-plan-suggest-sub"
-                          @click="applySuggestedServings(entry, group)"
-                          :title="scaleNoteText(entry, group)"
-                          x-text="'suggested ' + suggestedServingsFor(entry, group).servings"></button>
-                </template>
-                <template x-if="!suggestedServingsFor(entry, group) && scaleNoteText(entry, group) !== ''">
-                  <span class="meal-plan-scale-note" x-cloak
-                        x-text="scaleNoteText(entry, group)"></span>
-                </template>
-              </label>
-              <!-- J2 (quick 260625-itm) — the per-entry "Day" <input type=date> EDIT
-                   control is REMOVED: each day's own Add sets the new entry's date, so
-                   there's no orphaned move-between-days gap. entry.date is still set on
-                   add (openPickerForDate path) and still drives grouping — only the edit
-                   control is gone. _persistMealPlan stays (servings/collapse use it). -->
-              <button type="button" class="manager-edit-btn meal-plan-remove-btn"
-                      @click="removeFromMealPlan(entry.id)">Remove</button>
-              <!-- F9 (quick 260625-itm) — the suggested-servings note (quick 260620-rm6 /
-                   -sg9) was RELOCATED INTO the inline serves control above (beside the
-                   input), keeping both x-if branches + their handlers verbatim. It no
-                   longer wraps to its own row below the controls. -->
-            </div>
-
-            <!-- quick 260615-dap — collapsible body: everything below the head renders
-                 ONLY when the card is expanded. Single wrapper div (Alpine x-if needs
-                 one root). The inner factorOrNull guard + rows block are unchanged. The
-                 combined shopping list (separate block below) is NOT affected by collapse. -->
-            <template x-if="!entry.collapsed">
-            <div class="meal-plan-recipe-body">
-            <!-- GUARD: blank/0/negative servings (factor === null) -> hint, not NaN. -->
-            <p class="meal-plan-hint"
-               x-show="scaleBlockReason(entry) === 'servings'"
-               x-cloak>Set a servings number to scale this recipe.</p>
-            <!-- Household reset (2026-10-04): the RECIPE itself has no "serves N" yet. -->
-            <p class="meal-plan-hint"
-               x-show="scaleBlockReason(entry) === 'source'"
-               x-cloak>This recipe has no "serves" number yet, so it can't be scaled. Open the recipe and enter how many it serves.</p>
-
-            <template x-if="scaleBlockReason(entry) === ''">
-              <div class="meal-plan-rows">
-                <!-- GUARD: recipe with no ingredient rows. -->
-                <p class="meal-plan-hint"
-                   x-show="scaledRowsFor(entry).length === 0"
-                   x-cloak>This recipe has no ingredient rows.</p>
-                <template x-for="(row, i) in scaledRowsFor(entry)" :key="i">
-                  <div class="meal-plan-row">
-                    <!-- F11/F12/J3/J5 (quick 260625-itm) — clean specimen `.irow`: plain
-                         ink name + spaced mono qty + the J5 estimate/fixed marker, on ONE
-                         line. The provenance SECOND line (J3 — .meal-plan-cat / " · from "
-                         sep / .orig) is removed. scaledRowsFor + every row.* read are
-                         unchanged — this is display-only (it stops DISPLAYING scale_category
-                         + mealPlanOrigRef, it does not remove them from the data). -->
-                    <div class="meal-plan-row-main">
-                      <!-- quick 260612-k86 — MATCHED (integer ingredient_id) renders a
-                           click-through link to the Manage-Ingredients edit panel;
-                           UNMATCHED stays the plain non-clickable span. F11 — the LINK is
-                           restyled to plain ink IN THIS ROW (row-scoped CSS override),
-                           keeping the openEditIngredient click-to-edit behaviour. -->
-                      <template x-if="canEditIngredient(row.ingredient_id)">
-                        <button type="button"
-                                class="meal-plan-ing-link"
-                                @click="openEditIngredient(row.ingredient_id)"
-                                :title="'Edit ' + (row.ingredient_name || 'ingredient')"
-                                x-text="row.ingredient_name || '(unnamed)'"></button>
-                      </template>
-                      <template x-if="!canEditIngredient(row.ingredient_id)">
-                        <span class="meal-plan-ing-name" x-text="row.ingredient_name || '(unnamed)'"></span>
-                      </template>
-                      <!-- F12 (quick 260625-itm) — the metric branch now SPACES the number
-                           and unit ("48 g" not "48g"), matching the specimen `.iqty` and
-                           the volumetric branch. Display string only — no stored value /
-                           scaling / shopping-total change (this is the per-recipe row, not
-                           formatPackLine). -->
-                      <span class="meal-plan-ing-metric"
-                            x-text="(row.scaled_quantity_metric !== null && row.scaled_quantity_metric !== '') ? `${row.scaled_quantity_metric} ${row.unit_metric || ''}` : ((row.scaled_quantity_volumetric !== null && row.scaled_quantity_volumetric !== '') ? `${row.scaled_quantity_volumetric} ${row.unit_volumetric || ''}` : '')"></span>
-                      <span class="meal-plan-ing-vol"
-                            x-show="row.scaled_quantity_metric !== null && row.scaled_quantity_metric !== '' && row.scaled_quantity_volumetric !== null"
-                            x-cloak
-                            x-text="`(${row.scaled_quantity_volumetric} ${row.unit_volumetric || ''})`"></span>
-                      <!-- J5 (quick 260625-itm) — estimate/fixed markers RELOCATED here from
-                           the (now-removed) meta line, as compact markers after the qty
-                           (specimen estimate ⚠ on the qty). The x-show role logic + the full
-                           explanatory `title` tooltips are PRESERVED VERBATIM — the meaning
-                           lives in the role gate + the title. .meal-plan-taste collapses its
-                           visible text to a compact amber ⚠ (words kept in the title);
-                           .meal-plan-fixed KEEPS a short visible "fixed" word (NOT collapsed
-                           to the same glyph as taste, so the fixed-vs-taste distinction is
-                           not lost — see SUMMARY flag). -->
-                      <span class="meal-plan-taste"
-                            x-show="row.scale_strength < 1 && row.scale_category !== 'fixed'"
-                            x-cloak
-                            title="This ingredient doesn't scale linearly — taste and adjust.">⚠</span>
-                      <span class="meal-plan-fixed"
-                            x-show="row.scale_category === 'fixed'"
-                            x-cloak
-                            title="Fixed quantity — does not scale with servings.">fixed</span>
-                    </div>
-                  </div>
-                </template>
+                          class="meal-plan-dish-note-btn"
+                          :class="{ 'has': !!dayNotes[mg.mealKey + '::' + entry.recipe_id] }"
+                          @click="open = !open; if (open) { draft = dayNotes[mg.mealKey + '::' + entry.recipe_id] || ''; $nextTick(() => $refs.dishNoteInput && $refs.dishNoteInput.focus()) }"
+                          x-text="dayNotes[mg.mealKey + '::' + entry.recipe_id] ? '✎ note' : 'note'"></button>
+                  <span class="meal-plan-dish-note-editor" x-show="open" x-cloak>
+                    <input type="text" class="meal-plan-dish-note-input"
+                           x-ref="dishNoteInput"
+                           x-model="draft"
+                           placeholder="Tweak for this dish…"
+                           @keydown.enter.prevent="setDishNote(mg.mealKey, entry.recipe_id, draft); open = false"
+                           @blur="setDishNote(mg.mealKey, entry.recipe_id, draft); open = false">
+                  </span>
+                </span>
+                <!-- F8/F9 (quick 260625-itm) — the servings control is now INLINE (specimen
+                     `.serving-control`): a mono `serves` lbl + the number input + the
+                     suggest-sub, all on one line. The "Servings" stacked label is replaced
+                     by the inline mono lbl; the input's x-model.number / type / gate are
+                     byte-identical. quick 260618-ahg gate (Upcoming-only) preserved. -->
+                <label class="meal-plan-servings" x-show="mealPlanTab === 'upcoming'" x-cloak>
+                  <span class="meal-plan-serves-lbl">serves</span>
+                  <input type="number" min="0" step="1"
+                         x-model.number="entry.servings">
+                  <!-- F9 — suggested-servings moved INSIDE the inline control, beside the
+                       input. Both x-if branches + their handlers (suggestedServingsFor /
+                       scaleNoteText / applySuggestedServings) are preserved. The clickable
+                       branch's visible text is the tight specimen "suggested N" (reads the
+                       SAME suggestedServingsFor getter — no new logic); the title still uses
+                       scaleNoteText (unchanged output). The non-clickable fallback stays a
+                       quiet span. -->
+                  <template x-if="suggestedServingsFor(entry, group)">
+                    <button type="button"
+                            class="meal-plan-suggest-sub"
+                            @click="applySuggestedServings(entry, group)"
+                            :title="scaleNoteText(entry, group)"
+                            x-text="'suggested ' + suggestedServingsFor(entry, group).servings"></button>
+                  </template>
+                  <template x-if="!suggestedServingsFor(entry, group) && scaleNoteText(entry, group) !== ''">
+                    <span class="meal-plan-scale-note" x-cloak
+                          x-text="scaleNoteText(entry, group)"></span>
+                  </template>
+                </label>
+                <!-- J2 (quick 260625-itm) — the per-entry "Day" <input type=date> EDIT
+                     control is REMOVED: each day's own Add sets the new entry's date, so
+                     there's no orphaned move-between-days gap. entry.date is still set on
+                     add (openPickerForDate path) and still drives grouping — only the edit
+                     control is gone. _persistMealPlan stays (servings/collapse use it). -->
+                <!-- Lunches (2026-10-06) — move this dish to the other meal, same day. -->
+                <button type="button" class="manager-edit-btn meal-plan-meal-switch"
+                        x-show="mealPlanTab === 'upcoming'" x-cloak
+                        :title="entry.meal === 'lunch' ? 'Move to dinner' : 'Move to lunch'"
+                        @click="setEntryMeal(entry, entry.meal === 'lunch' ? 'dinner' : 'lunch')"
+                        x-text="entry.meal === 'lunch' ? '→ dinner' : '→ lunch'"></button>
+                <button type="button" class="manager-edit-btn meal-plan-remove-btn"
+                        @click="removeFromMealPlan(entry.id)">Remove</button>
+                <!-- F9 (quick 260625-itm) — the suggested-servings note (quick 260620-rm6 /
+                     -sg9) was RELOCATED INTO the inline serves control above (beside the
+                     input), keeping both x-if branches + their handlers verbatim. It no
+                     longer wraps to its own row below the controls. -->
               </div>
-            </template>
+
+              <!-- quick 260615-dap — collapsible body: everything below the head renders
+                   ONLY when the card is expanded. Single wrapper div (Alpine x-if needs
+                   one root). The inner factorOrNull guard + rows block are unchanged. The
+                   combined shopping list (separate block below) is NOT affected by collapse. -->
+              <template x-if="!entry.collapsed">
+              <div class="meal-plan-recipe-body">
+              <!-- GUARD: blank/0/negative servings (factor === null) -> hint, not NaN. -->
+              <p class="meal-plan-hint"
+                 x-show="scaleBlockReason(entry) === 'servings'"
+                 x-cloak>Set a servings number to scale this recipe.</p>
+              <!-- Household reset (2026-10-04): the RECIPE itself has no "serves N" yet. -->
+              <p class="meal-plan-hint"
+                 x-show="scaleBlockReason(entry) === 'source'"
+                 x-cloak>This recipe has no "serves" number yet, so it can't be scaled. Open the recipe and enter how many it serves.</p>
+
+              <template x-if="scaleBlockReason(entry) === ''">
+                <div class="meal-plan-rows">
+                  <!-- GUARD: recipe with no ingredient rows. -->
+                  <p class="meal-plan-hint"
+                     x-show="scaledRowsFor(entry).length === 0"
+                     x-cloak>This recipe has no ingredient rows.</p>
+                  <template x-for="(row, i) in scaledRowsFor(entry)" :key="i">
+                    <div class="meal-plan-row">
+                      <!-- F11/F12/J3/J5 (quick 260625-itm) — clean specimen `.irow`: plain
+                           ink name + spaced mono qty + the J5 estimate/fixed marker, on ONE
+                           line. The provenance SECOND line (J3 — .meal-plan-cat / " · from "
+                           sep / .orig) is removed. scaledRowsFor + every row.* read are
+                           unchanged — this is display-only (it stops DISPLAYING scale_category
+                           + mealPlanOrigRef, it does not remove them from the data). -->
+                      <div class="meal-plan-row-main">
+                        <!-- quick 260612-k86 — MATCHED (integer ingredient_id) renders a
+                             click-through link to the Manage-Ingredients edit panel;
+                             UNMATCHED stays the plain non-clickable span. F11 — the LINK is
+                             restyled to plain ink IN THIS ROW (row-scoped CSS override),
+                             keeping the openEditIngredient click-to-edit behaviour. -->
+                        <template x-if="canEditIngredient(row.ingredient_id)">
+                          <button type="button"
+                                  class="meal-plan-ing-link"
+                                  @click="openEditIngredient(row.ingredient_id)"
+                                  :title="'Edit ' + (row.ingredient_name || 'ingredient')"
+                                  x-text="row.ingredient_name || '(unnamed)'"></button>
+                        </template>
+                        <template x-if="!canEditIngredient(row.ingredient_id)">
+                          <span class="meal-plan-ing-name" x-text="row.ingredient_name || '(unnamed)'"></span>
+                        </template>
+                        <!-- F12 (quick 260625-itm) — the metric branch now SPACES the number
+                             and unit ("48 g" not "48g"), matching the specimen `.iqty` and
+                             the volumetric branch. Display string only — no stored value /
+                             scaling / shopping-total change (this is the per-recipe row, not
+                             formatPackLine). -->
+                        <span class="meal-plan-ing-metric"
+                              x-text="(row.scaled_quantity_metric !== null && row.scaled_quantity_metric !== '') ? `${row.scaled_quantity_metric} ${row.unit_metric || ''}` : ((row.scaled_quantity_volumetric !== null && row.scaled_quantity_volumetric !== '') ? `${row.scaled_quantity_volumetric} ${row.unit_volumetric || ''}` : '')"></span>
+                        <span class="meal-plan-ing-vol"
+                              x-show="row.scaled_quantity_metric !== null && row.scaled_quantity_metric !== '' && row.scaled_quantity_volumetric !== null"
+                              x-cloak
+                              x-text="`(${row.scaled_quantity_volumetric} ${row.unit_volumetric || ''})`"></span>
+                        <!-- J5 (quick 260625-itm) — estimate/fixed markers RELOCATED here from
+                             the (now-removed) meta line, as compact markers after the qty
+                             (specimen estimate ⚠ on the qty). The x-show role logic + the full
+                             explanatory `title` tooltips are PRESERVED VERBATIM — the meaning
+                             lives in the role gate + the title. .meal-plan-taste collapses its
+                             visible text to a compact amber ⚠ (words kept in the title);
+                             .meal-plan-fixed KEEPS a short visible "fixed" word (NOT collapsed
+                             to the same glyph as taste, so the fixed-vs-taste distinction is
+                             not lost — see SUMMARY flag). -->
+                        <span class="meal-plan-taste"
+                              x-show="row.scale_strength < 1 && row.scale_category !== 'fixed'"
+                              x-cloak
+                              title="This ingredient doesn't scale linearly — taste and adjust.">⚠</span>
+                        <span class="meal-plan-fixed"
+                              x-show="row.scale_category === 'fixed'"
+                              x-cloak
+                              title="Fixed quantity — does not scale with servings.">fixed</span>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+              </div>
+              </template>
+            </div>
+            </div>
+              <!-- /meal-plan-entry-block (F7 quick 260625-itm — wraps the optional
+                   typegroup-label + the recipe card; x-for needs one root per iteration) -->
+              </template>
+              </div>
+              <!-- /meal-plan-day-body -->
+              </template>
+              <!-- /day-collapse x-if — wraps the recipe CARDS only. phase 09-08 (D24) —
+                   the per-day Tray + Prep are NO LONGER inline collapse siblings here;
+                   the Tray/Prep header buttons now open the shared MODALS rendered once
+                   below (outside this x-for), resolved via trayModalGroup / prepModalGroup. -->
             </div>
             </template>
-          </div>
-          </div>
-            <!-- /meal-plan-entry-block (F7 quick 260625-itm — wraps the optional
-                 typegroup-label + the recipe card; x-for needs one root per iteration) -->
-            </template>
-            </div>
-            <!-- /meal-plan-day-body -->
-            </template>
-            <!-- /day-collapse x-if — wraps the recipe CARDS only. phase 09-08 (D24) —
-                 the per-day Tray + Prep are NO LONGER inline collapse siblings here;
-                 the Tray/Prep header buttons now open the shared MODALS rendered once
-                 below (outside this x-for), resolved via trayModalGroup / prepModalGroup. -->
           </div>
         </template>
         <!-- Phase 21 (v2.1 Mobile Kitchen) — mobile-only "＋ N more days" collapser.
@@ -3027,7 +3050,7 @@
              (banner banner-warning, design tokens via styles.css). App-level state
              (not per-group), so rendered ONCE outside the day-group loop. -->
         <div class="banner banner-warning" x-show="cookArtifactBlocked" x-cloak>
-          <p>Popup blocked — allow popups for this page, then click “Cook this day” again.</p>
+          <p>Popup blocked — allow popups for this page, then click “Cook lunch” / “Cook dinner” again.</p>
         </div>
         <div class="banner banner-warning" x-show="cookArtifactError" x-cloak>
           <p x-text="cookArtifactError"></p>
@@ -4530,7 +4553,7 @@
                          @change="saveHouseMode($event.target.checked); tick('houseMode')" />
                   Show the community-house features
                 </label>
-                <p class="help">residents roster (Coda), cooks rota, “Cook this day”, suggested servings from headcount, leftovers days, resident allergen checks and Regulars. Off hides them — nothing is deleted.</p>
+                <p class="help">residents roster (Coda), cooks rota, “Cook lunch / dinner”, suggested servings from headcount, leftovers days, resident allergen checks and Regulars. Off hides them — nothing is deleted.</p>
               </fieldset>
 
               <!-- quick 260620-rm6 — advisory suggested-servings multipliers
@@ -4960,8 +4983,8 @@
                    day's prep-done state (prepDoneByDay[prepModalGroup.key]); the Prep
                    day-button goes amber→green but stays visible. Label binds on done
                    state. UI-prefs only (togglePrepDone persists to MEAL_PLAN_UI_KEY). -->
-              <button type="button" @click="togglePrepDone(prepModalGroup.key)"
-                      x-text="prepDoneByDay[prepModalGroup.key] === true ? 'Mark as not done' : 'Mark as done'"></button>
+              <button type="button" @click="togglePrepDone(prepModalGroup.mealKey)"
+                      x-text="prepDoneByDay[prepModalGroup.mealKey] === true ? 'Mark as not done' : 'Mark as done'"></button>
               <button type="button" @click="closePrepModal()">Close</button>
             </div>
           </div>

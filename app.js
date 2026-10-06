@@ -107,7 +107,8 @@ import {
   coerceSharedPlanDoc,
   emptySharedPlanDoc,
   mergeMealPlan,
-  preserveUnexpectedlyDroppedEntries
+  preserveUnexpectedlyDroppedEntries,
+  withMeal
 } from './mealplan-sync.js';
 // Phase 17 (Plan 17-03) — PURE roster-snapshot helper (residents_roster.json
 // shape, ROWS-ONLY, NO credential — T-17-08). Node-tested in
@@ -445,7 +446,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'a5e6ca3 2026-10-06';
+const APP_VERSION = 'd68e216 2026-10-06';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -4011,6 +4012,8 @@ Alpine.data('app', () => ({
   // is the 'YYYY-MM-DD' day a pick lands on ('' = Unscheduled). Set via openPickerForDate.
   mealPlanPickerOpen: false,
   mealPlanPickerTargetDate: '',
+  // Lunches (2026-10-06) — which meal row's Add opened the picker: 'lunch' | 'dinner'.
+  mealPlanPickerTargetMeal: 'dinner',
   // --- Weather (quick 260712-c44) — device-local, NOT synced ---
   // Shows a Met Office (Open-Meteo ukmo_seamless) forecast high in the Add-Recipe
   // picker modal for the day being planned. Everything here is device-local
@@ -9748,7 +9751,7 @@ Alpine.data('app', () => ({
    * crypto.randomUUID id, servings 4, collapsed true); only the seeded date value
    * differs, set through the existing _persistMealPlan path. NO new persisted fields.
    */
-  addToMealPlanForDate(recipe_id, date) {
+  addToMealPlanForDate(recipe_id, date, meal) {
     const rid = Number(recipe_id);
     const meta = this.recipeList.find(r => r.recipe_id === rid);
     const entry = {
@@ -9767,6 +9770,8 @@ Alpine.data('app', () => ({
       // quick 260621-amm — now seeded from the day-targeted add (defaults to '').
       date: (typeof date === 'string') ? date : ''
     };
+    // Lunches (2026-10-06) — tag lunch dishes only; no tag = dinner (the default).
+    if (meal === 'lunch') entry.meal = 'lunch';
     // quick 260712-f06 auto-seeded servings from the roster headcount here. REMOVED in
     // the household reset (2026-10-04): the per-dish box is the ONLY portion number and
     // the household-size setting seeds it, so a loaded roster must not override it. The
@@ -9785,8 +9790,9 @@ Alpine.data('app', () => ({
    * an edge affordance). The modal STAYS OPEN across multiple adds; Done (or Escape)
    * closes it. Both transient — no persistence.
    */
-  openPickerForDate(date) {
+  openPickerForDate(date, meal) {
     this.mealPlanPickerTargetDate = (typeof date === 'string') ? date : '';
+    this.mealPlanPickerTargetMeal = meal === 'lunch' ? 'lunch' : 'dinner';
     this.mealPlanPickerOpen = true;
     // quick 260712-c44 — fire-and-forget the weather load so the modal opens
     // instantly; the forecast line appears reactively when data lands.
@@ -9833,6 +9839,7 @@ Alpine.data('app', () => ({
   closeMealPlanPicker() {
     this.mealPlanPickerOpen = false;
     this.mealPlanPickerTargetDate = '';
+    this.mealPlanPickerTargetMeal = 'dinner';
     // quick 260621-amm follow-up — closing resets the picker to a clean slate so the
     // next open never inherits a stale search/filter (full reset, mirrors the Clear link).
     this.clearMealPlanFilters();
@@ -9845,14 +9852,56 @@ Alpine.data('app', () => ({
    * the user may be browsing within (a full reset happens on close instead).
    */
   addFromPicker(recipe_id) {
-    this.addToMealPlanForDate(recipe_id, this.mealPlanPickerTargetDate);
+    this.addToMealPlanForDate(recipe_id, this.mealPlanPickerTargetDate, this.mealPlanPickerTargetMeal);
     this.mealPlanFilter = '';
   },
   // quick 260621-amm — header label for the picker modal. Reuses _dayLabel; '' (or a
   // malformed/blank target) degrades to '' so the header reads just "Add recipe".
   get mealPlanPickerTargetLabel() {
     if (!this.mealPlanPickerTargetDate) return '';
-    return this._dayLabel(this.mealPlanPickerTargetDate) || '';
+    const day = this._dayLabel(this.mealPlanPickerTargetDate) || '';
+    return day ? `${day} · ${this.mealName(this.mealPlanPickerTargetMeal)}` : '';
+  },
+
+  // --- Lunches (2026-10-06) -------------------------------------------------
+  // A day holds two meals. An entry's meal is 'lunch' when entry.meal === 'lunch',
+  // otherwise dinner (every pre-lunches dish is dinner). Per-meal day state reuses
+  // the existing per-day maps under a MEAL KEY: the plain day key for dinner (so all
+  // existing notes / prep-done / cook-progress stay attached to dinner) and
+  // dayKey + '@lunch' for lunch.
+  mealKey(dayKey, meal) {
+    return meal === 'lunch' ? `${dayKey}@lunch` : dayKey;
+  },
+  // The inverse of mealKey — the ONE place a meal key is read back apart.
+  parseMealKey(key) {
+    const k = String(key == null ? '' : key);
+    return k.endsWith('@lunch') ? { dayKey: k.slice(0, -'@lunch'.length), meal: 'lunch' } : { dayKey: k, meal: 'dinner' };
+  },
+  mealName(meal) {
+    return meal === 'lunch' ? 'Lunch' : 'Dinner';
+  },
+  // The day split into its two meal sub-groups, lunch first. Each sub-group is
+  // shaped like a day group ({ key, label, entries }) so the cook sheet / copy /
+  // prep code takes it unchanged; `key` stays the DAY key (per-dish notes are
+  // keyed by day), `mealKey` carries the per-meal key.
+  mealGroupsFor(group) {
+    if (!group) return [];
+    const entries = Array.isArray(group.entries) ? group.entries : [];
+    return ['lunch', 'dinner'].map(meal => ({
+      meal,
+      mealLabel: this.mealName(meal),
+      key: group.key,
+      mealKey: this.mealKey(group.key, meal),
+      label: `${group.label} · ${this.mealName(meal)}`,
+      entries: entries.filter(e => (e.meal === 'lunch') === (meal === 'lunch'))
+    }));
+  },
+  // Move a dish between lunch and dinner on the same day.
+  setEntryMeal(entry, meal) {
+    if (!entry) return;
+    if (meal === 'lunch') entry.meal = 'lunch';
+    else delete entry.meal;
+    this._persistMealPlan();
   },
   // quick 260712-c44 — the Add-Recipe modal's single weather read. Returns null
   // (line hidden) when there's no target day, no location, the fetch failed, or the
@@ -10015,7 +10064,7 @@ Alpine.data('app', () => ({
   },
 
   /**
-   * Swap dishes — quick 260707-lyk. Swap the dinner DISHES between two calendar
+   * Swap dishes — quick 260707-lyk. Swap ALL dishes (lunch + dinner — grill Q9) between two calendar
    * days by RE-DATING every entry: entries dated A become B and vice-versa (a full↔empty
    * swap therefore MOVES the meal). Uses the established mutate-then-persist path
    * (_persistMealPlan writes the local minimal projection AND arms the debounced remote push).
@@ -10057,7 +10106,7 @@ Alpine.data('app', () => ({
    */
   _persistMealPlan() {
     try {
-      const projection = (Array.isArray(this.mealPlan) ? this.mealPlan : []).map(e => ({
+      const projection = (Array.isArray(this.mealPlan) ? this.mealPlan : []).map(e => withMeal({
         id: e.id,
         recipe_id: e.recipe_id,
         date: e.date,
@@ -10075,7 +10124,7 @@ Alpine.data('app', () => ({
         // SHARED_ENTRY_FIELDS whitelist and ignores everything else — asserted by
         // S5 in scripts/mealplan-order.test.mjs against the real function.
         type: e.type
-      }));
+      }, e));
       localStorage.setItem(MEAL_PLAN_KEY, JSON.stringify(projection));
     } catch (_e) {
       /* fail-open — persistence is best-effort, never block the UI. */
@@ -10111,7 +10160,7 @@ Alpine.data('app', () => ({
         if (!e || typeof e !== 'object') continue;
         const rid = Number(e.recipe_id);
         if (!Number.isFinite(rid)) continue;
-        restored.push({
+        restored.push(withMeal({
           // quick 260615-lzq — defensive id default for pre-lzq projections.
           id: (typeof e.id === 'string' && e.id) ? e.id : crypto.randomUUID(),
           recipe_id: rid,
@@ -10128,7 +10177,7 @@ Alpine.data('app', () => ({
           collapsed: e.collapsed !== false,
           // quick 260615-lzq — coerce a missing/invalid date to '' (unscheduled).
           date: (typeof e.date === 'string') ? e.date : ''
-        });
+        }, e));
       }
       this.mealPlan = restored;
     } catch (_e) {
@@ -10375,7 +10424,7 @@ Alpine.data('app', () => ({
     this.mealPlan = safe.entries.map(e => {
       const rid = Number(e.recipe_id);
       const meta = recipeById.get(rid);
-      return {
+      return withMeal({
         id: e.id,
         recipe_id: rid,
         name: meta ? meta.name : '',
@@ -10384,7 +10433,7 @@ Alpine.data('app', () => ({
         date: typeof e.date === 'string' ? e.date : '',
         // local-only collapsed: keep this device's value, default collapsed=true.
         collapsed: priorCollapsed.has(e.id) ? (priorCollapsed.get(e.id) !== false) : true
-      };
+      }, e);
     });
     this.cooksByDay = safe.cooksByDay;
     this.dayLeftovers = safe.dayLeftovers;
@@ -11011,9 +11060,14 @@ Alpine.data('app', () => ({
     if (!this.trayModalDay) return null;
     return this.visiblePlanByDay.find(g => g.key === this.trayModalDay) || null;
   },
+  // Lunches — prepModalDay holds a MEAL key (day, or day + '@lunch'); resolve the
+  // day, then that meal's sub-group.
   get prepModalGroup() {
     if (!this.prepModalDay) return null;
-    return this.visiblePlanByDay.find(g => g.key === this.prepModalDay) || null;
+    const { dayKey, meal } = this.parseMealKey(this.prepModalDay);
+    const day = this.visiblePlanByDay.find(g => g.key === dayKey);
+    if (!day) return null;
+    return this.mealGroupsFor(day).find(mg => mg.meal === meal) || null;
   },
   /**
    * allergenModalStatus — quick 260627-r94 (R94-3). Resolve the OPEN allergen modal's
@@ -13372,6 +13426,8 @@ Alpine.data('app', () => ({
    * is visible in the copied text itself and a modal confirm would be pure friction.
    */
   async copyCookPlaintext(group) {
+    // Lunches — flag by the meal key so only the clicked meal's item flips.
+    const flagKey = group.mealKey != null ? group.mealKey : group.key;
     // Clear stale notices (same three flags generateCookArtifact clears) + any
     // in-flight "Copied ✓" / "Copy failed" flip from a previous copy.
     this.cookArtifactWarning = '';
@@ -13394,7 +13450,7 @@ Alpine.data('app', () => ({
     const canItem = typeof ClipboardItem === 'function' && !!(navigator.clipboard && navigator.clipboard.write);
     const canText = !!(navigator.clipboard && navigator.clipboard.writeText);
     if (!canItem && !canText) {
-      this._failCookCopy(group.key, "Your browser blocked the clipboard — open this tool over http://localhost:8000 or the live https:// address (copying doesn't work from a file:// page).");
+      this._failCookCopy(flagKey, "Your browser blocked the clipboard — open this tool over http://localhost:8000 or the live https:// address (copying doesn't work from a file:// page).");
       return;
     }
 
@@ -13457,19 +13513,19 @@ Alpine.data('app', () => ({
         await navigator.clipboard.writeText(await textPromise);
       }
       if (!current()) return;
-      this.cookCopyCopiedFor = group.key;
+      this.cookCopyCopiedFor = flagKey;
       // 1600ms matches the Settings tick() / copySecret confirmation convention.
       this._cookCopyTimer = setTimeout(() => {
         if (current()) this.cookCopyCopiedFor = null;
       }, 1600);
     } catch (_e) {
       if (!current()) return;
-      this._failCookCopy(group.key, (
+      this._failCookCopy(flagKey, (
         failureStage === 'read'
           ? "Couldn't read your recipe files, so the meal plan couldn't be copied."
           : failureStage === 'build'
-            ? "Couldn't build the plaintext meal plan — use “Cook this day” instead, and report this."
-            : 'Couldn’t write to the clipboard — your browser refused permission. Use “Cook this day” and copy from the sheet instead.'
+            ? "Couldn't build the plaintext meal plan — use “Cook lunch” / “Cook dinner” instead, and report this."
+            : 'Couldn’t write to the clipboard — your browser refused permission. Use “Cook lunch” / “Cook dinner” and copy from the sheet instead.'
       ));
     }
   },
@@ -13587,17 +13643,20 @@ Alpine.data('app', () => ({
         hasSteps: stepCount > 0, // false = D-16 Overview-only (recorded for Plan 03's wizard skip)
         // quick 260712-at6 — per-dish note read from the synced dayNotes map at BUILD time
         // (D-05 frozen). Composite key group.key + '::' + recipeId; empty string when absent.
-        note: String(this.dayNotes[group.key + '::' + entry.recipe_id] || '')
+        // Lunches: keyed by the MEAL key (day for dinner — unchanged — or day@lunch).
+        note: String(this.dayNotes[(group.mealKey != null ? group.mealKey : group.key) + '::' + entry.recipe_id] || '')
       };
     });
 
     return {
       dayLabel: group.label,
-      dayKey: group.key, // verbatim — 'YYYY-MM-DD' or '' (D-14); do NOT normalize
+      // verbatim — 'YYYY-MM-DD' or '' (D-14); do NOT normalize. Lunches: a meal
+      // sub-group passes its mealKey so lunch + dinner keep separate cook progress.
+      dayKey: group.mealKey != null ? group.mealKey : group.key,
       generatedAt: new Date().toISOString(),
       // quick 260712-at6 — whole-day note read from the synced dayNotes map at BUILD time
       // (D-05 frozen); keyed by the day string; empty string when absent.
-      dayNote: String(this.dayNotes[group.key] || ''),
+      dayNote: String(this.dayNotes[group.mealKey != null ? group.mealKey : group.key] || ''),
       dishes
     };
   },

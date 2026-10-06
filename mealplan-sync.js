@@ -14,7 +14,7 @@
 //
 // Shared doc shape (SPEC #1):
 //   {
-//     entries: [{ id, recipe_id, date, servings }],   // NO per-entry `collapsed` (view-state, local-only)
+//     entries: [{ id, recipe_id, date, servings, meal? }], // meal only when 'lunch'; NO per-entry `collapsed` (view-state, local-only)
 //     cooksByDay, dayLeftovers, prepDoneByDay,         // keyed maps (by day)
 //     regularsOverrides,                               // keyed map (by ingredient_id)
 //     recipeLineStrikes,                               // keyed map (by ingredient_id) — skip-this-shop strikethrough (quick 260628-v0i)
@@ -44,7 +44,16 @@
 export const SHARED_MAP_FIELDS = ['cooksByDay', 'dayLeftovers', 'prepDoneByDay', 'regularsOverrides', 'recipeLineStrikes', 'checkStockStrikes', 'dayNotes'];
 
 // The entry fields that ride the shared doc (NO `collapsed` — that is view-state).
-export const SHARED_ENTRY_FIELDS = ['id', 'recipe_id', 'date', 'servings'];
+// Lunches (2026-10-06): `meal` is OPTIONAL — present ONLY as 'lunch'; absent = dinner.
+// Every pre-lunches entry therefore projects byte-identically (no spurious merge diffs).
+export const SHARED_ENTRY_FIELDS = ['id', 'recipe_id', 'date', 'servings', 'meal'];
+
+// withMeal — copy an entry's meal tag onto a projected entry: { meal: 'lunch' } for a
+// lunch, nothing at all for dinner (the default). The ONE place that rule lives.
+export function withMeal(projected, e) {
+  if (e && e.meal === 'lunch') projected.meal = 'lunch';
+  return projected;
+}
 
 /**
  * emptySharedPlanDoc — the safe empty default. Used as the fail-open value when a
@@ -87,13 +96,13 @@ export function projectSharedPlanDoc(state) {
   const s = state || {};
   const entries = (Array.isArray(s.mealPlan) ? s.mealPlan : [])
     .filter(e => e && typeof e === 'object')
-    .map(e => ({
+    .map(e => withMeal({
       id: e.id,
       recipe_id: e.recipe_id,
       date: typeof e.date === 'string' ? e.date : '',
       servings: e.servings
       // NB: `collapsed` is DELIBERATELY omitted — view-state stays local (SPEC #1).
-    }));
+    }, e));
   const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
   return {
     entries,
@@ -134,12 +143,12 @@ export function coerceSharedPlanDoc(raw) {
   const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
   const entries = (Array.isArray(raw.entries) ? raw.entries : [])
     .filter(e => e && typeof e === 'object' && e.id != null)
-    .map(e => ({
+    .map(e => withMeal({
       id: e.id,
       recipe_id: e.recipe_id,
       date: typeof e.date === 'string' ? e.date : '',
       servings: e.servings
-    }));
+    }, e));
   return {
     entries,
     cooksByDay: obj(raw.cooksByDay),
