@@ -445,7 +445,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'ebc47c9 2026-10-04';
+const APP_VERSION = 'a5e6ca3 2026-10-06';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -2003,6 +2003,14 @@ Alpine.data('app', () => ({
   // re-seeded on Settings open and persisted on @change (saveHouseholdSize).
   householdSize: (() => { const v = parseInt(localStorage.getItem('household_size'), 10); return Number.isFinite(v) && v >= 1 ? v : 2; })(),
   householdSizeDraft: '',
+
+  // Household reset slice 3 (2026-10-06) — "House mode": the ONE switch for the
+  // community-house features (residents roster / Coda, cooking rota, "Cook this day",
+  // headcount suggestions + leftovers roll-over, resident allergen checks, Regulars).
+  // OFF by default (a two-person household). Nothing is deleted — off only hides the
+  // UI and gates each feature's single entry point. SYNCED (key `houseMode`) so both
+  // household devices agree. Toggled in Settings → Planning (saveHouseMode).
+  houseMode: localStorage.getItem('house_mode') === 'true',
 
   settingsOpen: false,
 
@@ -5623,6 +5631,7 @@ Alpine.data('app', () => ({
       servingsPerResidentSide: this.servingsPerResidentSide,
       servingsPerResidentSalad: this.servingsPerResidentSalad,
       householdSize: this.householdSize,
+      houseMode: this.houseMode,
       scaleStrengths: JSON.stringify(this.scaleStrengths),
       pantrySections: JSON.stringify(this.pantrySections),
       systemPromptOverride: this.systemPromptOverride ?? '',
@@ -5698,6 +5707,17 @@ Alpine.data('app', () => ({
           if (Number.isFinite(n) && n >= 1 && n <= 1000) {
             this.householdSize = n;
             localStorage.setItem('household_size', String(n));
+          } else { applied = false; }
+          break;
+        }
+        case 'houseMode': {
+          // Defensive per T-i1y-03: a real boolean only; anything else is skipped.
+          if (typeof value === 'boolean') {
+            const wasOn = this.houseMode;
+            this.houseMode = value;
+            if (!wasOn && value) this.maybeAutoFetchRoster(); // the boot fetch was skipped while off
+            localStorage.setItem('house_mode', String(value));
+            this._leaveHiddenHouseViews();
           } else { applied = false; }
           break;
         }
@@ -6186,6 +6206,7 @@ Alpine.data('app', () => ({
    * write and owns its own rosterFetching guard, try/catch, and error channel.
    */
   maybeAutoFetchRoster() {
+    if (!this.houseMode) return; // household reset slice 3 — no roster outside House mode
     // SILENT config gate — unconfigured boot is a no-op (no rosterError, no log).
     if (!this.codaApiToken || !this.codaExportDocId ||
         !this.codaResidencyTableId || !this.codaOnboardingTableId) {
@@ -6343,6 +6364,9 @@ Alpine.data('app', () => ({
    * No writes — pure read + return.
    */
   daySubtitleSegments(group) {
+    // Household reset slice 3 — both segments (headcount, leftovers) are house-only. The
+    // cached roster still loads at boot, so gate here, not on rosterLoaded.
+    if (!this.houseMode) return [];
     const segs = [];
     const key = group && group.key;
     // quick 260728-bum — the headcount is now shown on EVERY day with a resolvable
@@ -6557,6 +6581,9 @@ Alpine.data('app', () => ({
     //    correctly falls through to cant-check (verification 260627-e6t).
     const entries = (group && Array.isArray(group.entries)) ? group.entries : [];
     if (entries.length === 0) return { state: 'none' };
+    // Household reset slice 3 — this check is against the RESIDENTS roster; outside
+    // House mode there is no roster, so hide it rather than flag "can't check" daily.
+    if (!this.houseMode) return { state: 'none' };
 
     // 1. Roster not loaded → CAN'T CHECK (never imply safe).
     if (!this.rosterLoaded) return { state: 'cant-check' };
@@ -6682,6 +6709,7 @@ Alpine.data('app', () => ({
    * multiplier is not a positive finite number. servings = ceil(headcount × mult).
    */
   suggestedServingsFor(entry, group) {
+    if (!this.houseMode) return null; // household reset slice 3 — headcount suggestions are house-only
     const base = this.headcountForDate(group && group.key);
     if (base === null) return null;
     // quick 260621-lft — scale the suggestion to the EFFECTIVE headcount so a cooking
@@ -7773,6 +7801,25 @@ Alpine.data('app', () => ({
     this.householdSizeDraft = String(this.householdSize);
   },
 
+  // saveHouseMode — household reset slice 3. Persist the House mode switch (synced),
+  // then step out of any house-only view that just became hidden.
+  saveHouseMode(on) {
+    const wasOn = this.houseMode;
+    this.houseMode = on === true;
+    localStorage.setItem('house_mode', String(this.houseMode));
+    this.stampSetting('houseMode'); // synced: bump clock + push (best-effort)
+    this._leaveHiddenHouseViews();
+    if (!wasOn && this.houseMode) this.maybeAutoFetchRoster(); // the boot fetch was skipped while off
+  },
+
+  // _leaveHiddenHouseViews — when House mode is off, don't leave the user parked on
+  // a screen whose button has disappeared (the Residents page, the Regulars tab).
+  _leaveHiddenHouseViews() {
+    if (this.houseMode) return;
+    if (this.mealListTab === 'regulars') this.mealListTab = 'shopping';
+    if (this.residentsView) this.residentsView = false;
+  },
+
   // ----- Settings: scaling strengths (quick 260612-dr4) -----
   // saveScaleStrengths — clamp all 5 categories to 0..100 (NaN -> per-key
   // default) then persist. Called on @change from each Settings input so an
@@ -8784,7 +8831,7 @@ Alpine.data('app', () => ({
     } else if (name === 'recipes') {
       await this.openRecipeManager();
     } else if (name === 'residents') {
-      this.openResidents();
+      if (this.houseMode) this.openResidents(); // household reset slice 3
     } else if (name === 'settings') {
       this.apiKeyDraft = this.apiKey;
       // Phase 07 — seed the four Coda drafts from their persisted fields. This is
@@ -9846,6 +9893,7 @@ Alpine.data('app', () => ({
     const empty = { state: 'none', allergensText: '', unknownText: '', unmatchedText: '' };
     const key = this.mealPlanPickerTargetDate;
     if (!key) return empty;                                       // Unscheduled / no day → hide
+    if (!this.houseMode) return empty;                            // household reset slice 3 — resident check is house-only
     if (!this.rosterLoaded) return { ...empty, state: 'cant-check' }; // never imply safe
 
     // Oxford-comma join (local, pure) — matches dayAllergenStatus's display convention.
@@ -9928,6 +9976,7 @@ Alpine.data('app', () => ({
    * under x-show (protects the 3-error console baseline).
    */
   get pickerServingNeed() {
+    if (!this.houseMode) return null; // household reset slice 3 — headcount line is house-only
     const date = this.mealPlanPickerTargetDate;
     const base = this.headcountForDate(date);
     if (base === null) return null;              // Unscheduled / roster unloaded → hide the line
@@ -12037,6 +12086,7 @@ Alpine.data('app', () => ({
     // explicitly Added this shop (include === true). Any other value-shape (e.g. a stale
     // {skip:true} from before the opt-in flip) is ignored by this gate → not included.
     for (const [iid, m] of masterById.entries()) {
+      if (!this.houseMode) break;                                         // household reset slice 3 — Regulars are house-only
       if (m.regular !== true) continue;                                   // not a regular
       if (_regularsOverrides[String(iid)]?.include !== true) continue;    // not Added this shop (opt-in gate)
       const qty = this.regularSuggestedQty(iid);                          // override.qty ?? blank→null ?? rate×person-days

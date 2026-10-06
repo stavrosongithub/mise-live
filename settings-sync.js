@@ -23,7 +23,7 @@
 // ===========================================================================
 
 /**
- * SYNCED_SETTING_KEYS — the WHITELIST of the 16 kitchen-global settings that ride
+ * SYNCED_SETTING_KEYS — the WHITELIST of the 17 kitchen-global settings that ride
  * settings.json. This is the ONLY set of keys that can ever be built into / read
  * out of the synced doc.
  *
@@ -43,6 +43,9 @@ export const SYNCED_SETTING_KEYS = Object.freeze([
   // Household reset (2026-10-04) — the starting portion number for a new dish.
   // A plain non-secret number, the same class as the three multipliers above.
   'householdSize',
+  // Household reset slice 3 (2026-10-06) — the "House mode" on/off switch that shows
+  // or hides the community-house features. A plain non-secret boolean.
+  'houseMode',
   'scaleStrengths',
   'pantrySections',
   'systemPromptOverride',
