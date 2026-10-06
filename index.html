@@ -2615,7 +2615,7 @@
                            that has dishes, built from its mealGroupsFor sub-group. -->
                       <template x-for="mg in mealGroupsFor(group).filter(m => m.entries.length > 0)" :key="mg.meal">
                         <div class="meal-plan-menu-meal">
-                      <!-- 2026-10-07 — no longer House-mode-only: the household uses it too. -->
+                      <!-- 2026-10-06 — no longer House-mode-only: the household uses it too. -->
                       <button type="button" class="meal-plan-menu-item" role="menuitem"
                               :disabled="anyModalOpen"
                               @click="generateCookArtifact(mg); dayMenuOpenFor = ''" x-text="'Cook ' + mg.meal"></button>
@@ -2919,7 +2919,7 @@
                         :title="entry.meal === 'lunch' ? 'Move to dinner' : 'Move to lunch'"
                         @click="setEntryMeal(entry, entry.meal === 'lunch' ? 'dinner' : 'lunch')"
                         x-text="entry.meal === 'lunch' ? '→ dinner' : '→ lunch'"></button>
-                <!-- Leftovers (2026-10-07) — "Make extra for…": cook more of this dish and eat it
+                <!-- Leftovers (2026-10-06) — "Make extra for…": cook more of this dish and eat it
                      at a later meal. Opens a row of chips (the next few meals); each chip adds or
                      removes a leftover of this dish there. -->
                 <button type="button" class="manager-edit-btn meal-plan-extra-btn"
@@ -4327,15 +4327,15 @@
               </p>
 
               <!-- Model selector (SHELL-03). The @change handler writes to
-                   localStorage so the choice survives a refresh. Two options
-                   only — sonnet-4-6 (default, recommended) and haiku-4-5
-                   (cheaper bulk fallback). Already auto-saves (no modal close). -->
+                   localStorage so the choice survives a refresh. Options come
+                   from MODEL_OPTIONS in app.js (Sonnet 5.5 default, Haiku 4.5). Already auto-saves (no modal close). -->
               <label>
                 <span class="settings-field-head">Model<span class="settings-saved" x-show="savedTick === 'model'" x-cloak>Saved ✓</span></span>
                 <select x-model="selectedModel"
                         @change="localStorage.setItem('recipe_ingest_model', selectedModel); estimateTokenCost(); tick('model')">
-                  <option value="claude-sonnet-4-6">Sonnet 4.6 (recommended)</option>
-                  <option value="claude-haiku-4-5">Haiku 4.5 (cheaper, less accurate)</option>
+                  <template x-for="m in modelOptions" :key="m.id">
+                    <option :value="m.id" :selected="m.id === selectedModel" x-text="m.label"></option>
+                  </template>
                 </select>
               </label>
 

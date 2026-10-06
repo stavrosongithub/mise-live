@@ -270,11 +270,23 @@ let _lastOverlapWarnKey = null;
 // Constants
 // ----------------------------------------------------------------------------
 
-// Phase 1 hardcodes the Sonnet 4.6 model. Phase 2 (SHELL-03) adds a settings
-// modal selector. If your Anthropic account doesn't have access to 4-6 yet,
-// edit this to 'claude-sonnet-4-5' — the mapToPlainLanguage 404 branch also
-// names this constant in the user-facing error so the swap is obvious.
-const DEFAULT_MODEL = 'claude-sonnet-4-6';
+// The default model (Settings can pick another from MODEL_OPTIONS). 2026-10-06:
+// Sonnet 4.6 → Sonnet 5.5. The mapToPlainLanguage 404 branch names the model in
+// the user-facing error, so an account without access says which one.
+const DEFAULT_MODEL = 'claude-sonnet-5-5';
+// The models the Settings menu offers (the menu is built from this list). `effort`
+// = the model accepts output_config.effort (Haiku 4.5 400s on it). A saved choice
+// not in this list (e.g. the old 'claude-sonnet-4-6') falls back to DEFAULT_MODEL.
+const MODEL_OPTIONS = [
+  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5 (recommended)', effort: true },
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5 (cheaper, less accurate)', effort: false }
+];
+// How hard the model thinks before answering (output_config.effort). Sonnet 5.5
+// always thinks (adaptive); effort is the only control, and higher = slower +
+// more output tokens. Recipe parsing gets 'medium' (vocabulary discipline matters);
+// chat + classification get 'low'. Haiku 4.5 rejects effort, so it is never sent.
+const EFFORT_PARSE = 'medium';
+const EFFORT_LIGHT = 'low';
 
 // ----------------------------------------------------------------------------
 // quick 260612-dr4 — per-category scaling strengths (Phase A nonlinear scaling)
@@ -399,7 +411,10 @@ function loadSettingsEditedAt() {
 
 // max_tokens=16k from day one per RESEARCH §Pitfall B / API-03. Default 1024
 // or 4096 silently truncates 30-row recipes; we surface stop_reason explicitly.
-const MAX_TOKENS = 16000;
+// 2026-10-06: raised to 21k — Sonnet 5.5's thinking counts against the same limit
+// as the answer. Kept just under the SDK's non-streaming ceiling (~21.3k: above it
+// the SDK refuses a non-streaming call), so no switch to streaming is needed.
+const MAX_TOKENS = 21000;
 
 // ----------------------------------------------------------------------------
 // Parse state machine (PARSE-02) — RESEARCH §E
@@ -446,7 +461,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'cbdee80 2026-10-06';
+const APP_VERSION = 'e651c47 2026-10-06';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -466,7 +481,7 @@ const MEAL_PLAN_BASE_KEY = 'recipe_ingest_meal_plan_base';
 // (locked decision 3). Purely presentational: no data model, no persistence.
 const FRIDGE_LIFE_DAYS = 3;
 const BIN_VISIBLE_DAYS = 3;
-// Leftovers (2026-10-07) — how many later meals a dish's "Make extra for…" offers:
+// Leftovers (2026-10-06) — how many later meals a dish's "Make extra for…" offers:
 // 2 meals a day × FRIDGE_LIFE_DAYS, so every choice is still within fridge life.
 const EXTRA_MEAL_SLOTS = 2 * FRIDGE_LIFE_DAYS;
 
@@ -698,6 +713,23 @@ function makeClient(apiKey) {
   });
 }
 
+// output_config for a Structured Outputs call: the JSON schema, plus an effort
+// level on models that take one (not Haiku 4.5 — it 400s on effort).
+function outputConfig(model, schema, effort) {
+  const cfg = { format: { type: 'json_schema', schema } };
+  const opt = MODEL_OPTIONS.find(m => m.id === model);
+  if (opt && opt.effort) cfg.effort = effort;
+  return cfg;
+}
+
+// The answer text of a response. Thinking models (Sonnet 5.5) put a `thinking`
+// block BEFORE the text block, so content[0] is not the answer — find the text.
+function responseText(response) {
+  const blocks = (response && Array.isArray(response.content)) ? response.content : [];
+  const b = blocks.find(x => x && x.type === 'text');
+  return b ? b.text : '';
+}
+
 /**
  * Run one Anthropic Messages call with Structured Outputs.
  *
@@ -731,12 +763,7 @@ async function callLLM({ apiKey, model, systemPrompt, userMessage, schema }) {
       max_tokens: MAX_TOKENS,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
-      output_config: {
-        format: {
-          type: 'json_schema',
-          schema
-        }
-      }
+      output_config: outputConfig(model, schema, EFFORT_PARSE)
     });
   } catch (e) {
     // 03-REVIEW WR-09 — tag the error with the actual model the call was
@@ -775,7 +802,7 @@ async function callLLM({ apiKey, model, systemPrompt, userMessage, schema }) {
   // Structured Outputs guarantees the text is valid JSON conforming to the
   // schema, but we wrap defensively so a malformed-JSON surface (Pitfall: bug
   // in our schema or transient SDK weirdness) surfaces as a plain parse error.
-  const text = response.content && response.content[0] && response.content[0].text;
+  const text = responseText(response);
   if (!text) {
     throw new Error("Anthropic's response had no text content. Try again.");
   }
@@ -813,12 +840,7 @@ async function callClassifyLLM({ apiKey, model, systemPrompt, userMessage, schem
       max_tokens: MAX_TOKENS,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
-      output_config: {
-        format: {
-          type: 'json_schema',
-          schema
-        }
-      }
+      output_config: outputConfig(model, schema, EFFORT_LIGHT)
     });
   } catch (e) {
     if (e && typeof e === 'object') {
@@ -842,7 +864,7 @@ async function callClassifyLLM({ apiKey, model, systemPrompt, userMessage, schem
   }
 
   const usage = response.usage || null;
-  const text = response.content && response.content[0] && response.content[0].text;
+  const text = responseText(response);
   if (!text) {
     throw new Error("Anthropic's response had no text content. Try again.");
   }
@@ -905,9 +927,9 @@ async function callReviseLLM({ apiKey, model, cachedPrefix, recipeBlock, message
       //     adding a second breakpoint after the recipe — that churns a fresh
       //     cache entry per turn at 1.25x write price, i.e. strictly worse.
       // (d) The minimum cacheable prefix is MODEL-DEPENDENT and non-monotonic:
-      //     1,024 tokens on claude-sonnet-4-6 / -4-5, but 4,096 on
-      //     claude-haiku-4-5. Mise's prefix (~1,850-2,850 tokens) clears Sonnet
-      //     and does NOT clear Haiku, where caching silently no-ops with no error
+      //     512 tokens on claude-sonnet-5-5 (1,024 on the older Sonnet 4.x), but
+      //     4,096 on claude-haiku-4-5. Mise's prefix (~1,850-2,850 tokens on 4.6;
+      //     ~30% more on Sonnet 5.5's tokenizer) clears Sonnet and does NOT clear Haiku, where caching silently no-ops with no error
       //     returned. The console.warn below names that case so a Haiku session
       //     does not read as a bug. No ttl is set — the 5-minute default is
       //     correct, and prompt caching is GA so NO beta header is needed.
@@ -917,12 +939,7 @@ async function callReviseLLM({ apiKey, model, cachedPrefix, recipeBlock, message
         { type: 'text', text: recipeBlock }
       ],
       messages,
-      output_config: {
-        format: {
-          type: 'json_schema',
-          schema
-        }
-      }
+      output_config: outputConfig(model, schema, EFFORT_LIGHT)
     });
   } catch (e) {
     // Tag the actual model so mapToPlainLanguage's 404 branch names the model the
@@ -960,8 +977,8 @@ async function callReviseLLM({ apiKey, model, cachedPrefix, recipeBlock, message
       '[chat] prompt caching did not engage: cache_creation_input_tokens and ' +
       'cache_read_input_tokens are both 0. Most likely cause — the cached prefix ' +
       "is below the selected model's minimum cacheable size, in which case " +
-      'caching silently no-ops and no error is returned. The minimum is 1,024 ' +
-      'tokens on claude-sonnet-4-6 / claude-sonnet-4-5 and 4,096 tokens on ' +
+      'caching silently no-ops and no error is returned. The minimum is 512 ' +
+      'tokens on claude-sonnet-5-5 and 4,096 tokens on ' +
       "claude-haiku-4-5; Mise's rules+master prefix clears Sonnet but not Haiku. " +
       'See https://platform.claude.com/docs/en/build-with-claude/prompt-caching'
     );
@@ -990,7 +1007,7 @@ async function callReviseLLM({ apiKey, model, cachedPrefix, recipeBlock, message
     throw err;
   }
 
-  const text = response.content && response.content[0] && response.content[0].text;
+  const text = responseText(response);
   if (!text) {
     const err = new Error("Anthropic's response had no text content. Try again.");
     err.isChatPlainMessage = true;
@@ -1062,7 +1079,7 @@ function mapToPlainLanguage(e) {
     return `Your Anthropic account doesn't have access to the model "${erroredModel}". Pick a different model in Settings, or edit DEFAULT_MODEL near the top of app.js.`;
   }
   if (status === 400) {
-    return "There's a bug in the schema our tool sent. (Tell the dev.)";
+    return "Anthropic rejected the request (it may not accept a setting we sent for this model). (Tell the dev — details below.)";
   }
   if (name === 'APIConnectionError' || name === 'TypeError' || /fetch|network/i.test(message)) {
     return "Couldn't reach Anthropic. Are you online?";
@@ -2106,11 +2123,12 @@ Alpine.data('app', () => ({
   },
 
   // ---------- Settings — advanced (SHELL-03 / D-21) ----------
-  // Model selector — exactly two options per the constraints in CLAUDE.md
-  // (sonnet-4-6 default, haiku-4-5 cheaper fallback). Persisted to localStorage
-  // so the user's last selection survives a refresh. The dropdown @change
-  // handler in index.html writes this key.
-  selectedModel: localStorage.getItem('recipe_ingest_model') ?? 'claude-sonnet-4-6',
+  // Model selector — the MODEL_OPTIONS list (Sonnet 5.5 default, Haiku 4.5 cheaper
+  // fallback). Persisted to localStorage so the user's last selection survives a
+  // refresh; the dropdown @change handler in index.html writes this key. A saved
+  // model no longer offered (e.g. Sonnet 4.6) falls back to the default.
+  selectedModel: (() => { const m = localStorage.getItem('recipe_ingest_model'); return MODEL_OPTIONS.some(o => o.id === m) ? m : DEFAULT_MODEL; })(),
+  modelOptions: MODEL_OPTIONS,
   // quick 260612-dr4 — per-category scaling strengths (PERCENT 0..100), seeded
   // defensively from localStorage (corrupt/out-of-range -> per-key default via
   // loadScaleStrengths). The Settings "Scaling" inputs x-model.number these;
@@ -3947,7 +3965,7 @@ Alpine.data('app', () => ({
   // Leftovers (2026-10-06) — id of the dish whose Remove is asking what to do with
   // its leftovers ('' = none). Transient view state, never synced.
   removeAskFor: '',
-  // Leftovers (2026-10-07) — id of the dish whose "Make extra for…" chips are open ('' = none).
+  // Leftovers (2026-10-06) — id of the dish whose "Make extra for…" chips are open ('' = none).
   extraPickerFor: '',
   // quick 260607-anu — transient one-time-migration result banner. Shapes:
   // { migrated, rowCount, backfillCount } | { alreadyMigrated:true }. A verify
@@ -8403,9 +8421,9 @@ Alpine.data('app', () => ({
     if (typeof usd !== 'number' || !isFinite(usd)) return '';
     if (usd < 0.10) {
       const cents = Math.round(usd * 100);
-      return `about ${cents}¢ to parse`;
+      return `about ${cents}¢ to send (+ the reply)`;
     }
-    return `≈ $${usd.toFixed(2)} to parse`;
+    return `≈ $${usd.toFixed(2)} to send (+ the reply)`;
   },
 
   // ----- quick 260608-h1i — duplicate-index builder (READ-ONLY) -----
@@ -9987,7 +10005,7 @@ Alpine.data('app', () => ({
       if (e.leftoverOf && !this.isLeftover(e)) delete e.leftoverOf;
     }
   },
-  // "Make extra for…" (2026-10-07 — replaces the Add picker's long "Leftovers of…"
+  // "Make extra for…" (2026-10-06 — replaces the Add picker's long "Leftovers of…"
   // list): the EXTRA_MEAL_SLOTS meals after a freshly cooked dish, keeping only the
   // ones on a day the plan shows (today onwards, inside windowDayKeys) — so a dish
   // already on the Past tab can still feed today's lunch, and nothing lands off-screen.

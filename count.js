@@ -21,8 +21,11 @@
 //     parseError — the user just sees no estimate where one would appear.
 //
 // Pricing (PRICE_PER_MTOK_INPUT — current as of 2026-05-22 per RESEARCH §B):
+//   - Sonnet 5.5:       $2 / MTok input (2026-10-06; output $10, cache read $0.20)
 //   - Sonnet 4.5 / 4.6: $3 / MTok input
 //   - Haiku  4.5:       $1 / MTok input
+// Input only: the estimate leaves out output + thinking tokens (Sonnet 5.5 thinks
+// before answering), so the real cost of a parse is higher than the preview.
 // Pricing constants live HERE (single source of truth) — NOT in app.js. The
 // formatter (formatCost) lives in app.js because it needs Alpine reactivity
 // for the rendered string; the math lives here because the multiplier is a
@@ -38,6 +41,7 @@ import Anthropic from 'https://esm.sh/@anthropic-ai/sdk@0.97.1';
 // unrecognized model is 3 (Sonnet pricing) — over-estimate is safer than
 // under-estimate for a user-facing cost preview.
 const PRICE_PER_MTOK_INPUT = {
+  'claude-sonnet-5-5': 2,
   'claude-sonnet-4-6': 3,
   'claude-sonnet-4-5': 3,
   'claude-haiku-4-5': 1
