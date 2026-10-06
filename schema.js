@@ -2,7 +2,8 @@
 // Mise — JSON Schema for Anthropic Structured Outputs
 // ----------------------------------------------------------------------------
 // Phase 1 contract (D-05): Structured Outputs grammar-constrains the LLM at
-// token level for the closed enums (unit / role / allergens / ingredient_id).
+// token level for the closed enums (unit / role / allergens). ingredient_id is
+// checked against the master in code instead (grammar-size limit, 2026-10-06).
 //
 // IMPORTANT MECHANICS (RESEARCH §Pattern 3 / Pitfall A):
 //   - EVERY `type: 'object'` node MUST set `additionalProperties: false`,
@@ -12,8 +13,11 @@
 //     Phase 1's safety net is the form itself.
 //   - All FSA-14 allergen names are case-sensitive in the enum.
 //   - `ingredient_id` is nullable via
-//     `anyOf: [{ type: 'integer', enum: masterIds }, { type: 'null' }]` so the
-//     model can emit a known master ID or `null` for unknown items (per D-13:
+//     `anyOf: [{ type: 'integer' }, { type: 'null' }]` so the
+//     model can emit a master ID or `null` for unknown items. (Until 2026-10-06
+//     the integer branch carried `enum: masterIds`; with ~244 ids Sonnet 5.5
+//     400'd "compiled grammar is too large", so membership in the master is now
+//     checked in code after the reply — app.js nulls any off-master id.) (per D-13:
 //     Phase 1 has no add-new flow; nulls write empty cells). The `null` is in
 //     its own anyOf branch — not inside the integer enum — to keep the enum
 //     homogeneously typed (required by Anthropic's Structured Outputs
@@ -395,7 +399,11 @@ export function buildRecipeSchema(masterIds, cuisineEnum, proteinEnum) {
             // `null` lives in its own anyOf branch — NOT inside the enum —
             // because Anthropic's Structured Outputs validator requires the
             // enum to be homogeneously integer-typed.
-            ingredient_id:   { anyOf: [{ type: 'integer', enum: masterIds }, { type: 'null' }] },
+            // NOT grammar-constrained to the master any more (2026-10-06): with
+            // ~244 ids the enum made Sonnet 5.5 400 with "The compiled grammar is
+            // too large". The master check now runs in code right after the reply
+            // (app.js — an id not in the master becomes null = unknown → modal).
+            ingredient_id:   { anyOf: [{ type: 'integer' }, { type: 'null' }] },
             ingredient_name: { type: 'string' },
             // quick 260607-anu — four-column quantity contract. Metric pair is
             // ALWAYS populated (quantity_metric is non-null; LLM-estimated when
@@ -609,7 +617,9 @@ export function buildReviseSchema(masterIds, cuisineEnum, proteinEnum) {
       value: {
         anyOf: [
           { type: 'string' },
-          { type: 'integer', enum: masterIds }   // NEW id — constraint site 1 of 2
+          // Not enum-constrained (grammar-size 400 on Sonnet 5.5, 2026-10-06);
+          // revise-ops.js rejects any id not in the master.
+          { type: 'integer' }
         ]
       }
     }
@@ -649,7 +659,7 @@ export function buildReviseSchema(masterIds, cuisineEnum, proteinEnum) {
     required: ['kind', 'ingredient_id', 'quantity_metric', 'unit_metric', 'role', 'section', 'prep_note'],
     properties: {
       kind:            { type: 'string', enum: ['add_row'] },
-      ingredient_id:   { type: 'integer', enum: masterIds },  // NEW id — constraint site 2 of 2
+      ingredient_id:   { type: 'integer' },  // checked against the master in revise-ops.js (grammar-size 400)
       quantity_metric: { type: 'number' },
       unit_metric:     { type: 'string', enum: UNIT_METRIC_ENUM },
       role:            { type: 'string', enum: ROLE_ENUM },

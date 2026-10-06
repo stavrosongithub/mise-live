@@ -461,7 +461,7 @@ const MEAL_PLAN_KEY = 'recipe_ingest_meal_plan';
 // placeholder below on the DEPLOYED copy (git short-SHA + UTC date); the dev/
 // un-deployed copy keeps the placeholder and renders 'dev'. (The token appears
 // here EXACTLY ONCE so the deploy-time sed has a single, unambiguous target.)
-const APP_VERSION = 'e651c47 2026-10-06';
+const APP_VERSION = '8b2bb40 2026-10-06';
 // quick 260620-esf — ONE localStorage slot holding BOTH meal-plan UI prefs
 // (Add-recipes collapsed + per-day collapse map). UI-prefs ONLY; never touches
 // the CSV/IndexedDB store. Mirrors the MEAL_PLAN_KEY persist/restore idiom.
@@ -15637,7 +15637,18 @@ Alpine.data('app', () => ({
       // quick 260607-bru — init _confirmed:false on every parsed row so freshly
       // parsed rows render unconfirmed regardless of unknownQueue gating. Never
       // set true here — confirmation is a user action.
-      this.form.rows = value.rows.map(r => ({ ...r, _key: nextRowKey(), _confirmed: false }));
+      // Vocabulary discipline: the schema no longer lists the master ids (grammar
+      // too large on Sonnet 5.5), so an id the model made up is caught HERE —
+      // it becomes null (= unknown → the add/match modal) and the row is flagged.
+      const knownIds = new Set(masterIds.map(Number));
+      this.form.rows = value.rows.map(r => {
+        const row = { ...r, _key: nextRowKey(), _confirmed: false };
+        if (row.ingredient_id != null && !knownIds.has(Number(row.ingredient_id))) {
+          row.ingredient_id = null;
+          row.flag_fix_me = true;
+        }
+        return row;
+      });
       this.validationWarnings = autoFixes;
       this.validationErrors = hardErrors;
 
