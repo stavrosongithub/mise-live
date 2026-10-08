@@ -354,6 +354,23 @@
                   x-cloak
                   @click="loadExample()">Load Example</button>
         </div>
+        <!-- Link import — paste a recipe's web address; Claude fetches the page
+             and copies the recipe into the paste box below (fetchFromLink). -->
+        <form class="link-import" x-show="!form.header && !rawPaneCollapsed"
+              @submit.prevent="fetchFromLink()">
+          <input type="url"
+                 x-model="linkUrl"
+                 :disabled="linkFetching || parsing"
+                 placeholder="…or paste a recipe link (https://…)">
+          <button type="submit"
+                  class="btn-secondary"
+                  :disabled="linkFetching || parsing || !linkUrl.trim() || !apiKey">
+            <span x-show="!linkFetching">Fetch</span>
+            <span x-show="linkFetching" x-cloak>Fetching…</span>
+          </button>
+        </form>
+        <small class="link-import-note" x-show="!form.header && !rawPaneCollapsed && !linkError">Fetching uses the AI: usually a few cents on top of the parse.</small>
+        <small class="link-import-error" x-show="linkError && !form.header && !rawPaneCollapsed" x-cloak x-text="linkError"></small>
         <!-- REVIEW-07 / Plan 03-03 — paste-mode <textarea>. Visible until the
              form is populated (form.header is null pre-Parse, populated after
              a successful Parse). The two-way x-model binding to rawText is
@@ -362,7 +379,7 @@
         <textarea class="raw"
                   x-show="!form.header && !rawPaneCollapsed"
                   x-model="rawText"
-                  :readonly="approved"
+                  :readonly="approved || linkFetching"
                   @blur="estimateTokenCost()"
                   placeholder="Paste a recipe, at whatever size it was written for (include how many it serves)"></textarea>
         <!-- REVIEW-07 / D-29..D-31 / UI-SPEC Option C — review-mode left pane.
@@ -389,7 +406,7 @@
           <button type="button"
                   class="btn-primary"
                   @click="parse()"
-                  :disabled="parsing || !rawText.trim() || !apiKey || !csvStoreLoaded">
+                  :disabled="parsing || linkFetching || !rawText.trim() || !apiKey || !csvStoreLoaded">
             <span x-show="!parsing">Parse</span>
             <span x-show="parsing" x-cloak>Parsing…</span>
           </button>

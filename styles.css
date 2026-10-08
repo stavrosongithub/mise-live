@@ -2089,6 +2089,31 @@ textarea {
   margin-top: 0.5rem;
 }
 
+/* Link import — URL box + Fetch button above the paste box. */
+.link-import {
+  display: flex;
+  gap: 0.5em;
+  margin-bottom: 0.25em;
+}
+.link-import input {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-base);
+  padding: 0.35em 0.5em;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-2);
+  color: var(--color-ink);
+}
+.link-import-note,
+.link-import-error {
+  display: block;
+  font-size: var(--fs-xs);
+  margin-bottom: 0.5em;
+}
+.link-import-note { color: var(--color-ink-faint); }
+.link-import-error { color: var(--color-danger); }
+
 /* --- Pre-Parse cost estimate (API-07 / Plan 02-04) ------------------------ */
 /* Small grey text adjacent to the Parse button. Tone mirrors .help (L171–L176)
  * for visual parity with other "secondary informational" surfaces. Hides

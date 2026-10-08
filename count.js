@@ -21,7 +21,8 @@
 //     parseError — the user just sees no estimate where one would appear.
 //
 // Pricing (PRICE_PER_MTOK_INPUT — current as of 2026-05-22 per RESEARCH §B):
-//   - Sonnet 5.5:       $2 / MTok input (2026-10-06; output $10, cache read $0.20)
+//   - Sonnet 5.5:       $2 / MTok input (2026-10-06; output $10; cache read $0.10 —
+//                       0.05x base on 5.5, not the usual 0.1x, per the pricing page 2026-10-08)
 //   - Sonnet 4.5 / 4.6: $3 / MTok input
 //   - Haiku  4.5:       $1 / MTok input
 // Input only: the estimate leaves out output + thinking tokens (Sonnet 5.5 thinks
