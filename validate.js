@@ -35,7 +35,7 @@
 // ============================================================================
 
 import * as v from 'https://esm.sh/valibot@1.3.1';
-import { FLAGGED_FIELD_NAME_ENUM, REASON_CODE_ENUM, REVIEW_FLAG_ENUM, FSA14, UNIT_METRIC_ENUM, UNIT_VOLUMETRIC_ENUM } from './schema.js';
+import { FLAGGED_FIELD_NAME_ENUM, REASON_CODE_ENUM, REVIEW_FLAG_ENUM, FSA14, UNIT_METRIC_ENUM, UNIT_VOLUMETRIC_ENUM, PARSE_OMITTED_HEADER_FIELDS } from './schema.js';
 
 // ----------------------------------------------------------------------------
 // Phase 3 / REVIEW-05 — D-35 cap-at-3 enforcement
@@ -231,6 +231,15 @@ export function validateRecipe(parsed) {
     corrected.rows = [];
   }
   const headerPresent = corrected.header && typeof corrected.header === 'object';
+
+  // A parse reply has no popularity / difficulty / last_made / *_notes (kept out
+  // of the schema for grammar size) — fill them as null so Stage 2 passes. The
+  // Approve path passes the live form, which has them, so `in` leaves it alone.
+  if (headerPresent) {
+    for (const key of PARSE_OMITTED_HEADER_FIELDS) {
+      if (!(key in corrected.header)) corrected.header[key] = null;
+    }
+  }
 
   // --------------------------------------------------------------------------
   // Stage 1 — plain-JS clamps + side-channel autoFixes

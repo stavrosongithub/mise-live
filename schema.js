@@ -243,6 +243,13 @@ export const REVIEW_FLAG_ENUM = [
   'no_source_instructions'
 ];
 
+// Header fields deliberately left OUT of buildRecipeSchema to keep the compiled
+// grammar small (each nullable field is an anyOf — the expensive kind). The
+// parse reply never carries them; validateRecipe fills them in as null.
+export const PARSE_OMITTED_HEADER_FIELDS = [
+  'popularity', 'difficulty', 'last_made', 'popularity_notes', 'difficulty_notes'
+];
+
 /**
  * Build the Structured-Outputs JSON Schema for one parsed recipe.
  *
@@ -301,12 +308,7 @@ export function buildRecipeSchema(masterIds, cuisineEnum, proteinEnum) {
           'source',
           'max_servings',
           'source_servings',
-          'popularity',
-          'difficulty',
-          'last_made',
           'serve_with',
-          'popularity_notes',
-          'difficulty_notes',
           'allergens',
           'cuisine',
           'protein',
@@ -319,18 +321,18 @@ export function buildRecipeSchema(masterIds, cuisineEnum, proteinEnum) {
           prep:             { type: 'string' },
           instructions:  { type: 'string' },
           ingredients:   { type: 'string' },
-          source:           { anyOf: [{ type: 'string', format: 'uri' }, { type: 'null' }] },
+          // No `format: 'uri'` (2026-10-08): the format grammar is large, and
+          // validate.js already hard-checks the URL after the reply.
+          // popularity / difficulty / last_made / *_notes are NOT in this schema
+          // (see PARSE_OMITTED_HEADER_FIELDS) — Sonnet 5.5's "compiled grammar is
+          // too large" 400 again; pasted text never carries them anyway.
+          source:           { anyOf: [{ type: 'string' }, { type: 'null' }] },
           max_servings:     { anyOf: [{ type: 'integer' }, { type: 'null' }] },
           // Household reset (2026-10-04) — how many servings the recipe, AS WRITTEN,
           // serves (the stored quantities are at THIS size). null when the pasted text
           // does not say; never guessed (blank is flagged for the user to fill in).
           source_servings:  { anyOf: [{ type: 'integer' }, { type: 'null' }] },
-          popularity:       { anyOf: [{ type: 'integer' }, { type: 'null' }] },
-          difficulty:       { anyOf: [{ type: 'integer' }, { type: 'null' }] },
-          last_made:        { anyOf: [{ type: 'string', format: 'date' }, { type: 'null' }] },
           serve_with:       { anyOf: [{ type: 'string' }, { type: 'null' }] },
-          popularity_notes: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-          difficulty_notes: { anyOf: [{ type: 'string' }, { type: 'null' }] },
           allergens: {
             type: 'array',
             items: { type: 'string', enum: FSA14 }
